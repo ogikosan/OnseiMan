@@ -161,6 +161,18 @@ class TestPackages(unittest.TestCase):
             self.assertIn(need, names)
         self.assertFalse([n for n in names if n.startswith(("client/", "tools/")) or n.endswith((".bat", ".ps1"))])
 
+    def test_downloaded_tools_are_not_packed(self) -> None:
+        # 準備で取ってきた道具や Python が手元にあっても、zip には入れない（git で管理しているものだけ）
+        fake = ROOT / "tools" / "bin" / "zz-test-not-tracked.exe"
+        fake.parent.mkdir(parents=True, exist_ok=True)
+        fake.write_bytes(b"x")
+        try:
+            for kind in self.pkg.PACKAGES:
+                names = self._names(kind)
+                self.assertFalse([n for n in names if n.startswith(("tools/bin/", "tools/python/", "server_data/"))], kind)
+        finally:
+            fake.unlink()
+
     def test_no_user_data_in_packages(self) -> None:
         for kind in self.pkg.PACKAGES:
             for name in self._names(kind):

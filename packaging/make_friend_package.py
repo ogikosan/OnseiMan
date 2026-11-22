@@ -59,11 +59,21 @@ def _arcname(rel: str) -> str:
     return rel
 
 
+def _tracked() -> set:
+    """git で管理しているファイル。準備で取ってきた道具（tools/bin・tools/python）や、
+    預かった辞書（server_data）などが zip に混ざらないよう、これだけを入れる。"""
+    import subprocess
+
+    out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
+    return {ROOT / f for f in out.decode("utf-8").split("\0") if f}
+
+
 def collect(kind: str) -> list:
     spec = PACKAGES[kind]
+    tracked = _tracked()
     files = []
     for d in spec["dirs"]:
-        for p in sorted((ROOT / d).rglob("*")):
+        for p in sorted(x for x in (ROOT / d).rglob("*") if x in tracked):
             if (p.is_file() and not (SKIP_PARTS & set(p.parts))
                     and p.suffix not in SKIP_SUFFIX and p.suffix not in spec["skip_suffix"]):
                 files.append((p, p.relative_to(ROOT).as_posix()))
