@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OnseiMan</title>
+<link rel="preload" href="/bg.jpg" as="image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232f6bf2' d='M12 2 21 7v10l-9 5-9-5V7z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+<script>
+  try { const t = localStorage.getItem('onseiman.theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+</script>
+</head>
+<body>
+<div class="backdrop" aria-hidden="true"></div>
+
+<header class="topbar glass">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <defs><linearGradient id="og" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b82f6"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="url(#og)"/>
+      <path d="M12 6a2.5 2.5 0 0 0-2.5 2.5v3a2.5 2.5 0 0 0 5 0v-3A2.5 2.5 0 0 0 12 6Z" fill="#fff"/>
+      <path d="M7.5 11.5a4.5 4.5 0 0 0 9 0M12 16v2.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+    </svg>
+    <span>ONSEIMAN</span>
+  </div>
+
+  <nav class="seg" role="tablist">
+    <button type="button" class="seg-btn" data-tab="history" aria-pressed="true">認識履歴</button>
+    <button type="button" class="seg-btn" data-tab="candidates" aria-pressed="false">学習候補 <span class="count" id="cand-count">0</span></button>
+    <button type="button" class="seg-btn" data-tab="dict" aria-pressed="false">辞書</button>
+    <button type="button" class="seg-btn" data-tab="settings" aria-pressed="false">設定</button>
+    <button type="button" class="seg-btn" data-tab="help" aria-pressed="false">使い方</button>
+  </nav>
+
+  <div class="spacer"></div>
+
+  <div class="hotkey-pill" title="録音キー">
+    <span>キー</span>
+    <kbd id="hdr-hotkey">ralt</kbd>
+  </div>
+
+  <button type="button" class="icon-btn" id="theme-btn" title="ライト / ダーク切替">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+  </button>
+
+  <div class="conn" id="conn" data-state="ok"><i></i><span id="hdr-backend">接続確認中…</span></div>
+</header>
+
+<main class="main">
+  <!-- ==================== 認識履歴 ==================== -->
+  <section class="view" id="view-history">
+    <div class="stats-row" id="stats-row" hidden></div>
+    <div class="history-grid">
+      <div class="panel glass">
+        <div class="panel-head">
+          <label class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="hist-search" type="search" placeholder="認識履歴を検索…">
+          </label>
+          <button type="button" class="btn sm" id="btn-refresh">更新</button>
+        </div>
+        <div class="scroll" id="hist-list"></div>
+      </div>
+
+      <div class="panel glass">
+        <div class="panel-head">
+          <h2 class="panel-title">詳細・辞書登録・手動学習</h2>
+          <div class="spacer"></div>
+          <span class="muted" style="font-size:12px" id="detail-meta">左から履歴を選択</span>
+        </div>
+
+        <div>
+          <label class="field-label" for="detail-raw">元の認識結果（誤認識した語をドラッグ選択して「辞書に登録」できます）</label>
+          <textarea id="detail-raw" class="inp" rows="4" readonly placeholder="履歴を選ぶと AI が生で聞き取った文字が出ます"></textarea>
+        </div>
+
+        <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+          <label class="field-label" for="detail-final">入力された文字（辞書・変換後 — ここを直して「修正を学習」できます）</label>
+          <textarea id="detail-final" class="inp" style="flex:1;min-height:90px" placeholder="変換・貼り付けされたテキスト"></textarea>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" class="btn primary" id="btn-copy">コピー</button>
+          <button type="button" class="btn" id="btn-play-sel" title="このときの録音を聞きます">▶ 録音を聞く</button>
+          <button type="button" class="btn" id="btn-quick-dict">辞書に登録</button>
+          <button type="button" class="btn" id="btn-learn-manual">修正を学習</button>
+          <button type="button" class="btn" id="btn-retry-sel" title="辞書を直したあとなどに。保存してあるこの録音を、いまの辞書でもう一度文字にして、結果をコピーします">もう一度文字にする</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 学習候補 ==================== -->
+  <section class="view" id="view-candidates" hidden>
+    <div class="panel glass" style="flex:1">
+      <div class="panel-head">
+        <h2 class="panel-title">貼り付け後の手直しから見つかった学習候補</h2>
+        <div class="spacer"></div>
+        <button type="button" class="btn sm" id="btn-cand-refresh">更新</button>
+      </div>
+      <div class="muted" style="font-size:12.5px">音声入力の直後に手で直した語句を自動で拾っています。「辞書に登録」を押すと次回から自動で置換されます。</div>
+      <div class="scroll" id="cand-list"></div>
+    </div>
+  </section>
+
+  <!-- ==================== 辞書 ==================== -->
+  <section class="view" id="view-dict" hidden>
+    <div class="panel glass" style="flex:1">
+      <div class="panel-head">
+        <div class="subtabs">
+          <button type="button" class="seg-btn" data-dtab="rep" aria-pressed="true">言葉</button>
+          <button type="button" class="seg-btn" data-dtab="snip" aria-pressed="false">定型文</button>
+          <button type="button" class="seg-btn" data-dtab="fil" aria-pressed="false">言いよどみ</button>
+          <button type="button" class="seg-btn" data-dtab="std" aria-pressed="false">標準の変換</button>
+        </div>
+        <div class="spacer"></div>
+        <span class="muted save-state" id="dict-save-state"></span>
+      </div>
+
+      <!-- 置き換え -->
+      <div id="dtab-rep" style="flex:1;min-height:0;display:flex;flex-direction:column;gap:10px">
+        <div class="dict-guide">
+          <div class="dg ok">
+            <b>登録するもの</b>
+            <span>音声認識が知らない言葉。人の名前・サービス名・専門用語・略語</span>
+            <em>例: 山田さん　ComfyUI　LAN</em>
+          </div>
+          <div class="dg">
+            <b>それでも間違うとき</b>
+            <span>同じ間違い方をくり返すときだけ、その言い方を横に足す。必ず直ります</span>
+            <em>例: LAN ← ランク</em>
+          </div>
+          <div class="dg ng">
+            <b>登録しないもの</b>
+            <span>ふつうの言葉。登録すると、ほかの言葉の邪魔になります</span>
+            <em>例: はい　どれか　生成</em>
+          </div>
+        </div>
+        <div class="btn-row">
+          <input id="rep-dst" class="inp" style="flex:1" placeholder="正しい言葉（例: LAN、山田さん）">
+          <input id="rep-src" class="inp" style="flex:1" placeholder="聞き間違えた言い方（わかれば。例: ランク）">
+          <button type="button" class="btn primary" id="btn-rep-add">登録</button>
+        </div>
+        <div class="rep-head">
+          <span>正しい言葉</span><span>聞き間違えた言い方（なくても大丈夫）</span>
+          <label class="search rep-search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="rep-filter" type="search" placeholder="さがす">
+          </label>
+        </div>
+        <div class="scroll" id="rep-list"></div>
+        <div class="preview-box">
+          <span class="muted" style="font-size:12px;white-space:nowrap">ためし変換</span>
+          <input id="rep-test-in" class="inp" placeholder="ここに文章を入れると今のルールで変換結果を確認できます">
+          <span class="muted">→</span>
+          <span class="preview-out" id="rep-test-out">（結果）</span>
+        </div>
+      </div>
+
+      <!-- 優先語 -->
+      <div id="dtab-hot" hidden style="flex:1;min-height:0;display:flex;flex-direction:column;gap:10px">
+        <div class="muted" style="font-size:12.5px">固有名詞や専門用語を登録すると、音声認識モデルにヒントとして渡され認識されやすくなります。</div>
+        <div class="btn-row">
+          <input id="hot-in" class="inp" style="flex:1" placeholder="例: ComfyUI, 山田さん">
+          <button type="button" class="btn" id="btn-hot-add">追加</button>
+        </div>
+        <div class="scroll chips" id="hot-chips"></div>
+      </div>
+
+      <!-- 定型文 -->
+      <div id="dtab-snip" hidden style="flex:1;min-height:0;display:flex;flex-direction:column;gap:10px">
+        <div class="dict-guide one">
+          <div class="dg ok">
+            <b>合言葉だけを言うと、登録した文が入ります</b>
+            <span>メールアドレス・住所・電話番号・よく使うあいさつなどに。文の途中で言ったときは、そのまま文字になります</span>
+            <em>例: 「メールアドレス」→ taro@example.com</em>
+          </div>
+        </div>
+        <div class="btn-row snip-add">
+          <input id="snip-key" class="inp" placeholder="合言葉（例: メールアドレス）">
+          <textarea id="snip-body" class="inp" rows="1" placeholder="入れる文（例: taro@example.com）"></textarea>
+          <button type="button" class="btn primary" id="btn-snip-add">登録</button>
+        </div>
+        <div class="scroll" id="snip-list"></div>
+      </div>
+
+      <!-- 言いよどみ -->
+      <div id="dtab-fil" hidden style="flex:1;min-height:0;display:flex;flex-direction:column;gap:10px">
+        <div class="btn-row">
+          <input id="fil-in" class="inp" style="flex:1" placeholder="例: えーと">
+          <button type="button" class="btn" id="btn-fil-add">追加</button>
+          <button type="button" class="btn" id="btn-fil-reset">初期一覧に戻す</button>
+        </div>
+        <div class="scroll chips" id="fil-chips"></div>
+      </div>
+
+      <!-- 標準の変換 -->
+      <div id="dtab-std" hidden style="flex:1;min-height:0;display:flex;flex-direction:column;gap:10px">
+        <div class="muted" style="font-size:12.5px">カタカナ略語を英字にする標準ルールです。人名などで困るものだけオフにできます。</div>
+        <div class="scroll">
+          <table class="dict-table">
+            <thead><tr><th>認識された言葉</th><th>変換後</th><th style="width:110px">使う</th></tr></thead>
+            <tbody id="std-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 設定 ==================== -->
+  <section class="view" id="view-settings" hidden>
+    <div class="panel glass" style="flex:1">
+      <div class="panel-head">
+        <h2 class="panel-title">設定</h2>
+        <div class="spacer"></div>
+        <button type="button" class="btn primary" id="btn-settings-save">設定を保存</button>
+      </div>
+      <div class="scroll">
+        <div class="settings-grid">
+          <div class="setting-card">
+            <h3>よく使う設定</h3>
+            <div class="form-row">
+              <label class="lbl">録音キー</label>
+              <strong id="set-hotkey">ralt</strong>
+              <div class="spacer"></div>
+              <button type="button" class="btn sm" id="btn-cap-hk">変更（次に押すキー）</button>
+            </div>
+            <div class="form-row">
+              <label class="lbl">押し方</label>
+              <div class="radio-row">
+                <label><input type="radio" name="hotkey_mode" value="toggle"> 1回押して開始、もう1回で入力</label>
+                <label><input type="radio" name="hotkey_mode" value="hold"> 押している間だけ録音</label>
+              </div>
+            </div>
+            <div class="form-row">
+              <label class="lbl">マイク</label>
+              <select id="set-mic" class="inp"></select>
+            </div>
+            <div class="form-row">
+              <label class="lbl">表示の場所</label>
+              <div class="radio-row">
+                <label><input type="radio" name="overlay_place" value="bottom"> 画面下の中央</label>
+                <label><input type="radio" name="overlay_place" value="caret"> カーソルの左上</label>
+              </div>
+            </div>
+            <label class="switch"><input type="checkbox" id="set-strip-period"><span class="track"></span><span>文末の「。」をつけない</span></label>
+            <label class="switch"><input type="checkbox" id="set-mute-other"><span class="track"></span><span>録音している間、動画や音楽の音を消す</span></label>
+            <label class="switch"><input type="checkbox" id="set-beep"><span class="track"></span><span>録音の開始・終了で音を鳴らす</span></label>
+            <label class="switch"><input type="checkbox" id="set-startup"><span class="track"></span><span>Windows を起動したら自動で始める</span></label>
+          </div>
+
+          <div class="setting-card">
+            <h3>声を文字にする場所</h3>
+            <div class="place-choice">
+              <label class="place-opt">
+                <input type="radio" name="rec_place" value="local">
+                <span><b>このパソコン</b><small>おすすめ。設定はいりません</small></span>
+              </label>
+              <label class="place-opt">
+                <input type="radio" name="rec_place" value="server">
+                <span><b>別のパソコン</b><small>詳しい人向け。速いパソコンにサーバーを立てている場合</small></span>
+              </label>
+            </div>
+            <div id="server-fields" class="sub-fields" hidden>
+              <div class="find-row">
+                <button type="button" class="btn primary" id="btn-find-servers">サーバーをさがす</button>
+                <span class="muted" id="find-status">Tailscale と家のネットワークから、OnseiMan のサーバーを探します</span>
+              </div>
+              <div id="found-servers" class="found-list"></div>
+              <details class="adv">
+                <summary>アドレスを自分で書く</summary>
+                <div class="sub-fields">
+                  <label class="field-label" for="set-servers">サーバーのアドレス（1行に1つ。上から順に使います）</label>
+                  <textarea id="set-servers" class="inp" rows="3" placeholder="http://192.168.1.50:8765"></textarea>
+                </div>
+              </details>
+              <label class="switch"><input type="checkbox" id="set-local-fb"><span class="track"></span><span>つながらないときは、このパソコンで認識する</span></label>
+            </div>
+          </div>
+        </div>
+
+        <details class="more-settings" id="more-settings">
+          <summary>詳しい設定<small>ふだんは変えなくて大丈夫です</small></summary>
+          <div class="settings-grid">
+            <div class="setting-card">
+              <h3>録音</h3>
+              <label class="switch"><input type="checkbox" id="set-auto-stop"><span class="track"></span><span>黙ったら自動で入力する（1回押して開始のとき）</span></label>
+              <div class="form-row">
+                <label class="lbl">黙ってから</label>
+                <input type="number" step="0.2" min="0.5" max="10" id="set-silence-sec" class="inp" style="width:90px">
+                <span class="muted">秒で入力</span>
+              </div>
+              <div class="form-row">
+                <label class="lbl">やめるキー</label>
+                <input type="text" id="set-cancel-key" class="inp" style="width:120px">
+              </div>
+              <div class="form-row">
+                <label class="lbl">録音の上限</label>
+                <input type="number" min="10" max="600" id="set-max-sec" class="inp" style="width:90px">
+                <span class="muted">秒</span>
+              </div>
+              <label class="switch"><input type="checkbox" id="set-keep-mic"><span class="track"></span><span>マイクを開いたままにする（言い出しが欠けません。Windows の「マイク使用中」が出続けます）</span></label>
+              <label class="switch"><input type="checkbox" id="set-live-seg"><span class="track"></span><span>話しながら区切って認識する（長く話しても消えません）</span></label>
+            </div>
+
+            <div class="setting-card">
+              <h3>文の仕上げ</h3>
+              <label class="switch"><input type="checkbox" id="set-fillers"><span class="track"></span><span>「えーと」「あのー」などを消す</span></label>
+              <label class="switch"><input type="checkbox" id="set-normalize"><span class="track"></span><span>数字と略語を読みやすくする（五千九十 → 5090）</span></label>
+              <label class="switch"><input type="checkbox" id="set-voice-cmd"><span class="track"></span><span>声で改行や記号を入れる（「改行」「はてなマーク」）</span></label>
+              <label class="switch"><input type="checkbox" id="set-undo-cmd"><span class="track"></span><span>「今のなし」で直前の入力を消す</span></label>
+              <label class="switch"><input type="checkbox" id="set-self-corr"><span class="track"></span><span>言い直し（「あ、違う」など）を整理する</span></label>
+              <label class="switch"><input type="checkbox" id="set-app-rules"><span class="track"></span><span>チャットアプリでだけ文末の「。」を消す</span></label>
+            </div>
+
+            <div class="setting-card">
+              <h3>表示と学習</h3>
+              <label class="switch"><input type="checkbox" id="set-overlay"><span class="track"></span><span>録音中などの表示を出す</span></label>
+              <div class="form-row">
+                <label class="lbl">表示の形</label>
+                <div class="radio-row">
+                  <label><input type="radio" name="rec_indicator" value="pill"> カプセル</label>
+                  <label><input type="radio" name="rec_indicator" value="text"> 文字で案内</label>
+                </div>
+              </div>
+              <label class="switch"><input type="checkbox" id="set-overlay-pin"><span class="track"></span><span>ドラッグして決めた場所に出す（オフにすると元の場所に戻ります）</span></label>
+              <label class="switch"><input type="checkbox" id="set-learn-edits"><span class="track"></span><span>入力のあとに手で直した言葉を、辞書の候補に出す</span></label>
+              <div class="form-row">
+                <label class="lbl">自動で登録</label>
+                <input type="number" min="0" max="20" id="set-auto-learn" class="inp" style="width:80px">
+                <span class="muted" style="font-size:12px">回同じ直しをしたら（0＝毎回聞く）</span>
+              </div>
+              <label class="switch"><input type="checkbox" id="set-restore-cb"><span class="track"></span><span>入力のあと、コピーしていた内容を元に戻す</span></label>
+            </div>
+
+            <div class="setting-card">
+              <h3>AI で文章を整える</h3>
+              <p class="muted" style="margin:0;font-size:12.5px">別に AI（Ollama など）を動かしている人向けです。</p>
+              <div class="form-row">
+                <label class="lbl">AI整形キー</label>
+                <strong id="set-ai-hotkey">（未設定）</strong>
+                <div class="spacer"></div>
+                <button type="button" class="btn sm" id="btn-cap-ai">変更</button>
+                <button type="button" class="btn sm" id="btn-clr-ai">解除</button>
+              </div>
+              <div class="form-row">
+                <label class="lbl">AI のアドレス</label>
+                <input type="text" id="set-llm-url" class="inp" placeholder="http://192.168.1.50:11434">
+              </div>
+              <div class="form-row">
+                <label class="lbl">AI のモデル名</label>
+                <input type="text" id="set-llm-model" class="inp" placeholder="qwen2.5:7b">
+              </div>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+  <!-- ==================== 使い方 ==================== -->
+  <section class="view" id="view-help" hidden>
+    <div class="panel glass" style="flex:1">
+      <div class="scroll">
+        <div class="hp">
+
+          <h2 class="hp-title">話すと、カーソルの場所に文字が入ります</h2>
+
+          <ol class="hp-steps">
+            <li>
+              <div class="hp-num">1</div>
+              <svg class="hp-ico" viewBox="0 0 48 48" aria-hidden="true"><rect x="7" y="11" width="34" height="26" rx="5"/><path d="M15 20h12M15 27h7"/><path class="hp-accent" d="M30 22v10"/></svg>
+              <p>入れたい場所を<br>クリック</p>
+            </li>
+            <li>
+              <div class="hp-num">2</div>
+              <div class="hp-key"><kbd class="help-hk">右Alt</kbd></div>
+              <p>押して離して<br>話す</p>
+            </li>
+            <li>
+              <div class="hp-num">3</div>
+              <div class="hp-key"><kbd class="help-hk">右Alt</kbd></div>
+              <p>もう一度押すと<br>入力</p>
+            </li>
+          </ol>
+
+          <div class="hp-states">
+            <figure>
+              <img src="/img/pill_rec.png" data-dark="/img/pill_rec_dark.png" alt="録音中のカプセル">
+              <figcaption>聞いています<span>左の印を押しても止まります。✕ でやめる</span></figcaption>
+            </figure>
+            <figure>
+              <img src="/img/pill_busy.png" data-dark="/img/pill_busy_dark.png" alt="文字にしているカプセル">
+              <figcaption>文字にしています</figcaption>
+            </figure>
+            <figure>
+              <img src="/img/pill_done.png" data-dark="/img/pill_done_dark.png" alt="入力したカプセル">
+              <figcaption>入力しました<span>間違えたら「取り消す」</span></figcaption>
+            </figure>
+          </div>
+
+          <h3 class="hp-h">声で言えること</h3>
+          <div class="hp-cmds">
+            <div><b>「改行」</b><span>改行</span></div>
+            <div><b>「かぎかっこ」〜「閉じ」</b><span>「 」</span></div>
+            <div><b>「はてなマーク」</b><span>？</span></div>
+            <div><b>「びっくりマーク」</b><span>！</span></div>
+            <div><b>「今のなし」</b><span>直前の入力を消す</span></div>
+            <div><b>「あ、違う」</b><span>言い直す</span></div>
+            <div><b>登録した合言葉</b><span>定型文を入れる</span></div>
+          </div>
+
+          <h3 class="hp-h">困ったとき</h3>
+          <div class="hp-faq">
+            <details>
+              <summary>文字が入らない</summary>
+              <p>入れたい場所をクリックしてから話してください。管理者で動いているアプリには入れられないので、<kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けてください（コピーしてあります）。</p>
+            </details>
+            <details>
+              <summary>何と言ったか聞き直したい</summary>
+              <p>「認識履歴」の ▶ を押すと、そのときの録音を聞けます（新しい100件まで）。</p>
+            </details>
+            <details>
+              <summary>メールアドレスや住所を毎回言うのが面倒</summary>
+              <p>「辞書」→「定型文」で合言葉と文を登録すると、合言葉だけを言ったときにその文が入ります。</p>
+            </details>
+            <details>
+              <summary>同じ言葉をいつも間違える</summary>
+              <p>「辞書」で、正しい言葉と聞き間違えた言い方を登録します。「認識履歴」で間違えた行を選んで「辞書に登録」もできます。</p>
+            </details>
+            <details>
+              <summary>うまくいかなかった録音をやり直したい</summary>
+              <p>「認識履歴」で行を選んで「もう一度文字にする」を押します。失敗した行は「再試行」でも同じです。</p>
+            </details>
+            <details>
+              <summary>左の印が赤い</summary>
+              <p>マイクの音が来ていません。ミュートや「設定」のマイクを確かめてください。</p>
+            </details>
+            <details>
+              <summary>表示の場所を変えたい</summary>
+              <p>カプセルをドラッグすると、次からその場所に出ます。ダブルクリックで元に戻ります。</p>
+            </details>
+            <details>
+              <summary>動画や音楽の音が消える</summary>
+              <p>録音中だけ、ほかのアプリの音を消しています。「設定」でオフにできます。</p>
+            </details>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- クイック辞書登録モーダル -->
+<dialog class="modal" id="quick-modal">
+  <h3 style="margin:0 0 12px;font-size:16px">辞書に登録</h3>
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <div>
+      <label class="field-label" for="qm-src">誤認識された言葉</label>
+      <input id="qm-src" class="inp">
+    </div>
+    <div>
+      <label class="field-label" for="qm-dst">正しい言葉</label>
+      <input id="qm-dst" class="inp">
+    </div>
+    <label class="switch"><input type="checkbox" id="qm-hot" checked><span class="track"></span><span>優先語（ホットワード）にも追加する</span></label>
+    <div class="btn-row" style="justify-content:flex-end;margin-top:6px">
+      <button type="button" class="btn" id="qm-cancel">キャンセル</button>
+      <button type="button" class="btn primary" id="qm-ok">登録する</button>
+    </div>
+  </div>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>

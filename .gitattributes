@@ -1,0 +1,4 @@
+# Mac で動かすスクリプトは LF、Windows のバッチは CRLF に固定する
+*.sh text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

@@ -1,0 +1,9 @@
+fastapi>=0.115.0
+uvicorn>=0.32.0
+python-multipart>=0.0.12
+numpy>=1.26.0
+soundfile>=0.12.1
+# sherpa-onnx は GPU (CUDA) 環境では専用 wheel のインストールを推奨:
+#   pip install sherpa-onnx==<version>+cuda --no-index -f https://k2-fsa.github.io/sherpa/onnx/cuda.html
+# CPU のみで動かす場合:
+#   pip install -U sherpa-onnx
