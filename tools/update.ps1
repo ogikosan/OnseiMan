@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $Repo = "ogikosan/OnseiMan"
 $Branch = "main"
 $Root = Split-Path -Parent $PSScriptRoot
-$Keep = @("config.json", "dict.json", "logs", "models", ".venv", ".venv_server", "backup", "build_dist")
+$Keep = @("config.json", "dict.json", "logs", "models", ".venv", ".venv_server", "backup", "build_dist", "server_data")
 
 function Get-LocalVersion {
     $p = Join-Path $Root "client\version.py"

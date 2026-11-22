@@ -299,6 +299,41 @@
               <label class="switch"><input type="checkbox" id="set-local-fb"><span class="track"></span><span>つながらないときは、このパソコンで認識する</span></label>
             </div>
           </div>
+
+          <div class="setting-card">
+            <h3>辞書をほかのパソコンと合わせる</h3>
+            <p class="muted">どれか 1 台で登録した言葉（辞書・定型文）が、ほかのパソコンにも自動で入ります。ほかのパソコンでも同じ設定にしてください。</p>
+            <div class="place-choice">
+              <label class="place-opt">
+                <input type="radio" name="dict_share" value="">
+                <span><b>合わせない</b><small>このパソコンだけで使う</small></span>
+              </label>
+              <label class="place-opt">
+                <input type="radio" name="dict_share" value="server">
+                <span><b>認識役のパソコンに預ける</b><small>「別のパソコン」で認識しているとき。ほかに何もいりません</small></span>
+              </label>
+              <label class="place-opt">
+                <input type="radio" name="dict_share" value="folder">
+                <span><b>同期フォルダに置く</b><small>OneDrive・Google ドライブ・Dropbox などを使っているとき</small></span>
+              </label>
+            </div>
+            <div id="dict-folder-fields" class="sub-fields" hidden>
+              <div id="dict-folder-cands" class="find-row"></div>
+              <label class="field-label" for="set-dict-folder">置くフォルダ（どのパソコンでも、同じ同期フォルダの中を選んでください）</label>
+              <input type="text" id="set-dict-folder" class="inp" placeholder="C:\Users\あなた\OneDrive\OnseiMan">
+            </div>
+            <details class="adv">
+              <summary>辞書の名前（1 台の認識役を何人かで使うとき）</summary>
+              <div class="sub-fields">
+                <label class="field-label" for="set-dict-name">同じ名前にしたパソコンどうしで合わせます（英数字と - _）</label>
+                <input type="text" id="set-dict-name" class="inp" style="width:160px" placeholder="shared">
+              </div>
+            </details>
+            <div class="find-row">
+              <button type="button" class="btn" id="btn-dict-sync">今すぐ合わせる</button>
+              <span class="muted" id="dict-sync-status"></span>
+            </div>
+          </div>
         </div>
 
         <details class="more-settings" id="more-settings">

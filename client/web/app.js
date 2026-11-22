@@ -49,6 +49,65 @@
     if (r.value === "server" && r.checked && !foundServers.length) findServers();
   }));
 
+  // ---- 辞書をほかのパソコンと合わせる ----
+  function dictShareValue() {
+    return ($('input[name="dict_share"]:checked') || {}).value || "";
+  }
+  function renderDictSync(info) {
+    const st = (info && info.status) || {};
+    const el = $("#dict-sync-status");
+    if (dictShareValue() === "") {
+      el.textContent = "";
+    } else if (st.last_error) {
+      el.textContent = `合わせられませんでした: ${st.last_error}`;
+    } else if (st.last_ok) {
+      const t = new Date(st.last_ok * 1000);
+      el.textContent = `最後に合わせた時刻: ${t.toLocaleTimeString().slice(0, -3)}`;
+    } else {
+      el.textContent = "まだ合わせていません";
+    }
+    const box = $("#dict-folder-cands");
+    box.innerHTML = "";
+    ((info && info.folders) || []).forEach((f) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn";
+      b.textContent = `${f.label} を使う`;
+      b.title = f.path;
+      b.addEventListener("click", () => { $("#set-dict-folder").value = f.path; });
+      box.appendChild(b);
+    });
+    if (!box.children.length) {
+      const s = document.createElement("span");
+      s.className = "muted";
+      s.textContent = "同期フォルダが見つかりませんでした。使っている同期フォルダの中のフォルダを書いてください";
+      box.appendChild(s);
+    }
+    // 同期フォルダを選んだのに空なら、見つかったものを入れておく
+    if (dictShareValue() === "folder" && !$("#set-dict-folder").value && info && info.folders && info.folders.length) {
+      $("#set-dict-folder").value = info.folders[0].path;
+    }
+  }
+  async function loadDictSync() {
+    try { renderDictSync(await api("/api/dict-sync")); } catch {}
+  }
+  $$('input[name="dict_share"]').forEach((r) => r.addEventListener("change", () => {
+    $("#dict-folder-fields").hidden = dictShareValue() !== "folder";
+    loadDictSync();
+  }));
+  $("#btn-dict-sync").addEventListener("click", async () => {
+    try {
+      await saveSettings(true);
+      const res = await api("/api/dict-sync/now", {});
+      renderDictSync(res);
+      toast(res.result === "off" ? "合わせる設定になっていません" : "辞書を合わせました");
+      if (!$("#view-dict").hidden) loadDict();
+    } catch (e) {
+      toast(e.message, "err");
+      loadDictSync();
+    }
+  });
+
   // 「別のパソコン」: サーバーを自動でさがして選ぶ
   function serverLines() {
     return $("#set-servers").value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
@@ -814,6 +873,11 @@
     $$('input[name="rec_place"]').forEach((r) => { r.checked = r.value === (s.recognition_place || "local"); });
     $("#server-fields").hidden = (s.recognition_place || "local") !== "server";
     $("#set-local-fb").checked = !!s.local_fallback;
+    $$('input[name="dict_share"]').forEach((r) => { r.checked = r.value === (s.dict_share || ""); });
+    $("#set-dict-folder").value = s.dict_share_folder || "";
+    $("#set-dict-name").value = s.dict_share_name || "shared";
+    $("#dict-folder-fields").hidden = (s.dict_share || "") !== "folder";
+    loadDictSync();
     $("#set-llm-url").value = s.llm_base_url || "";
     $("#set-llm-model").value = s.llm_model || "";
   }
@@ -867,6 +931,9 @@
         preferred_server: serverLines().includes(preferredServer) ? preferredServer : "",
         recognition_place: ($('input[name="rec_place"]:checked') || {}).value || "local",
         local_fallback: $("#set-local-fb").checked,
+        dict_share: dictShareValue(),
+        dict_share_folder: $("#set-dict-folder").value.trim(),
+        dict_share_name: $("#set-dict-name").value.trim() || "shared",
         llm_base_url: $("#set-llm-url").value.trim(),
         llm_model: $("#set-llm-model").value.trim(),
       });

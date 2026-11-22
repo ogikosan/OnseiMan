@@ -78,6 +78,12 @@ class ClientConfig:
     # いつも使うサーバー（server_urls のどれか）。止まっているときだけ、ほかのサーバーを使う。空なら最後に成功したもの
     preferred_server: str = ""
     server_connect_timeout_sec: float = 1.5
+    # 辞書をほかのパソコンと合わせる: ""（合わせない）/ "server"（認識役のパソコンに預ける）/ "folder"（同期フォルダに置く）
+    dict_share: str = ""
+    # "folder" のときの置き場所（OneDrive などの中のフォルダ）
+    dict_share_folder: str = ""
+    # 預ける辞書の名前（英数字）。1 台のサーバーを何人かで使うとき、人ごとに分ける
+    dict_share_name: str = "shared"
     server_read_timeout_sec: float = 30.0
     local_fallback: bool = True
     local_model_dir: str = "models/sherpa-onnx-funasr-nano-int8-2025-12-30"

@@ -7,10 +7,12 @@ import uuid
 import io
 import logging
 import os
+import json
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import wave
 from pathlib import Path
@@ -40,7 +42,7 @@ _register_nvidia_dll_dirs()
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -49,6 +51,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from shared.asr_engine import FunASRNanoEngine
 from shared.audio import decode_wav_bytes
+from shared.dict_sync import NAME_RE, clean_data
 from shared.segmenter import join_texts, split_on_pauses
 
 logging.basicConfig(
@@ -231,6 +234,69 @@ async def transcribe(
         "elapsed_ms": round(elapsed_ms, 1),
         "provider": engine.active_provider,
     }
+
+
+# ---- 辞書を預かる（各パソコンの OnseiMan が、ここを通して辞書を合わせる） ----
+# 預かった辞書は server_data/dicts/<名前>.json。利用者のデータなので、更新しても消さない。
+DICT_DIR = Path(os.environ.get("ONSEIMAN_DATA_DIR") or (ROOT_DIR / "server_data")) / "dicts"
+MAX_DICT_BYTES = 2 * 1024 * 1024
+_dict_lock = threading.Lock()
+
+
+def _dict_path(name: str) -> Path:
+    if not NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Invalid dictionary name")
+    return DICT_DIR / f"{name}.json"
+
+
+def _read_dict(path: Path) -> dict:
+    if not path.exists():
+        return {"store": "", "version": 0, "data": {}}
+    try:
+        j = json.loads(path.read_text(encoding="utf-8"))
+        return {"store": str(j.get("store", "")), "version": int(j.get("version", 0)), "data": j.get("data") or {}}
+    except Exception:
+        logger.exception("預かった辞書を読めませんでした: %s", path.name)
+        raise HTTPException(status_code=500, detail="Stored dictionary is broken") from None
+
+
+@app.get("/dict/{name}")
+def get_dict(name: str) -> dict:
+    path = _dict_path(name)
+    with _dict_lock:
+        return _read_dict(path)
+
+
+@app.put("/dict/{name}")
+async def put_dict(name: str, request: Request) -> dict:
+    path = _dict_path(name)
+    raw = await request.body()
+    if len(raw) > MAX_DICT_BYTES:
+        raise HTTPException(status_code=413, detail="Dictionary too large")
+    try:
+        body = json.loads(raw)
+        version = int(body["version"])
+        data = body["data"]
+        if not isinstance(data, dict):
+            raise ValueError
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid dictionary") from None
+    data = clean_data(data)
+    with _dict_lock:
+        cur = _read_dict(path)
+        if cur["version"] != version:
+            # 読んだあとに、ほかのパソコンが書き換えた。読み直して合わせ直してもらう
+            raise HTTPException(status_code=409, detail="Dictionary was changed by another computer")
+        store = cur["store"] or uuid.uuid4().hex
+        new = {"store": store, "version": version + 1, "data": data}
+        DICT_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(new, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    # 中身はログに残さない（件数だけ）
+    logger.info("辞書を預かりました: %s 版 %d（%d 件）", name, version + 1,
+                sum(len(v) for v in data.values() if isinstance(v, (list, dict))))
+    return {"store": store, "version": version + 1}
 
 
 def main() -> None:

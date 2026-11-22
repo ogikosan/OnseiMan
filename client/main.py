@@ -42,6 +42,8 @@ from client.watchdog import Heartbeat, release_stuck_modifiers, spawn_watchdog
 from shared.audio import decode_wav_bytes, samples_to_wav_bytes
 from shared.correction_learner import CorrectionCandidateStore, extract_corrections
 from shared.dictionary import CustomDictionary
+from shared.dict_sync import DEFAULT_NAME, NAME_RE, DictSync, FolderStore, ServerStore
+from shared.fillers import DEFAULT_FILLERS
 from shared.segmenter import join_texts, split_on_pauses
 from shared.self_correction import has_self_correction, is_over_truncated, rule_based_self_correction
 from shared.voice_commands import apply_voice_commands, is_undo_command
@@ -132,6 +134,13 @@ class OnseiManApp:
             on_no_signal=self._on_no_signal,
         )
         self.transcriber = HybridTranscriber(self.config, DATA_DIR)
+        self.dict_sync = DictSync(
+            self.dictionary.path,
+            LOG_DIR / "dict_sync.json",
+            self._dict_store,
+            default_fillers=list(DEFAULT_FILLERS),
+            on_changed=self._on_dict_synced,
+        )
         self.audio_muter = OtherAudioMuter(LOG_DIR / "muted_sessions.json")
         self.ui.on_overlay_moved = self._on_overlay_moved
         self.ui.set_overlay_pinned(self.config.overlay_position)
@@ -169,8 +178,10 @@ class OnseiManApp:
             on_approve_candidate=self._approve_learning_candidate,
             on_reject_candidate=self._reject_learning_candidate,
             on_learn_from_manual_edit=self._learn_from_manual_edit,
-            on_dict_saved=lambda: self.dictionary.reload(force=True),
+            on_dict_saved=self._on_dict_saved,
             on_config_saved=self._on_settings_saved,
+            get_dict_sync_status=self.dict_sync.status,
+            on_dict_sync_now=self.dict_sync.sync_once,
             list_microphones=list_input_devices,
             get_hotkey=lambda: self.config.hotkey,
             on_change_hotkey=self._start_hotkey_capture,
@@ -235,6 +246,26 @@ class OnseiManApp:
         self._reload_config_if_changed()
         self._restore_idle_icon()
         self.ui.refresh_history_if_open()
+        self.dict_sync.kick()
+
+    def _dict_store(self):
+        """辞書の預け先（合わせない設定なら None）。"""
+        cfg = self.config
+        name = cfg.dict_share_name if NAME_RE.match(cfg.dict_share_name or "") else DEFAULT_NAME
+        if cfg.dict_share == "server":
+            url = self.transcriber._chosen() or next(iter(self.transcriber._server_list()), "")
+            return ServerStore(url, name) if url else None
+        if cfg.dict_share == "folder" and cfg.dict_share_folder:
+            return FolderStore(cfg.dict_share_folder, name)
+        return None
+
+    def _on_dict_saved(self) -> None:
+        self.dictionary.reload(force=True)
+        self.dict_sync.kick()
+
+    def _on_dict_synced(self) -> None:
+        """ほかのパソコンで登録した言葉が入ってきた。"""
+        self.dictionary.reload(force=True)
 
     def _reload_config_if_changed(self) -> None:
         with self._config_lock:
@@ -1286,6 +1317,7 @@ class OnseiManApp:
         except Exception:
             logger.exception("心拍の共有メモリを作れませんでした（見張りなしで起動します）")
         self.hook.start()
+        self.dict_sync.start()
         if self.config.keep_mic_open:
             threading.Thread(target=self.recorder.warm_up, daemon=True).start()
         if self.heartbeat is not None:

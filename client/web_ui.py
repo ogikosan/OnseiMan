@@ -81,6 +81,8 @@ class WebUIServer:
         on_learn_from_manual_edit: Callable[[str, str], int],
         on_dict_saved: Optional[Callable[[], None]] = None,
         on_config_saved: Optional[Callable[[], None]] = None,
+        get_dict_sync_status: Optional[Callable[[], dict]] = None,
+        on_dict_sync_now: Optional[Callable[[], str]] = None,
         list_microphones: Optional[Callable[[], List[str]]] = None,
         get_hotkey: Optional[Callable[[], str]] = None,
         on_change_hotkey: Optional[Callable[[], None]] = None,
@@ -106,6 +108,8 @@ class WebUIServer:
         self.on_learn_from_manual_edit = on_learn_from_manual_edit
         self.on_dict_saved = on_dict_saved
         self.on_config_saved = on_config_saved
+        self.get_dict_sync_status = get_dict_sync_status
+        self.on_dict_sync_now = on_dict_sync_now
         self.list_microphones = list_microphones
         self.get_hotkey = get_hotkey
         self.on_change_hotkey = on_change_hotkey
@@ -272,6 +276,8 @@ class WebUIServer:
                         self._send_json(owner.get_dict_payload())
                     elif path == "/api/settings":
                         self._send_json(owner.get_settings_payload())
+                    elif path == "/api/dict-sync":
+                        self._send_json(owner.get_dict_sync_payload())
                     elif path.startswith("/api/audio/"):
                         self._serve_audio(path[len("/api/audio/") :])
                     else:
@@ -344,6 +350,9 @@ class WebUIServer:
                     elif path == "/api/settings":
                         owner.save_settings_payload(body)
                         self._send_json({"ok": True})
+                    elif path == "/api/dict-sync/now":
+                        result = owner.on_dict_sync_now() if owner.on_dict_sync_now else "off"
+                        self._send_json({"ok": result != "error", "result": result, **owner.get_dict_sync_payload()})
                     elif path == "/api/capture_hotkey":
                         if owner.on_change_hotkey:
                             owner.on_change_hotkey()
@@ -493,6 +502,12 @@ class WebUIServer:
         if self.on_dict_saved:
             self.on_dict_saved()
 
+    def get_dict_sync_payload(self) -> Dict[str, Any]:
+        from shared.dict_sync import find_sync_folders
+
+        st = self.get_dict_sync_status() if self.get_dict_sync_status else {}
+        return {"status": st, "folders": find_sync_folders()}
+
     def get_settings_payload(self) -> Dict[str, Any]:
         cfg = ClientConfig.load(self.config_path)
         mics = [DEFAULT_MIC_LABEL] + (self.list_microphones() if self.list_microphones else [])
@@ -533,6 +548,9 @@ class WebUIServer:
             "preferred_server": getattr(cfg, "preferred_server", "") or "",
             "recognition_place": (cfg.recognition_place or ("server" if cfg.server_urls else "local")),
             "local_fallback": bool(cfg.local_fallback),
+            "dict_share": cfg.dict_share if cfg.dict_share in ("server", "folder") else "",
+            "dict_share_folder": cfg.dict_share_folder,
+            "dict_share_name": cfg.dict_share_name,
             "llm_base_url": cfg.llm_base_url,
             "llm_model": cfg.llm_model,
         }
@@ -607,6 +625,26 @@ class WebUIServer:
         if cfg.recognition_place == "server" and not urls:
             raise ValueError("使うパソコンが選ばれていません。「サーバーをさがす」を押して、見つかったパソコンにチェックを入れてください")
         cfg.local_fallback = bool(body.get("local_fallback", True))
+        if "dict_share" in body:
+            from shared.dict_sync import NAME_RE
+
+            share = str(body.get("dict_share") or "")
+            share = share if share in ("server", "folder") else ""
+            folder = str(body.get("dict_share_folder") or "").strip().strip('"')
+            name = str(body.get("dict_share_name") or "shared").strip() or "shared"
+            if not NAME_RE.match(name):
+                raise ValueError("辞書の名前は、英数字と - _ で 32 文字までにしてください")
+            if share == "server" and not urls:
+                raise ValueError("辞書を預けるパソコンがありません。「声を文字にする場所」で、別のパソコンを見つけてください")
+            if share == "folder":
+                p = Path(folder)
+                if not folder or not p.is_absolute():
+                    raise ValueError("辞書を置くフォルダを選んでください")
+                if not p.is_dir():
+                    if not p.parent.is_dir():
+                        raise ValueError(f"フォルダが見つかりません: {folder}")
+                    p.mkdir()
+            cfg.dict_share, cfg.dict_share_folder, cfg.dict_share_name = share, folder, name
         cfg.llm_base_url = llm_url
         cfg.llm_model = str(body.get("llm_model", "")).strip()
         cfg.save(self.config_path)

@@ -28,6 +28,7 @@ config.json
 dict.json
 logs/
 models/
+server_data/
 .venv_server/
 build_dist/
 
