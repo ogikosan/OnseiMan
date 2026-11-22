@@ -22,6 +22,9 @@ case "$(uname -m)" in
 esac
 export UV_PYTHON_INSTALL_DIR="$BASE_DIR/tools/python"
 export UV_NO_PROGRESS=1
+# 取ってきた部品の控えを、ユーザーのフォルダ（~/.cache/uv など）に残さない
+export UV_NO_CACHE=1
+export PIP_NO_CACHE_DIR=1
 
 get_uv() {
   [ -x "$UV" ] && return 0

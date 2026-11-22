@@ -29,6 +29,9 @@ if (Test-Path $Ready) { Remove-Item -Path $Ready -Force }
 # 専用の Python は、このフォルダの中に置く
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $Root "tools\python"
 $env:UV_NO_PROGRESS = "1"
+# 取ってきた部品の控えを、ユーザーのフォルダ（%LOCALAPPDATA%\uv など）に残さない
+$env:UV_NO_CACHE = "1"
+$env:PIP_NO_CACHE_DIR = "1"
 
 function Get-Uv {
     if (Test-Path $UvExe) { return $true }
