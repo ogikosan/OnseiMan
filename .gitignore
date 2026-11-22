@@ -38,3 +38,7 @@ packaging/private-patterns.txt
 
 # update.bat が残す前の版
 backup/
+
+# install が用意する道具と専用の Python
+tools/bin/
+tools/python/

@@ -57,17 +57,20 @@ try {
     foreach ($item in Get-ChildItem -Path $Root -Force | Where-Object { $Keep -notcontains $_.Name }) {
         Copy-Item -Path $item.FullName -Destination $bk -Recurse -Force
     }
+    # 専用の Python と道具は大きいので、残す分には入れない
+    foreach ($big in @("tools\bin", "tools\python")) {
+        $bp = Join-Path $bk $big
+        if (Test-Path $bp) { Remove-Item -Path $bp -Recurse -Force }
+    }
 
     Write-Host "入れ替えています..."
     foreach ($item in Get-ChildItem -Path $src.FullName -Force | Where-Object { $Keep -notcontains $_.Name }) {
         Copy-Item -Path $item.FullName -Destination $Root -Recurse -Force
     }
 
-    $py = Join-Path $Root ".venv\Scripts\python.exe"
-    if (Test-Path $py) {
-        Write-Host "必要な部品を確かめています..."
-        & $py -m pip install -q -r (Join-Path $Root "client\requirements.txt")
-    }
+    # 新しい版で必要な部品が増えていれば入れる
+    & (Join-Path $Root "tools\install.ps1") -Target client | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Host "部品の確認に失敗しました。install_client.bat を実行してください。" }
     Write-Host ""
     Write-Host "$remote に入れ替えました。start_client.bat で起動してください。"
     Write-Host "（前の版は $bk に残してあります）"

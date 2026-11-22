@@ -13,8 +13,10 @@
 
 ## 1. クライアント（Windows・必須）
 
-1. Python 3.11（64bit, PATH に追加）を用意。
-2. リポジトリ直下で `install_client.bat`（`.venv` を作り `client/requirements.txt` を入れる）。
+1. Python の用意は不要。`install_client.bat`（中身は `tools\install.ps1`）が、uv を使って専用の Python 3.11 を
+   `tools\python` に用意し、`.venv` を作る（パソコン全体には何も入れない）。
+2. リポジトリ直下で `install_client.bat` を実行（`.venv` に `client/requirements.txt` を入れ、最後に読み込みを確かめる）。
+   「準備できました」と出れば成功。失敗したら画面の内容を読む（インターネット接続が必要）。
 3. `start_client.bat` で起動（`pythonw client\main.py`）。初回に `config.json` と `dict.json` を作り、
    このパソコンで認識するためのモデル（約 840MB）を、進み具合の画面を出してダウンロードする。
 4. 動作確認: 何かの入力欄をクリック → 右Alt を押して話す → もう一度右Alt → 文字が入る。ログは `logs/onseiman.log`。
@@ -28,7 +30,8 @@
 - **Mac**: Python 3.11 を用意（無ければ `brew install python@3.11`）→ リポジトリ直下で `bash server/setup_macos.sh`。
   `.venv_server` を作って依存とモデルを入れ、launchd（`~/Library/LaunchAgents/com.onseiman.asr.plist`）で常駐登録する。
   `--with-ai` を付けると Ollama + qwen2.5:7b（約 4.7GB）も入れる（「AI で文章を整える」を使うときだけ）。
-- **Windows**: `server\install_server_windows.bat` → `server\start_server.bat`（`0.0.0.0:8765`）。
+- **Windows**: `server\install_server_windows.bat`（Python 不要。`.venv_server` を作り、モデルも取得）→
+  `server\start_server.bat`（`0.0.0.0:8765`）。
   ファイアウォールで Python の受信を許可する。
 - 確認: そのパソコンで `curl http://127.0.0.1:8765/health` が `{"status":"ok",...}` を返すこと。
 

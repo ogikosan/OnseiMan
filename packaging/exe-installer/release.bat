@@ -1,6 +1,5 @@
 @echo off
-chcp 65001 >nul
+rem Publish a new version (exe installer). Bump __version__ in client\version.py first.
+rem Usage: packaging\exe-installer\release.bat "release notes"
 cd /d "%~dp0..\.."
-rem 新しいバージョンを公開する。先に client\version.py の __version__ を上げておく。
-rem 例: packaging\exe-installer\release.bat "長い発話の認識を改善しました"
 .venv\Scripts\python.exe packaging\exe-installer\release.py --notes "%~1"

@@ -57,6 +57,14 @@ Fun-ASR Nano は一度に扱える量（音声 + 辞書のヒント + 出力）�
 - 録音中・認識中・入力した・注意は、ひとつのカプセル（`client/pill.py`、レイヤードウィンドウ）で出す。フォーカスを奪わない。ドラッグで場所を固定（`overlay_position`）。
 - 設定・辞書・履歴・使い方は Web 画面（`client/web/`、`client/web_ui.py`、既定ポート 18765）。
 
+## 準備と更新（Windows）
+
+- `install_client.bat` → `tools\install.ps1 -Target client`。uv（版と SHA-256 を固定）を `tools\bin` に取得し、
+  専用の Python 3.11 を `tools\python` に置いて `.venv` を作る。Python が入っていなくてよい。最後に全部品の読み込みを確かめる。
+  uv を取得できないときは、入っている Python 3.11 以上で代用する。サーバーは `-Target server`（`.venv_server`、モデルも取得）。
+- `update.bat` → `tools\update.ps1`。GitHub の `main` の zip で上書きし、`install.ps1` で部品を確かめる。
+  `config.json`・`dict.json`・`logs`・`models`・`.venv` には触らない。前の版は `backup\` に残す。
+
 ## データの場所
 
 - ソースで動かすとき：プロジェクト直下（`config.json`, `dict.json`, `logs/`, `models/`）。

@@ -13,10 +13,10 @@
 
 ## 入れ方
 
-Windows 10 / 11（64ビット）と Python 3.11 が必要です。
+Windows 10 / 11（64ビット）で動きます。Python などを自分で入れる必要はありません。
 
 1. 右上の「Code」→「Download ZIP」でダウンロードして、好きな場所に展開する
-2. `install_client.bat` をダブルクリック
+2. `install_client.bat` をダブルクリック（必要なものを、このフォルダの中に自動で用意します）
 3. `start_client.bat` をダブルクリック（初回だけ、認識用のデータ 約840MB を自動でダウンロードします）
 
 くわしくは [はじめに.md](packaging/friend/はじめに.md) を見てください。
@@ -38,7 +38,7 @@ OnseiMan を終了してから `update.bat` をダブルクリックします。
 | `client/` | Windows のアプリ（録音・貼り付け・表示・設定画面 `client/web/`） |
 | `shared/` | 認識エンジン・辞書・文の整え方など、アプリとサーバーで共通の部品 |
 | `server/` | 認識サーバー（Mac: `setup_macos.sh` / Windows: `install_server_windows.bat`） |
-| `tools/` | 更新（`update.ps1`） |
+| `tools/` | 準備（`install.ps1`）と更新（`update.ps1`） |
 | `tests/` | 自動テスト |
 | `packaging/` | 友達に渡す説明と zip の作り方。`exe-installer/` は今は使っていない |
 

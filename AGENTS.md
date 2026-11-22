@@ -12,6 +12,11 @@
   新しい版を出す手順：`client/version.py` を上げる → `packaging/friend/変更点.md` に追記 → テスト全件 OK →
   `develop` にコミット → `main` を早送りで合わせる → タグ `vX.Y.Z` → `git push origin main develop refs/tags/vX.Y.Z`。
   公開リポジトリなので、コミット前に `packaging/private-patterns.txt` の言葉が混ざっていないか必ず調べる。
+- バッチ（`*.bat`）・PowerShell（`*.ps1`）を変えたとき：
+  - `*.bat` は英数字だけ・CRLF。日本語の表示や処理は `tools\*.ps1`（BOM つき UTF-8・CRLF）に書く。`tests/test_scripts.py` が形を確かめる。
+  - パスを含む編集を、シェルのヒアドキュメント経由の Python で行わない（`\a` `\b` `\r` が制御文字に化けて、2026-11-23 に利用者の環境で失敗した）。
+    Write / Edit ツールか、ファイルに書いたスクリプトで編集する。
+  - 形のテストだけで済ませず、まっさらなフォルダに展開して実際に実行する（Python が PATH に無い状態で `install_client.bat`）。
 - 文書のみ：リンク・内容・実際の仕様との整合性。
 
 ## 該当時に読む資料

@@ -1410,7 +1410,7 @@ def _selftest(out_path: str) -> int:
         from pycaw.pycaw import AudioUtilities
 
         report["audio_sessions"] = len(AudioUtilities.GetAllSessions())
-        from client.pill import RecordingPill  # noqa: F401
+        from client.pill import StatusPill  # noqa: F401
         model_dir = Path(sys.argv[sys.argv.index("--selftest-model") + 1]) if "--selftest-model" in sys.argv else None
         if model_dir:
             from shared.asr_engine import FunASRNanoEngine

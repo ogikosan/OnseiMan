@@ -1,6 +1,6 @@
 @echo off
-chcp 65001 >nul
+rem Update OnseiMan to the latest version on GitHub (settings, dictionary and history are kept).
+rem Keep this file ASCII-only. The real work is in tools\update.ps1.
 cd /d "%~dp0"
-rem OnseiMan を GitHub の最新版に入れ替える（設定・辞書・履歴はそのまま）
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\update.ps1"
 pause
