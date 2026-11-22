@@ -81,19 +81,24 @@ class HybridTranscriber:
                 seen.append(b)
         return seen
 
-    def ordered_servers(self) -> list[str]:
-        """試す順番: 最後に成功したサーバー → 他の元気なサーバー（設定順）。最近失敗したものは除く。
+    def _chosen(self) -> str:
+        """利用者が「いつも使う」に選んだサーバー（登録されていなければ空）。"""
+        want = (getattr(self.config, "preferred_server", "") or "").strip().rstrip("/")
+        return want if want and want in self._server_list() else ""
 
-        全部が「最近失敗」なら、設定順にすべて試す（ネットワーク復帰直後など）。
+    def ordered_servers(self) -> list[str]:
+        """試す順番: 「いつも使う」サーバー → 最後に成功したサーバー → 他の元気なサーバー（設定順）。
+        最近失敗したものは除く。全部が「最近失敗」なら、設定順にすべて試す（ネットワーク復帰直後など）。
         """
         servers = self._server_list()
         now = time.monotonic()
         with self._state_lock:
             alive = [u for u in servers if self._down_until.get(u, 0.0) <= now]
             pref = self._preferred
-        if pref in alive:
-            alive.remove(pref)
-            alive.insert(0, pref)
+        for first in (pref, self._chosen()):   # あとに入れたものが先頭になる
+            if first in alive:
+                alive.remove(first)
+                alive.insert(0, first)
         return alive or servers
 
     def _mark_ok(self, url: str) -> None:
@@ -139,7 +144,11 @@ class HybridTranscriber:
                 self._mark_down(u)
         with self._state_lock:
             pref = self._preferred
-        chosen = pref if pref and results.get(pref) else next((u for u in servers if results.get(u)), None)
+        want = self._chosen()
+        if want and results.get(want):
+            chosen = want
+        else:
+            chosen = pref if pref and results.get(pref) else next((u for u in servers if results.get(u)), None)
         if chosen:
             with self._state_lock:
                 self._preferred = chosen

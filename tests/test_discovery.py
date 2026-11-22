@@ -92,6 +92,38 @@ class TestDefaults(unittest.TestCase):
             ClientConfig(server_urls=["http://100.64.0.10:8765"], server_names={"http://100.64.0.10:8765": "Mac-mini"}).save(p)
             self.assertEqual(ClientConfig.load(p).server_names, {"http://100.64.0.10:8765": "Mac-mini"})
 
+class TestPreferredServer(unittest.TestCase):
+    def _tr(self, **kw):
+        from client.config import ClientConfig
+        from client.transcriber import HybridTranscriber
+
+        cfg = ClientConfig(recognition_place="server", server_urls=["http://a:8765", "http://b:8765"], **kw)
+        return HybridTranscriber(cfg, ROOT)
+
+    def test_chosen_server_goes_first_even_after_other_succeeded(self) -> None:
+        tr = self._tr(preferred_server="http://b:8765")
+        tr._mark_ok("http://a:8765")   # 最後に成功したのは a
+        self.assertEqual(tr.ordered_servers()[0], "http://b:8765")
+
+    def test_chosen_server_down_falls_back(self) -> None:
+        tr = self._tr(preferred_server="http://b:8765")
+        tr._mark_down("http://b:8765")
+        self.assertEqual(tr.ordered_servers(), ["http://a:8765"])
+
+    def test_without_choice_last_good_first(self) -> None:
+        tr = self._tr()
+        tr._mark_ok("http://b:8765")
+        self.assertEqual(tr.ordered_servers()[0], "http://b:8765")
+
+    def test_choice_not_in_list_is_ignored(self) -> None:
+        tr = self._tr(preferred_server="http://zzz:8765")
+        self.assertEqual(tr.ordered_servers(), ["http://a:8765", "http://b:8765"])
+
+    def test_health_check_picks_chosen(self) -> None:
+        tr = self._tr(preferred_server="http://b:8765")
+        with mock.patch.object(tr, "_probe", return_value="cpu"):
+            self.assertEqual(tr.check_server_health(), "http://b:8765")
+
 
 if __name__ == "__main__":
     unittest.main()

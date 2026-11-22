@@ -55,6 +55,7 @@
   }
   let foundServers = [];
   let serverNames = {};
+  let preferredServer = "";   // いつも使うサーバー
   const userNamed = new Set();   // 自分で名前を付けたサーバー（探し直しても上書きしない）
   const ipOf = (u) => String(u).replace(/^https?:\/\//, "").replace(/:\d+\/?$/, "");
   // まだ探していないときは、使っているサーバーを名前つきで出す
@@ -69,13 +70,25 @@
     for (const s of list) {
       const row = document.createElement("label");
       row.className = "found-item";
-      const kind = s.saved ? "" : s.ready ? (s.provider === "cuda" || s.provider === "coreml" ? " ・ GPU" : " ・ CPU") : " ・ 準備中";
+      const kind = s.saved ? "" : s.ready ? (s.provider === "cuda" || s.provider === "coreml" ? " ・ GPU" : " ・ CPU") : " ・ 準備中（データを読み込み中）";
       const speed = s.saved ? "" : ` ・ 返事 ${Number(s.ms) || 0}ms`;
       const shown = serverNames[s.url] || s.name;
+      const checked = using.has(s.url);
+      const isPref = checked && (preferredServer === s.url || (!preferredServer && using.size === 1));
+      const role = !checked ? "" : isPref ? '<span class="srv-role main">いつも使う</span>'
+        : `<button type="button" class="srv-role sub" title="このパソコンを優先して使います">いつもこれにする</button>`;
+      const roleNote = !checked ? "" : isPref ? "" : "いつも使うパソコンが止まっているときに使います ・ ";
       row.innerHTML = `<input type="checkbox" ${using.has(s.url) ? "checked" : ""}>
         <span class="srv-info"><input class="srv-name" maxlength="40" title="クリックで名前を変えられます">
-        <small>${esc(s.via)}${esc(kind)}${esc(speed)} ・ ${esc(ipOf(s.url))}</small></span>
-        <span class="srv-edit" aria-hidden="true">✎</span>`;
+        <small>${esc(roleNote)}${esc(s.via)}${esc(kind)}${esc(speed)} ・ ${esc(ipOf(s.url))}</small></span>
+        ${role}<span class="srv-edit" aria-hidden="true">✎</span>`;
+      const roleBtn = row.querySelector("button.srv-role");
+      if (roleBtn) roleBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        preferredServer = s.url;
+        renderFound(foundServers);
+        autoSaveServers(`✓ いつも「${serverNames[s.url] || s.name}」を使います`);
+      });
       const nameIn = row.querySelector(".srv-name");
       nameIn.value = shown;
       const commitName = () => {
@@ -96,6 +109,8 @@
         let lines = serverLines().filter((u) => u !== s.url);
         if (e.target.checked) lines = [...lines, s.url];
         $("#set-servers").value = lines.join("\n");
+        if (!e.target.checked && preferredServer === s.url) preferredServer = "";
+        renderFound(foundServers);
         autoSaveServers("✓ 使うパソコンを変えました");
       });
       box.appendChild(row);
@@ -120,6 +135,7 @@
         mergedCount += dup.length;
         lines = lines.map((u) => (dup.includes(u) ? s.url : u));
         for (const a of dup) {
+          if (preferredServer === a) preferredServer = s.url;
           if (serverNames[a] && !serverNames[s.url]) serverNames[s.url] = serverNames[a];
           if (userNamed.has(a)) userNamed.add(s.url);
         }
@@ -128,13 +144,21 @@
       // 見つかったもの（準備できているもの）は自動で使う
       for (const s of list) if (s.ready && !lines.includes(s.url)) lines.push(s.url);
       for (const s of list) if (!serverNames[s.url]) serverNames[s.url] = s.name;
+      if (!preferredServer || !lines.includes(preferredServer)) {
+        const fastest = list.filter((s) => s.ready).sort((a, b) => (a.ms || 0) - (b.ms || 0))[0];
+        preferredServer = fastest ? fastest.url : "";
+      }
       $("#set-servers").value = lines.join("\n");
       renderFound(list);
       if (!list.length) {
-        st.textContent = "見つかりませんでした。相手のパソコンで OnseiMan のサーバー（start_server）が動いているか、同じ Wi-Fi か Tailscale につながっているか確かめてください";
+        st.textContent = "見つかりませんでした。相手のパソコンの準備がまだなら、下の「準備のしかた」を見てください";
+        $("#server-guide").open = true;
+      } else if (!list.some((s) => s.ready)) {
+        st.textContent = "見つかりましたが、まだ準備中です（データを読み込み中）。少し待ってから、もう一度さがしてください";
       } else {
-        const names = list.filter((s) => s.ready).map((s) => s.name).join("、");
-        st.textContent = `${names} を見つけて、使うように設定しました` +
+        const names = list.filter((s) => s.ready).map((s) => serverNames[s.url] || s.name).join("、");
+        const main = serverNames[preferredServer] || "";
+        st.textContent = `${names} を見つけて、使うように設定しました` + (main && list.length > 1 ? `。いつもは「${main}」を使います` : "") +
           (mergedCount ? "（同じパソコンが 2 つの行き方で登録されていたので、1 つにまとめました）" : "");
         await autoSaveServers("");
       }
@@ -784,6 +808,7 @@
     $("#set-overlay").checked = !!s.show_overlay;
     $("#set-servers").value = (s.server_urls || []).join("\n");
     serverNames = { ...(s.server_names || {}) };
+    preferredServer = s.preferred_server || "";
     Object.keys(serverNames).forEach((u) => userNamed.add(u));
     renderFound(savedAsFound());
     $$('input[name="rec_place"]').forEach((r) => { r.checked = r.value === (s.recognition_place || "local"); });
@@ -839,6 +864,7 @@
         show_overlay: $("#set-overlay").checked,
         server_urls: $("#set-servers").value,
         server_names: Object.fromEntries(serverLines().filter((u) => serverNames[u]).map((u) => [u, serverNames[u]])),
+        preferred_server: serverLines().includes(preferredServer) ? preferredServer : "",
         recognition_place: ($('input[name="rec_place"]:checked') || {}).value || "local",
         local_fallback: $("#set-local-fb").checked,
         llm_base_url: $("#set-llm-url").value.trim(),

@@ -75,6 +75,8 @@ class ClientConfig:
     server_urls: List[str] = field(default_factory=list)
     # サーバーのアドレス → パソコンの名前（「サーバーをさがす」で見つけたときに覚える。画面の表示用）
     server_names: Dict[str, str] = field(default_factory=dict)
+    # いつも使うサーバー（server_urls のどれか）。止まっているときだけ、ほかのサーバーを使う。空なら最後に成功したもの
+    preferred_server: str = ""
     server_connect_timeout_sec: float = 1.5
     server_read_timeout_sec: float = 30.0
     local_fallback: bool = True

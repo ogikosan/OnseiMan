@@ -266,6 +266,28 @@
                 <span class="muted" id="find-status">Tailscale と家のネットワークから、OnseiMan のサーバーを探して、見つかったものを自動で使います。名前はクリックで変えられます</span>
               </div>
               <div id="found-servers" class="found-list"></div>
+              <details class="adv server-guide" id="server-guide">
+                <summary>相手のパソコンの準備のしかた（はじめて使うとき）</summary>
+                <div class="guide-body">
+                  <p>声を文字にする役のパソコンには、OnseiMan のサーバーと、認識用のデータ（約840MB）が要ります。</p>
+                  <p class="guide-warn"><b>このパソコンから、相手のパソコンに入れることはしません。</b>
+                  相手のパソコンの前で、そのパソコンを使っている人（自分のパソコンなら自分）が、次の準備をしてください。
+                  ほかの人のパソコンを使うときは、先にその人に聞いてください。</p>
+                  <ol>
+                    <li>相手のパソコンに OnseiMan のフォルダをコピーする（GitHub の「Code」→「Download ZIP」でも同じ）</li>
+                    <li><b>Windows のとき</b>：<code>server\start_server.bat</code> をダブルクリック。
+                      はじめては、そのパソコンに必要なものとデータ（約840MB）をダウンロードするので、数分〜10分かかります。「ファイアウォール」の確認が出たら「許可」。
+                      <b>使うあいだは、出てきた黒い窓を閉じないでください。</b></li>
+                    <li><b>Mac のとき</b>：ターミナルでそのフォルダに移動して <code>bash server/setup_macos.sh</code>。
+                      データのダウンロードを含めて 10分ほどかかります。Python が無いと言われたら、先に <code>brew install python@3.11</code>。
+                      一度済めば、Mac を起動するたびに自動で動きます。</li>
+                    <li>こちらに戻って「サーバーをさがす」を押す</li>
+                  </ol>
+                  <p class="muted">見つからないとき：2 台が同じ Wi-Fi（または同じ Tailscale）につながっているか、
+                  相手のパソコンが起動していて、サーバーの窓が開いているかを確かめてください。
+                  「準備中」と出るときは、データを読み込んでいるところです。少し待ってからもう一度さがしてください。</p>
+                </div>
+              </details>
               <details class="adv">
                 <summary>アドレスを自分で書く</summary>
                 <div class="sub-fields">

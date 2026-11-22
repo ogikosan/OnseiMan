@@ -530,6 +530,7 @@ class WebUIServer:
             "show_overlay": bool(cfg.show_overlay),
             "server_urls": list(cfg.server_urls),
             "server_names": dict(getattr(cfg, "server_names", {}) or {}),
+            "preferred_server": getattr(cfg, "preferred_server", "") or "",
             "recognition_place": (cfg.recognition_place or ("server" if cfg.server_urls else "local")),
             "local_fallback": bool(cfg.local_fallback),
             "llm_base_url": cfg.llm_base_url,
@@ -597,6 +598,11 @@ class WebUIServer:
             old = dict(getattr(cfg, "server_names", {}) or {})
             old.update({str(k): str(v)[:64] for k, v in names.items() if str(k) in urls and str(v).strip()})
             cfg.server_names = {u: old[u] for u in urls if u in old}
+        if "preferred_server" in body:
+            want = str(body.get("preferred_server") or "").strip()
+            cfg.preferred_server = want if want in urls else ""
+        elif getattr(cfg, "preferred_server", "") not in urls:
+            cfg.preferred_server = ""
         cfg.recognition_place = "server" if body.get("recognition_place") == "server" else "local"
         if cfg.recognition_place == "server" and not urls:
             raise ValueError("使うパソコンが選ばれていません。「サーバーをさがす」を押して、見つかったパソコンにチェックを入れてください")
