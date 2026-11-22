@@ -50,6 +50,31 @@ def _find_app_browser() -> Optional[str]:
 WINDOW_TITLE = "OnseiMan"  # client/web/index.html の <title>
 
 
+def app_browser_args(browser: str, target: str, profile_dir: Optional[Path]) -> List[str]:
+    """画面をブラウザのアプリ表示で開く命令。
+
+    ふだんのプロフィールで開くと、ブラウザがアカウントの同期を始め、拡張機能をまとめて入れたり、
+    拡張機能のボタン（AI ツールなど）が画面に出たりする（2026-11-22、ふだん使わない Edge に 28 個入った）。
+    そこで OnseiMan 専用の空のプロフィールで開き、同期・拡張機能・初回の案内を止める。
+    """
+    args = [browser, f"--app={target}", "--window-size=1040,740"]
+    if profile_dir is not None:
+        try:
+            Path(profile_dir).mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return args
+        args += [
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-extensions",
+            "--disable-sync",
+            "--disable-background-networking",
+            "--disable-features=msImplicitSignin,msEdgeSidebarV2,EdgeCollections,msEdgeShopping",
+        ]
+    return args
+
+
 def _find_app_window() -> int:
     """すでに開いている OnseiMan の画面（Edge / Chrome のアプリ表示）の窓。無ければ 0。"""
     if os.name != "nt":
@@ -143,6 +168,7 @@ class WebUIServer:
         is_startup_enabled: Optional[Callable[[], bool]] = None,
         set_startup_enabled: Optional[Callable[[bool], None]] = None,
         preferred_port: int = 18765,
+        browser_profile_dir: Optional[Path] = None,
     ) -> None:
         self.dict_path = dict_path
         self.config_path = config_path
@@ -171,6 +197,8 @@ class WebUIServer:
         self.is_startup_enabled = is_startup_enabled
         self.set_startup_enabled = set_startup_enabled
         self._preferred_port = preferred_port
+        # 画面を開くときに使う、OnseiMan 専用のブラウザのプロフィール（None ならふだんのプロフィール）
+        self.browser_profile_dir = browser_profile_dir
 
         self._server: Optional[ThreadingHTTPServer] = None
         # 開いている画面に切り替えてほしいタブ（トレイのメニューから押したとき）
@@ -481,7 +509,7 @@ class WebUIServer:
         if browser:
             try:
                 subprocess.Popen(
-                    [browser, f"--app={target}", "--window-size=1040,740"],
+                    app_browser_args(browser, target, self.browser_profile_dir),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )

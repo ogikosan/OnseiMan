@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 $Repo = "ogikosan/OnseiMan"
 $Branch = "main"
 $Root = Split-Path -Parent $PSScriptRoot
-$Keep = @("config.json", "dict.json", "logs", "models", ".venv", ".venv_server", "backup", "build_dist", "server_data")
+$Keep = @("config.json", "dict.json", "logs", "models", ".venv", ".venv_server", "backup", "build_dist", "server_data", "browser_profile")
 
 function Finish([int]$code) {
     if ($Restart) {

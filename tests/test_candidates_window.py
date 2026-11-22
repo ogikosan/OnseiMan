@@ -105,6 +105,23 @@ class TestWindow(unittest.TestCase):
         wb.assert_not_called()
         self.assertEqual(self.srv._pending_tab, "settings")
 
+    def test_opens_with_own_empty_profile(self) -> None:
+        # ふだんのプロフィールで開くと、ブラウザが同期を始めて拡張機能をまとめて入れることがある（2026-11-22）
+        from client.web_ui import app_browser_args
+
+        prof = Path(self.tmp.name) / "browser_profile"
+        args = app_browser_args("edge.exe", "http://127.0.0.1:1/#history", prof)
+        self.assertIn(f"--user-data-dir={prof}", args)
+        for flag in ("--disable-extensions", "--disable-sync", "--no-first-run"):
+            self.assertIn(flag, args)
+        self.assertTrue(prof.is_dir())
+        self.srv.browser_profile_dir = prof
+        with mock.patch("client.web_ui._find_app_window", return_value=0), \
+             mock.patch("client.web_ui._find_app_browser", return_value="edge.exe"), \
+             mock.patch("client.web_ui.subprocess.Popen") as popen:
+            self.srv.open_window("history")
+        self.assertIn(f"--user-data-dir={prof}", popen.call_args.args[0])
+
     def test_new_window_when_none(self) -> None:
         with mock.patch("client.web_ui._find_app_window", return_value=0), \
              mock.patch("client.web_ui._find_app_browser", return_value="edge.exe"), \

@@ -29,6 +29,7 @@ dict.json
 logs/
 models/
 server_data/
+browser_profile/
 .venv_server/
 build_dist/
 

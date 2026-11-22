@@ -208,6 +208,7 @@ class OnseiManApp:
             on_clear_ai_hotkey=self._clear_ai_hotkey,
             is_startup_enabled=is_startup_enabled,
             set_startup_enabled=lambda enabled: set_startup_enabled(enabled, ROOT_DIR),
+            browser_profile_dir=DATA_DIR / "browser_profile",
         )
         self.web_ui.get_stats_fn = self.app_logger.stats
         self.web_ui.get_server_name_fn = self._current_server_name
