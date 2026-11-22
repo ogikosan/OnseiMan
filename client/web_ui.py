@@ -563,6 +563,7 @@ class WebUIServer:
             "candidates": candidates,
             "dismissed": dismissed,
             "update": update,
+            "server_outdated": self._safe_call("get_outdated_servers_fn", []),
         }
 
     def get_dict_payload(self) -> Dict[str, Any]:
@@ -595,6 +596,16 @@ class WebUIServer:
         _write_json(self.dict_path, data)
         if self.on_dict_saved:
             self.on_dict_saved()
+
+    def _safe_call(self, attr: str, default: Any) -> Any:
+        fn = getattr(self, attr, None)
+        if not fn:
+            return default
+        try:
+            return fn()
+        except Exception:
+            logger.exception("%s に失敗しました", attr)
+            return default
 
     def get_dict_sync_payload(self) -> Dict[str, Any]:
         from shared.dict_sync import find_sync_folders

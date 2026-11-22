@@ -159,7 +159,19 @@ class TestPackages(unittest.TestCase):
                      "server/requirements.txt", "shared/asr_engine.py", "download_model.py",
                      "はじめに.md", "変更点.md", "LICENSE"):
             self.assertIn(need, names)
-        self.assertFalse([n for n in names if n.startswith(("client/", "tools/")) or n.endswith((".bat", ".ps1"))])
+        # アプリ（client/）は入れない。版のファイルだけは、認識役が自分の版を返すのに使う
+        self.assertFalse([n for n in names if (n.startswith(("client/", "tools/")) and n != "client/version.py")
+                          or n.endswith((".bat", ".ps1"))])
+        self.assertIn("client/version.py", names)
+
+    def test_server_files_are_packed(self) -> None:
+        # 認識役が使うファイルは、Mac 用・Windows 用のどちらにも入っていること。
+        # 新しく作ったファイルを git に登録し忘れると zip に入らず、認識役が起動しなくなる（2026-11-23 に Mac で起きた）
+        from shared.server_fingerprint import SERVER_FILES
+
+        for kind in self.pkg.PACKAGES:
+            names = self._names(kind)
+            self.assertFalse([f for f in SERVER_FILES if f not in names], kind)
 
     def test_downloaded_tools_are_not_packed(self) -> None:
         # 準備で取ってきた道具や Python が手元にあっても、zip には入れない（git で管理しているものだけ）

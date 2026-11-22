@@ -196,6 +196,7 @@ class OnseiManApp:
         self.web_ui.get_server_name_fn = self._current_server_name
         self.web_ui.get_dismissed_candidates_fn = self.candidate_store.list_dismissed
         self.web_ui.get_update_fn = self._update_payload
+        self.web_ui.get_outdated_servers_fn = self._outdated_servers
         self.web_ui.on_run_update = self._run_github_update
         self.web_ui.on_check_update = lambda: self._check_github_update(manual=True)
         # GitHub に出ている新しい版（なければ None）
@@ -1298,6 +1299,25 @@ class OnseiManApp:
                 auto_hide_ms=5000,
             )
         return info
+
+    def _outdated_servers(self) -> list:
+        """プログラムが古い認識役（このパソコンの一式と指紋が違い、版も古いもの）。"""
+        from client.updater import is_newer
+        from shared.server_fingerprint import fingerprint
+
+        if not getattr(self, "_local_fingerprint", ""):
+            self._local_fingerprint = fingerprint(ROOT_DIR)
+        out = []
+        names = dict(getattr(self.config, "server_names", {}) or {})
+        for url in list(self.config.server_urls or []):
+            info = self.transcriber.server_info.get(url.rstrip("/")) or self.transcriber.server_info.get(url)
+            if not info or info.get("fingerprint") == self._local_fingerprint:
+                continue
+            ver = info.get("version") or ""
+            if ver and not is_newer(__version__, ver):
+                continue  # 認識役のほうが新しい（このパソコンの更新はお知らせの帯で）
+            out.append({"url": url, "name": names.get(url) or info.get("name") or url, "version": ver or "1.1.0 以前"})
+        return out
 
     def _update_payload(self) -> Optional[dict]:
         if not self.update_info:

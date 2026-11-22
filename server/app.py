@@ -53,6 +53,7 @@ from shared.asr_engine import FunASRNanoEngine
 from shared.audio import decode_wav_bytes
 from shared.dict_sync import NAME_RE, clean_data
 from shared.segmenter import join_texts, split_on_pauses
+from shared.server_fingerprint import fingerprint, read_version
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,6 +77,8 @@ def health() -> dict:
         # さがす側が「同じパソコンが 2 つの行き方で見つかった」と分かるようにする
         "id": SERVER_ID,
         "name": SERVER_NAME,
+        "version": SERVER_VERSION,
+        "fingerprint": SERVER_FINGERPRINT,
     }
 
 
@@ -95,6 +98,9 @@ def local_addresses() -> list:
 
 SERVER_ID = uuid.uuid4().hex          # 起動ごとの番号
 SERVER_NAME = socket.gethostname()
+# 自分の版と、プログラムの指紋（Windows のアプリが「認識役が古いか」を確かめるのに使う）
+SERVER_VERSION = read_version(ROOT_DIR)
+SERVER_FINGERPRINT = fingerprint(ROOT_DIR)
 
 MAX_AUDIO_BYTES = 30 * 1024 * 1024
 MAX_HOTWORDS_CHARS = 4000

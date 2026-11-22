@@ -56,6 +56,8 @@ class HybridTranscriber:
         self._down_until: dict[str, float] = {}
         self._tls = threading.local()
         self.last_backend_status: str = "待機中"
+        # サーバーの URL → {"version", "fingerprint", "name"}（/health で分かったもの）
+        self.server_info: dict = {}
 
     # ------------------------------------------------------------ servers
     def _session(self) -> requests.Session:
@@ -120,6 +122,12 @@ class HybridTranscriber:
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("status") == "ok":
+                    # 認識役の版と指紋（古い版かどうかを知らせるのに使う）
+                    self.server_info[base_url] = {
+                        "version": str(data.get("version") or "")[:20],
+                        "fingerprint": str(data.get("fingerprint") or "")[:64],
+                        "name": str(data.get("name") or "")[:64],
+                    }
                     return str(data.get("provider", "lan"))
         except Exception:
             pass

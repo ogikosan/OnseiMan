@@ -308,6 +308,23 @@
     } catch (e) { toast(e.message, "err"); }
   });
 
+  // ---- 認識役のパソコンが古い版のとき ----
+  function renderServerOutdated(list) {
+    const box = $("#server-old-banner");
+    const key = (list || []).map((s) => `${s.url}@${s.version}`).join(",");
+    let later = "";
+    try { later = sessionStorage.getItem("onseiman.serverOldLater") || ""; } catch {}
+    if (!list || !list.length || later === key) { box.hidden = true; return; }
+    box.hidden = false;
+    box.dataset.key = key;
+    const names = list.map((s) => `${s.name}（${s.version}）`).join("、");
+    $("#sob-title").textContent = `認識役のパソコンが古い版です: ${names}`;
+  }
+  $("#btn-server-old-later").addEventListener("click", () => {
+    try { sessionStorage.setItem("onseiman.serverOldLater", $("#server-old-banner").dataset.key || ""); } catch {}
+    $("#server-old-banner").hidden = true;
+  });
+
   // ---- Navigation ----
   function switchTab(tab) {
     $$("nav .seg-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === tab)));
@@ -334,6 +351,7 @@
       cc.classList.toggle("has-items", state.candidates.length > 0);
       renderStats(state.stats || {});
       renderUpdate(state.update);
+      renderServerOutdated(state.server_outdated);
       renderHistory();
       renderCandidates();
     } catch (e) {

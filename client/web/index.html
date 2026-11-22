@@ -46,6 +46,25 @@
 </header>
 
 <main class="main">
+  <div class="update-banner glass" id="server-old-banner" hidden>
+    <div class="ub-text">
+      <b id="sob-title">認識役のパソコンが古い版です</b>
+      <details>
+        <summary>更新のしかた（認識役のパソコンの前で）</summary>
+        <div class="ub-notes">
+          <p><b>Mac のとき</b>：GitHub の Releases から Mac 用の zip（OnseiMan-…-Mac.zip）を取ってきて、
+          中身を Mac の OnseiMan フォルダに上書きし、<code>server_mac.command</code> をダブルクリック。認識用のデータは取り直しません。</p>
+          <p><b>Windows のとき</b>：そのパソコンの OnseiMan で <code>update.bat</code> を実行してから、
+          <code>server_windows.bat</code> を起動し直す。</p>
+          <p><a href="https://github.com/ogikosan/OnseiMan/releases" target="_blank" rel="noopener noreferrer">GitHub の Releases を開く</a></p>
+        </div>
+      </details>
+      <span class="muted">古いままでも声を文字にするのは使えます。新しい機能（辞書を預けるなど）が使えないことがあります。</span>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="btn sm" id="btn-server-old-later">あとで</button>
+    </div>
+  </div>
   <div class="update-banner glass" id="update-banner" hidden>
     <div class="ub-text">
       <b id="ub-title">新しい版があります</b>

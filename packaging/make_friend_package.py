@@ -31,7 +31,7 @@ PACKAGES = {
     "Mac": {
         "dirs": ["shared"],
         "skip_suffix": set(),
-        "files": ["server/app.py", "server/requirements.txt", "server/setup_macos.sh", "server/start_server.sh",
+        "files": ["client/version.py", "server/app.py", "server/requirements.txt", "server/setup_macos.sh", "server/start_server.sh",
                   "server_mac.command", "server_mac_remove.command", "packaging/mac/はじめに.md"],
     },
 }
