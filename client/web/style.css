@@ -292,6 +292,10 @@ dialog.modal::backdrop { background: rgba(15, 23, 42, .35); backdrop-filter: blu
 .toast.ok { border-left: 4px solid var(--good); }
 .toast.err { border-left: 4px solid var(--danger); }
 .toast-action { display: flex; align-items: center; gap: 12px; pointer-events: auto; }
+.update-banner { flex: none; display: flex; align-items: flex-start; gap: 16px; padding: 12px 16px; margin-bottom: 12px;
+  border-left: 4px solid var(--good); flex-wrap: wrap; }
+.update-banner .ub-text { flex: 1; min-width: 240px; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+.ub-notes { white-space: pre-wrap; font: inherit; font-size: 12.5px; margin: 6px 0 0; max-height: 220px; overflow-y: auto; }
 .dismissed-list { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; max-height: 240px; overflow-y: auto; }
 .dismissed-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .dismissed-row .pair { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

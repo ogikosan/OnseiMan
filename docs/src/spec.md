@@ -80,7 +80,12 @@ Fun-ASR Nano は一度に扱える量（音声 + 辞書のヒント + 出力）�
   専用の Python 3.11 を `tools\python` に置いて `.venv` を作る。Python が入っていなくてよい。最後に全部品の読み込みを確かめる。
   uv を取得できないときは、入っている Python 3.11 以上で代用する。サーバーは `-Target server`（`.venv_server`、モデルも取得）。
 - `update.bat` → `tools\update.ps1`。GitHub の `main` の zip で上書きし、`install.ps1` で部品を確かめる。
-  `config.json`・`dict.json`・`logs`・`models`・`.venv` には触らない。前の版は `backup\` に残す。
+  `config.json`・`dict.json`・`logs`・`models`・`.venv` には触らない。前の版は `backup\` に残す（`tools\bin`・`tools\python` は残さない）。
+  動いているかの確かめは、このフォルダから動いている OnseiMan だけ。git で管理しているフォルダ（開発用）は上書きしない。
+- 新しい版のお知らせ（`client/github_update.py`）: 起動時と 1 日 1 回、GitHub の `main` の `client/version.py` を見る。
+  新しければ画面の上に帯（何が変わったかは `変更点.md` の新しい版の節）、トレイは「新しい版にする（版）」。
+  「今すぐ更新」は確認してから `update.ps1 -WaitPid <この OnseiMan> -Restart` を新しい窓で動かして終了する。
+  update.ps1 は終わるのを待ってから入れ替え、起動し直す（失敗しても前の版のまま起動し直す）。開発用のフォルダではお知らせだけ。
 
 ## データの場所
 

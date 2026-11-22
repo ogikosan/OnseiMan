@@ -46,6 +46,17 @@
 </header>
 
 <main class="main">
+  <div class="update-banner glass" id="update-banner" hidden>
+    <div class="ub-text">
+      <b id="ub-title">新しい版があります</b>
+      <details id="ub-notes-box"><summary>何が変わったか</summary><pre id="ub-notes" class="ub-notes"></pre></details>
+      <span class="muted" id="ub-dev" hidden>このフォルダは開発用（git で管理）なので、自動では更新しません。git pull で更新してください。</span>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="btn primary sm" id="btn-update-run">今すぐ更新</button>
+      <button type="button" class="btn sm" id="btn-update-later">あとで</button>
+    </div>
+  </div>
   <!-- ==================== 認識履歴 ==================== -->
   <section class="view" id="view-history">
     <div class="stats-row" id="stats-row" hidden></div>

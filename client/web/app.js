@@ -280,6 +280,34 @@
   window.addEventListener("focus", checkUiRequest);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUiRequest(); });
 
+  // ---- 新しい版のお知らせ ----
+  function renderUpdate(u) {
+    const box = $("#update-banner");
+    let later = "";
+    try { later = sessionStorage.getItem("onseiman.updateLater") || ""; } catch {}
+    if (!u || later === u.version) { box.hidden = true; return; }
+    box.hidden = false;
+    $("#ub-title").textContent = `新しい版があります（${u.current} → ${u.version}）`;
+    $("#ub-notes").textContent = u.notes || "";
+    $("#ub-notes-box").hidden = !u.notes;
+    $("#ub-dev").hidden = !!u.can_run;
+    $("#btn-update-run").hidden = !u.can_run;
+    box.dataset.version = u.version;
+  }
+  $("#btn-update-later").addEventListener("click", () => {
+    try { sessionStorage.setItem("onseiman.updateLater", $("#update-banner").dataset.version || ""); } catch {}
+    $("#update-banner").hidden = true;
+  });
+  $("#btn-update-run").addEventListener("click", async () => {
+    const v = $("#update-banner").dataset.version || "";
+    if (!confirm(`OnseiMan を終了して ${v} に更新し、起動し直します。よろしいですか？\n（設定・辞書・履歴はそのまま残ります。前の版は backup フォルダに残ります）`)) return;
+    try {
+      await api("/api/update/run", {});
+      $("#btn-update-run").disabled = true;
+      toast("更新を始めました。まもなく OnseiMan が起動し直します");
+    } catch (e) { toast(e.message, "err"); }
+  });
+
   // ---- Navigation ----
   function switchTab(tab) {
     $$("nav .seg-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === tab)));
@@ -305,6 +333,7 @@
       cc.textContent = String(state.candidates.length);
       cc.classList.toggle("has-items", state.candidates.length > 0);
       renderStats(state.stats || {});
+      renderUpdate(state.update);
       renderHistory();
       renderCandidates();
     } catch (e) {

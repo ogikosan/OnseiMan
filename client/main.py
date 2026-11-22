@@ -195,6 +195,12 @@ class OnseiManApp:
         self.web_ui.get_stats_fn = self.app_logger.stats
         self.web_ui.get_server_name_fn = self._current_server_name
         self.web_ui.get_dismissed_candidates_fn = self.candidate_store.list_dismissed
+        self.web_ui.get_update_fn = self._update_payload
+        self.web_ui.on_run_update = self._run_github_update
+        self.web_ui.on_check_update = lambda: self._check_github_update(manual=True)
+        # GitHub に出ている新しい版（なければ None）
+        self.update_info: Optional[dict] = None
+        self._update_notified = ""
         self.hook = GlobalInputHook(
             hotkey=self.config.hotkey,
             cancel_key=self.config.cancel_key,
@@ -1244,12 +1250,93 @@ class OnseiManApp:
                 lambda _icon, _item: _open_path_in_shell(self.app_logger.history_txt),
             ),
             pystray.MenuItem(
-                "更新を確認",
-                lambda _icon, _item: threading.Thread(target=self._check_update, args=(True,), daemon=True).start(),
+                lambda _item: (f"新しい版にする（{self.update_info['version']}）" if self.update_info else "更新を確認"),
+                lambda _icon, _item: self._on_tray_update(),
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("終了", lambda _icon, _item: self.quit()),
         )
+
+    # ---- GitHub の新しい版（フォルダを置いて使う形） ----
+    UPDATE_CHECK_SEC = 24 * 3600
+
+    def _update_loop(self) -> None:
+        """起動したときと、そのあと 1 日 1 回、GitHub に新しい版がないか確かめる。"""
+        while not self._stop_event.is_set():
+            self._check_github_update(manual=False)
+            self._stop_event.wait(self.UPDATE_CHECK_SEC)
+
+    def _check_github_update(self, manual: bool = False) -> Optional[dict]:
+        if FROZEN:
+            self._check_update(manual)
+            return None
+        from client import github_update
+
+        try:
+            info = github_update.check()
+        except Exception as exc:
+            logger.info("更新の確認に失敗しました: %s", exc)
+            if manual:
+                self.ui.show_status("更新を確認できませんでした（インターネット接続を確認）", bg="#92400e", auto_hide_ms=2400)
+            return self.update_info
+        self.update_info = info
+        if self._tray is not None:
+            try:
+                self._tray.update_menu()
+            except Exception:
+                pass
+        if info is None:
+            if manual:
+                self.ui.show_status(f"✓ 最新版です（{__version__}）", bg="#065f46", auto_hide_ms=1800)
+            return None
+        logger.info("新しい版があります: %s → %s", __version__, info["version"])
+        if manual or self._update_notified != info["version"]:
+            self._update_notified = info["version"]
+            self.ui.show_status(
+                f"新しい版があります（{__version__} → {info['version']}）。画面の上のお知らせから更新できます",
+                bg="#0369a1",
+                auto_hide_ms=5000,
+            )
+        return info
+
+    def _update_payload(self) -> Optional[dict]:
+        if not self.update_info:
+            return None
+        from client import github_update
+
+        return {**self.update_info, "can_run": not github_update.is_dev_folder(ROOT_DIR)}
+
+    def _on_tray_update(self) -> None:
+        if self.update_info:
+            self.web_ui.open_window("history")  # 画面の上のお知らせから更新する（確認してから）
+        else:
+            threading.Thread(target=self._check_github_update, args=(True,), daemon=True).start()
+
+    def _run_github_update(self) -> None:
+        """「今すぐ更新」: 更新を別の窓で始めて、OnseiMan を終了する（更新が済んだら起動し直す）。"""
+        from client import github_update
+
+        if not self.update_info:
+            raise ValueError("新しい版はありません")
+        if github_update.is_dev_folder(ROOT_DIR):
+            raise ValueError("このフォルダは開発用（git で管理）なので、自動では更新しません。git pull で更新してください")
+
+        def _go() -> None:
+            # 録音中・認識中なら終わるまで待つ
+            while self.recorder.is_recording or self._processing:
+                self._stop_event.wait(0.5)
+            try:
+                github_update.launch_update(ROOT_DIR, os.getpid())
+            except Exception as exc:
+                logger.warning("更新を始められませんでした: %s", exc)
+                self.ui.show_status(f"✕ 更新を始められませんでした: {exc}", bg="#991b1b", auto_hide_ms=3000)
+                return
+            logger.info("更新のため終了します: %s → %s", __version__, self.update_info["version"])
+            self.ui.show_status("更新しています。まもなく起動し直します…", bg="#0369a1")
+            self._stop_event.wait(0.8)
+            self.quit()
+
+        threading.Thread(target=_go, daemon=True).start()
 
     def _check_update(self, manual: bool = False) -> None:
         """新しいバージョンがあれば、聞いてから更新する（配布版のみ）。"""
@@ -1378,6 +1465,8 @@ class OnseiManApp:
                 logger.info("初期ヘルスチェック完了: %s", self.transcriber.last_backend_status)
                 if FROZEN:
                     threading.Thread(target=self._check_update, daemon=True).start()
+                else:
+                    threading.Thread(target=self._update_loop, name="update-check", daemon=True).start()
                 self._health_poll_loop()
 
             threading.Thread(target=_init_health, daemon=True).start()

@@ -396,6 +396,18 @@ class WebUIServer:
                         if src and dst:
                             owner.on_reject_candidate(src, dst)
                         self._send_json({"ok": True})
+                    elif path == "/api/update/run":
+                        fn_run = getattr(owner, "on_run_update", None)
+                        if not fn_run:
+                            raise ValueError("この版では使えません")
+                        fn_run()
+                        self._send_json({"ok": True})
+                    elif path == "/api/update/check":
+                        fn_chk = getattr(owner, "on_check_update", None)
+                        fn_upd = getattr(owner, "get_update_fn", None)
+                        if fn_chk:
+                            fn_chk()
+                        self._send_json({"ok": True, "update": fn_upd() if fn_upd else None})
                     elif path == "/api/candidates/restore":
                         if owner.on_restore_candidate and str(body.get("src", "")).strip() and str(body.get("dst", "")).strip():
                             owner.on_restore_candidate(body)
@@ -526,6 +538,13 @@ class WebUIServer:
         for c in (fn_d() if fn_d else [])[:100]:
             dismissed.append({"src": c.src, "dst": c.dst, "count": int(c.count),
                               "example_before": c.example_before, "example_after": c.example_after})
+        update = None
+        fn_u = getattr(self, "get_update_fn", None)
+        if fn_u:
+            try:
+                update = fn_u()
+            except Exception:
+                update = None
         server_name = ""
         fn = getattr(self, "get_server_name_fn", None)
         if fn:
@@ -543,6 +562,7 @@ class WebUIServer:
             "stats": self._stats(),
             "candidates": candidates,
             "dismissed": dismissed,
+            "update": update,
         }
 
     def get_dict_payload(self) -> Dict[str, Any]:
