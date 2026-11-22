@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FRIEND = ROOT / "packaging" / "friend"
 
 INCLUDE_DIRS = ["client", "shared", "server", "tools"]
-INCLUDE_FILES = ["download_model.py", "install_client.bat", "start_client.bat", "update.bat"]
+INCLUDE_FILES = ["download_model.py", "install_client.bat", "start_client.bat", "update.bat", "LICENSE", "SECURITY.md"]
 SKIP_PARTS = {"__pycache__", ".pytest_cache"}
 SKIP_SUFFIX = {".pyc", ".pyo", ".log"}
 # 中身に残っていたら止める言葉（自分のメールアドレス・自宅の IP・知り合いの名前など）。

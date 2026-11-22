@@ -83,7 +83,8 @@ def _open_path_in_shell(path: Path) -> None:
         path.touch()
     import subprocess
 
-    subprocess.Popen(["notepad.exe", str(path)])
+    notepad = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "notepad.exe"
+    subprocess.Popen([str(notepad), str(path)])
 
 
 class OnseiManApp:
@@ -586,7 +587,10 @@ class OnseiManApp:
         if self._processing or self.recorder.is_recording:
             self.ui.show_status("◌ 録音または認識中です", bg="#4c1d95", auto_hide_ms=1200)
             return
-        entry = self.app_logger.find(timestamp, audio)
+        # 名前は録音フォルダの中の wav だけ（フォルダの外を指す名前は受け付けない）
+        if not audio or Path(audio).name != audio or not audio.lower().endswith(".wav"):
+            audio = ""
+        entry = self.app_logger.find(timestamp, audio) if audio else None
         path = LOG_DIR / "audio" / audio if audio else None
         if entry is None or path is None or not path.exists():
             self.ui.show_status("この履歴の音声は残っていません", bg="#4b5563", auto_hide_ms=1800)

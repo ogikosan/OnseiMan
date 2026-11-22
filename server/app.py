@@ -49,7 +49,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("onseiman.server")
 
-app = FastAPI(title="OnseiMan ASR Server", version="1.0.0")
+# 説明用のページ（/docs など）は出さない
+app = FastAPI(title="OnseiMan ASR Server", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 engine: Optional[FunASRNanoEngine] = None
 
 
@@ -66,6 +67,7 @@ def health() -> dict:
 
 MAX_AUDIO_BYTES = 30 * 1024 * 1024
 MAX_HOTWORDS_CHARS = 4000
+MAX_AUDIO_SEC = 300.0  # OnseiMan は 18 秒以内に区切って送る
 
 
 @app.middleware("http")
@@ -101,10 +103,18 @@ async def transcribe(
     if len(hotwords) > MAX_HOTWORDS_CHARS:
         hotwords = hotwords[:MAX_HOTWORDS_CHARS]
 
+    # WAV だけを受け付ける（ほかの形式の読み取り処理に、外からのデータを渡さない）
+    if len(raw_bytes) < 44 or raw_bytes[:4] != b"RIFF" or raw_bytes[8:12] != b"WAVE":
+        raise HTTPException(status_code=400, detail="Only WAV audio is accepted")
     try:
         samples, sr = decode_wav_bytes(raw_bytes)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid WAV audio: {exc}") from exc
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid WAV audio") from None
+    if not (8000 <= sr <= 48000):
+        raise HTTPException(status_code=400, detail="Unsupported sample rate")
+    if samples.size / float(sr) > MAX_AUDIO_SEC:
+        raise HTTPException(status_code=413, detail="Audio too long")
+    language = language[:16]
 
     if samples.size == 0:
         return {"text": "", "elapsed_ms": 0.0, "provider": engine.active_provider}

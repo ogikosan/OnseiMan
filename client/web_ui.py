@@ -149,8 +149,29 @@ class WebUIServer:
                     return True  # ブラウザ以外（テスト・自分のツール）
                 return origin in (f"http://127.0.0.1:{owner._port}", f"http://localhost:{owner._port}")
 
+            def _fetch_site_ok(self) -> bool:
+                """ブラウザが付ける「どこからの要求か」を見て、ほかのサイト（別のポートの画面も含む）からの
+                読み込み・埋め込みを断る。付いていない要求（ブラウザ以外）は通す。"""
+                site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+                return site in ("", "same-origin", "none")
+
             def _deny(self) -> None:
                 self.send_error(HTTPStatus.FORBIDDEN)
+
+            def end_headers(self) -> None:
+                # どの返事にも付ける守り: ほかのサイトへの埋め込み（クリックの横取り）と、
+                # 画面に紛れ込んだスクリプトの実行・外への送信を防ぐ
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-Frame-Options", "DENY")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+                self.send_header(
+                    "Content-Security-Policy",
+                    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                    "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; "
+                    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'",
+                )
+                super().end_headers()
 
             def _send_json(self, data: Any, status: int = 200) -> None:
                 body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -240,7 +261,7 @@ class WebUIServer:
                 self.wfile.write(data)
 
             def do_GET(self) -> None:
-                if not self._host_ok():
+                if not self._host_ok() or not self._fetch_site_ok():
                     return self._deny()
                 parsed = urlparse(self.path)
                 path = parsed.path
@@ -262,7 +283,12 @@ class WebUIServer:
             def do_POST(self) -> None:
                 ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
                 # JSON 以外の送り方（フォームなど）はほかのサイトから送れてしまうので受け付けない
-                if not self._host_ok() or not self._origin_ok() or ctype not in ("application/json", ""):
+                if (
+                    not self._host_ok()
+                    or not self._origin_ok()
+                    or not self._fetch_site_ok()
+                    or ctype not in ("application/json", "")
+                ):
                     return self._deny()
                 if ctype == "" and int(self.headers.get("Content-Length", "0") or 0) > 0:
                     return self._deny()

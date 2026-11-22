@@ -60,7 +60,7 @@
       row.className = "found-item";
       const kind = s.ready ? (s.provider === "cuda" || s.provider === "coreml" ? "GPU" : "CPU") : "準備中";
       row.innerHTML = `<input type="checkbox" ${using.has(s.url) ? "checked" : ""}>
-        <span><b>${esc(s.name)}</b><small>${esc(s.via)} ・ ${kind} ・ 返事 ${s.ms}ms</small></span>`;
+        <span><b>${esc(s.name)}</b><small>${esc(s.via)} ・ ${esc(kind)} ・ 返事 ${Number(s.ms) || 0}ms</small></span>`;
       row.querySelector("input").addEventListener("change", (e) => {
         let lines = serverLines().filter((u) => u !== s.url);
         if (e.target.checked) lines = [...lines, s.url];
@@ -349,7 +349,7 @@
             <span class="src">${esc(c.src)}</span>
             <span class="muted">→</span>
             <span class="dst">${esc(c.dst)}</span>
-            <span class="tag">${c.count}回</span>
+            <span class="tag">${Number(c.count) || 0}回</span>
           </div>
           ${c.example_before ? `<div class="cand-ex">${esc(c.example_before)} → ${esc(c.example_after)}</div>` : ""}
         </div>

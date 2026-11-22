@@ -100,6 +100,21 @@ class TestAppRetryFlow(unittest.TestCase):
             finally:
                 app.app_logger.close()
 
+    def test_retry_rejects_names_outside_audio_folder(self):
+        from client import main as m
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            app = self._app(d)
+            try:
+                (d / "secret.wav").write_bytes(b"x")
+                app.app_logger.record_failure(reason="x", duration_sec=1, audio="../secret.wav")
+                with mock.patch.object(m, "LOG_DIR", d), mock.patch.object(app, "_process_audio") as pa:
+                    app._retry_entry(app.app_logger.get_history()[0].timestamp, "../secret.wav")
+                pa.assert_not_called()
+            finally:
+                app.app_logger.close()
+
     def test_audio_files_are_pruned(self):
         from client import main as m
 

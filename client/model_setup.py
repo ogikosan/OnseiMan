@@ -23,7 +23,24 @@ MODEL_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
     f"{MODEL_NAME}.tar.bz2"
 )
+# 配布元（GitHub の公開ファイル）が示す確認用の値。ダウンロードしたものがこれと違えば使わない
+MODEL_SHA256 = "eb43d7ccc2e86b243f6a03b7df361033dda66db9523d1a92bf6aca2b50c9476b"
 REQUIRED_FILES = ("encoder_adaptor.int8.onnx", "llm.int8.onnx", "embedding.int8.onnx")
+
+
+def file_sha256(path: Path, cancel: Optional[threading.Event] = None) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            if cancel is not None and cancel.is_set():
+                raise InterruptedError
+            buf = f.read(1024 * 1024)
+            if not buf:
+                break
+            h.update(buf)
+    return h.hexdigest()
 APPROX_MB = 840
 
 
@@ -37,6 +54,7 @@ def download_and_extract(
     on_phase: Callable[[str], None],
     cancel: threading.Event,
     url: str = MODEL_URL,
+    expected_sha256: Optional[str] = MODEL_SHA256,
 ) -> Path:
     """モデルを models_root/MODEL_NAME に用意する。cancel が立ったら InterruptedError。"""
     models_root.mkdir(parents=True, exist_ok=True)
@@ -49,6 +67,8 @@ def download_and_extract(
     if not archive.exists():
         on_phase("download")
         have = part.stat().st_size if part.exists() else 0
+        if not url.lower().startswith(("https://", "http://127.0.0.1")):
+            raise ValueError("ダウンロード元のアドレスが正しくありません")
         req = urllib.request.Request(url, headers={"User-Agent": "OnseiMan-setup"})
         if have:
             req.add_header("Range", f"bytes={have}-")
@@ -57,7 +77,7 @@ def download_and_extract(
         except urllib.error.HTTPError as exc:
             if exc.code == 416 and have:  # 前回すでに全部受け取っていた
                 part.replace(archive)
-                return download_and_extract(models_root, on_progress, on_phase, cancel, url)
+                return download_and_extract(models_root, on_progress, on_phase, cancel, url, expected_sha256)
             raise
         with resp_cm as resp:
             if have and resp.status != 206:
@@ -78,6 +98,12 @@ def download_and_extract(
         if total and done < total:
             raise IOError(f"ダウンロードが途中で切れました ({done}/{total})")
         part.replace(archive)
+
+    if expected_sha256:
+        on_phase("verify")
+        if file_sha256(archive, cancel) != expected_sha256:
+            archive.unlink(missing_ok=True)  # 壊れているか、別物: 次回は最初からダウンロードし直す
+            raise IOError("ダウンロードしたデータが正しいものと一致しませんでした。もう一度お試しください")
 
     on_phase("extract")
     tmp = models_root / f"_extract_{int(time.time())}"
@@ -162,6 +188,8 @@ def run_setup_window(models_root: Path) -> bool:
 
     def on_phase(p: str) -> None:
         state["phase"] = p
+        if p == "verify":
+            ui(lambda: status.configure(text="ダウンロードしたデータを確かめています…"))
         if p == "extract":
             ui(lambda: status.configure(text="展開しています…（1〜2分かかります）"))
 

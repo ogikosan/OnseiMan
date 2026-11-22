@@ -66,7 +66,10 @@ class TestModelDownload(unittest.TestCase):
         cls.srv.shutdown()
 
     def _run(self, root: Path) -> Path:
-        return download_and_extract(root, lambda d, t: None, lambda p: None, threading.Event(), url=self.url)
+        import hashlib
+
+        return download_and_extract(root, lambda d, t: None, lambda p: None, threading.Event(), url=self.url,
+                                    expected_sha256=hashlib.sha256(_Handler.payload).hexdigest())
 
     def test_fresh_download(self):
         with tempfile.TemporaryDirectory() as d:
@@ -97,12 +100,28 @@ class TestModelDownload(unittest.TestCase):
             self.assertFalse((Path(d) / f"{MODEL_NAME}.tar.bz2").exists())
             self.assertTrue(model_ready(self._run(Path(d))))  # 次は最初からダウンロードして成功
 
+    def test_wrong_content_is_rejected(self):
+        """配布元の確認用の値と違うもの（すり替え・破損）は、展開せずに捨てる。"""
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(IOError):
+                download_and_extract(Path(d), lambda a, b: None, lambda p: None, threading.Event(), url=self.url,
+                                     expected_sha256="0" * 64)
+            self.assertFalse((Path(d) / MODEL_NAME).exists())
+            self.assertFalse((Path(d) / f"{MODEL_NAME}.tar.bz2").exists())
+
+    def test_real_model_hash_is_pinned(self):
+        from client import model_setup
+        import download_model
+
+        self.assertRegex(model_setup.MODEL_SHA256, r"^[0-9a-f]{64}$")
+        self.assertEqual(model_setup.MODEL_SHA256, download_model.MODEL_SHA256)
+
     def test_cancel(self):
         with tempfile.TemporaryDirectory() as d:
             ev = threading.Event()
             ev.set()
             with self.assertRaises(InterruptedError):
-                download_and_extract(Path(d), lambda a, b: None, lambda p: None, ev, url=self.url)
+                download_and_extract(Path(d), lambda a, b: None, lambda p: None, ev, url=self.url, expected_sha256=None)
             self.assertFalse((Path(d) / MODEL_NAME).exists())
 
 

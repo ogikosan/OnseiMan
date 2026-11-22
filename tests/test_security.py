@@ -70,6 +70,36 @@ class TestWebUIGuard(unittest.TestCase):
         self.assertEqual(self._req("GET", "/api/state", headers={"Host": f"evil.example:{self.port}"}), 403)
         self.assertEqual(self._req("GET", "/api/audio/a.wav", headers={"Host": "evil.example"}), 403)
 
+    def test_cross_site_read_and_embed_are_rejected(self) -> None:
+        # ほかのサイト（別のポートで動く画面も含む）からの読み込み・埋め込み
+        for site in ("cross-site", "same-site"):
+            self.assertEqual(self._req("GET", "/api/state", headers={"Sec-Fetch-Site": site}), 403, site)
+            self.assertEqual(self._req("GET", "/api/audio/a.wav", headers={"Sec-Fetch-Site": site}), 403, site)
+        self.assertEqual(self._req("GET", "/api/state", headers={"Sec-Fetch-Site": "same-origin"}), 200)
+        self.assertEqual(self._req("GET", "/", headers={"Sec-Fetch-Site": "none"}), 200)
+
+    def test_security_headers(self) -> None:
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        c.request("GET", "/", headers={"Host": f"127.0.0.1:{self.port}"})
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.getheader("X-Frame-Options"), "DENY")
+        self.assertEqual(r.getheader("X-Content-Type-Options"), "nosniff")
+        csp = r.getheader("Content-Security-Policy") or ""
+        self.assertIn("frame-ancestors 'none'", csp)
+        self.assertIn("script-src 'self';", csp)   # 画面に直接書かれたスクリプトは動かさない
+        self.assertIn("connect-src 'self'", csp)
+        c.close()
+
+    def test_no_inline_script_in_page(self) -> None:
+        import re
+
+        html = (ROOT / "client" / "web" / "index.html").read_text(encoding="utf-8")
+        tags = re.findall(r"<script[^>]*>", html)
+        self.assertTrue(tags)
+        self.assertTrue(all("src=" in t for t in tags), tags)          # 直接書いたスクリプトが無い
+        self.assertEqual(re.findall(r"<[^>]*\son(?:click|load|error|input|change|submit)\s*=", html), [])
+
     def test_settings_unchanged_after_attack(self) -> None:
         self._req("POST", "/api/settings", {"server_urls": ["http://evil:8765"]}, {"Origin": "https://evil.example"})
         self.assertEqual(ClientConfig.load(self.cfg).server_urls, [])
@@ -89,7 +119,7 @@ class TestSafeExtract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / f"{MODEL_NAME}.tar.bz2").write_bytes(buf.getvalue())
             with self.assertRaises(Exception):
-                download_and_extract(Path(d), lambda a, b: None, lambda p: None, threading.Event())
+                download_and_extract(Path(d), lambda a, b: None, lambda p: None, threading.Event(), expected_sha256=None)
             self.assertFalse((Path(d).parent / "outside.txt").exists())
 
 

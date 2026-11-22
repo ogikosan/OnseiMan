@@ -62,3 +62,15 @@ Fun-ASR Nano は一度に扱える量（音声 + 辞書のヒント + 出力）�
 - ソースで動かすとき：プロジェクト直下（`config.json`, `dict.json`, `logs/`, `models/`）。
 - exe 版：`%LOCALAPPDATA%\OnseiMan`（`client/paths.py`）。
 - 録音は `logs/audio/` に新しい 100 件まで（履歴の「もう一度文字にする」「再試行」用）。
+
+## 守り（変えるときは `tests/test_security.py`・`tests/test_server_guard.py` を通す）
+
+- 設定画面（`client/web_ui.py`）: 127.0.0.1 のみ。Host が 127.0.0.1/localhost 以外は 403（DNS リバインディング）。
+  POST は Origin が自分・Content-Type が JSON のものだけ（CSRF）。Sec-Fetch-Site が same-origin / none 以外は 403（ほかのサイトからの読み込み・埋め込み）。
+  全応答に CSP（`script-src 'self'`・`frame-ancestors 'none'`・`connect-src 'self'`）・X-Frame-Options・nosniff・CORP。
+  画面の HTML に直接スクリプトを書かない（`theme.js`・`app.js` に置く）。`innerHTML` に入れる値は `esc()` か数値にする。
+- 認識サーバー（`server/app.py`）: 認証なし（信頼できるネットワーク前提）。RIFF/WAVE 以外は 400、30MB・300 秒超は 413。
+  `/docs` などは出さない。認識した文はログに書かない。
+- 認識データ: `MODEL_SHA256`（配布元の値）と一致したものだけ展開。展開は `filter="data"`。
+- 履歴の録音・再試行: 名前は `logs/audio/` 直下の `.wav` だけ。
+- 公開リポジトリなので、コミット前に `packaging/private-patterns.txt` の言葉が混ざっていないか調べる。

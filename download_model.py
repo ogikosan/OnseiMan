@@ -9,6 +9,8 @@ from pathlib import Path
 
 MODEL_NAME = "sherpa-onnx-funasr-nano-int8-2025-12-30"
 MODEL_ARCHIVE = f"{MODEL_NAME}.tar.bz2"
+# 配布元（GitHub の公開ファイル）が示す確認用の値
+MODEL_SHA256 = "eb43d7ccc2e86b243f6a03b7df361033dda66db9523d1a92bf6aca2b50c9476b"
 MODEL_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
     f"{MODEL_ARCHIVE}"
@@ -46,6 +48,17 @@ def download_model(dest_root: Path, keep_archive: bool = False) -> Path:
             raise RuntimeError(f"モデルのダウンロードに失敗しました: {exc}") from exc
     else:
         print(f"既存のアーカイブを使用します: {archive_path}")
+
+    print("確かめています...")
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(archive_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    if h.hexdigest() != MODEL_SHA256:
+        archive_path.unlink()
+        raise RuntimeError("ダウンロードしたデータが正しいものと一致しませんでした。もう一度実行してください。")
 
     print("展開中...（少し時間がかかります）")
     with tarfile.open(archive_path, "r:bz2") as tar:
