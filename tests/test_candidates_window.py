@@ -73,9 +73,48 @@ class TestDismiss(unittest.TestCase):
         st.record("ながいことば", "長い言葉")
         st.dismiss("ながいことば", "長い言葉")
         for _ in range(3):
-            app._on_detected_corrections([("ながいことば", "長い言葉")], "ながいことば", "長い言葉")
+            app._on_detected_corrections([("ながいことば", "長い言葉")], "今日はながいことばの話です", "今日は長い言葉の話です")
         app.dictionary.add_replacement.assert_not_called()
         self.assertEqual([c.src for c in st.list_candidates()], ["ながいことば"])
+
+
+class TestRewrite(unittest.TestCase):
+    """文を丸ごと書き直したものは、聞き間違いの直しではないので学習候補にしない。"""
+
+    def test_whole_rewrite(self) -> None:
+        from shared.correction_learner import is_whole_rewrite
+
+        self.assertTrue(is_whole_rewrite("私はさくらさくらちゃんよ", "常に出してれりゃいいだけなんだけどな",
+                                         "私はさくらさくらちゃんよ", "常に出してれりゃいいだけなんだけどな。"))
+        self.assertTrue(is_whole_rewrite("どっかに隠れてない", "tests", "どっかに隠れてない？", "tests"))
+        # 文の一部の聞き間違いの直しは、候補にする
+        self.assertFalse(is_whole_rewrite("この番", "本番", "この番だけの話です", "本番だけの話です"))
+        self.assertFalse(is_whole_rewrite("グッドファブ", "GitHub", "グッドファブに上げてください", "GitHub に上げてください"))
+        # 短い文（言葉 1 つだけ）は、そのまま候補にする
+        self.assertFalse(is_whole_rewrite("ぎっと", "git", "ぎっと", "git"))
+
+    def test_old_rewrites_move_to_dismissed(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            st = CorrectionCandidateStore(Path(t) / "c.json")
+            st.record("私は私はサック裏", "1回もでない", example_before="私は私はサック裏", example_after="1回もでない")
+            st.record("この番", "本番", example_before="この番だけの話です", example_after="本番だけの話です")
+            self.assertEqual(st.dismiss_rewrites(), 1)
+            self.assertEqual([c.src for c in st.list_candidates()], ["この番"])
+            self.assertEqual([c.src for c in st.list_dismissed()], ["私は私はサック裏"])  # 戻せる
+
+
+class TestCaseMerge(unittest.TestCase):
+    def test_add_replacement_uses_existing_case(self) -> None:
+        from shared.dictionary import CustomDictionary
+
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "dict.json"
+            p.write_text(json.dumps({"hotwords": ["GitHub"], "replacements": {"ギッドハブ": "GitHub"}}), encoding="utf-8")
+            d = CustomDictionary(p)
+            d.add_replacement("グッドファブ", "Github", also_hotword=True)
+            data = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(data["replacements"]["グッドファブ"], "GitHub")
+            self.assertEqual(data["hotwords"], ["GitHub"])
 
 
 class TestWindow(unittest.TestCase):

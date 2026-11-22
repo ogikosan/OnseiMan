@@ -227,6 +227,22 @@ class LearningCandidate:
     updated_at: str = ""
 
 
+def is_whole_rewrite(src: str, dst: str, before: str, after: str) -> bool:
+    """聞き間違いの直しではなく、文を丸ごと（ほとんど）書き直したもの。
+
+    音声で入れたあとに、その欄へ別の文を打ち込むと「直した」と拾ってしまい、
+    「私はさくらちゃんよ → 常に出してれりゃいいだけなんだけどな」のような候補になっていた。
+    直した部分が元の文の 7 割以上なら、書き直しとみなす（短い文はそのまま候補にする）。
+    """
+    b = (before or "").strip()
+    a = (after or "").strip()
+    if len(b) < 6 and len(a) < 6:
+        return False
+    rb = len(src.strip()) / max(len(b), 1)
+    ra = len(dst.strip()) / max(len(a), 1)
+    return rb >= 0.7 or ra >= 0.7
+
+
 class CorrectionCandidateStore:
     """半自動学習の候補を JSON で管理する。
 
@@ -332,6 +348,18 @@ class CorrectionCandidateStore:
             self._candidates[key] = c
         self.save()
         return c
+
+    def dismiss_rewrites(self) -> int:
+        """すでにたまっている「文の書き直し」の候補を、消した候補へ移す（戻せる）。移した数を返す。"""
+        moved = 0
+        for c in list(self._candidates.values()):
+            if c.example_before and is_whole_rewrite(c.src, c.dst, c.example_before, c.example_after):
+                self._candidates.pop((c.src, c.dst), None)
+                self._dismissed[(c.src, c.dst)] = c
+                moved += 1
+        if moved:
+            self.save()
+        return moved
 
     def dismiss(self, src: str, dst: str) -> None:
         """×: 候補から消す。同じ直しをまたしたら候補に出すが、自動では登録しない。「消した候補」から戻せる。"""

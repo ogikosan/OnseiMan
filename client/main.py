@@ -119,6 +119,12 @@ class OnseiManApp:
             dict_path = DATA_DIR / dict_path
         self.dictionary = CustomDictionary(dict_path)
         self.candidate_store = CorrectionCandidateStore(LOG_DIR / "learning_candidates.json")
+        try:
+            moved = self.candidate_store.dismiss_rewrites()
+            if moved:
+                logger.info("文の書き直しだった学習候補 %d 件を「消した候補」に移しました（戻せます）", moved)
+        except Exception:
+            logger.exception("学習候補の片付けに失敗しました")
         self.edit_watcher = EditCorrectionWatcher()
 
         self.ui = UIController(
@@ -215,6 +221,7 @@ class OnseiManApp:
         self.web_ui.get_dismissed_candidates_fn = self.candidate_store.list_dismissed
         self.web_ui.get_update_fn = self._update_payload
         self.web_ui.get_outdated_servers_fn = self._outdated_servers
+        self.web_ui.get_server_info_fn = self._server_info_for_ui
         self.web_ui.on_run_update = self._run_github_update
         self.web_ui.on_check_update = lambda: self._check_github_update(manual=True)
         # GitHub に出ている新しい版（なければ None）
@@ -1045,7 +1052,13 @@ class OnseiManApp:
         queued: list[tuple[str, str]] = []
         threshold = int(self.config.auto_learn_after_count)
 
+        from shared.correction_learner import is_whole_rewrite
+
         for src, dst in pairs:
+            if is_whole_rewrite(src, dst, before, after):
+                # 音声で入れたあとに、別の文を打ち直しただけ（聞き間違いの直しではない）
+                logger.info("文の書き直しのため学習候補にしませんでした（%d文字）", len(src))
+                continue
             cand = self.candidate_store.record(
                 src,
                 dst,
@@ -1227,12 +1240,12 @@ class OnseiManApp:
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                "認識履歴を開く（コピー・辞書登録可）",
+                "OnseiMan の画面を開く",
                 lambda _icon, _item: self.web_ui.open_window("history"),
                 default=True,
             ),
             pystray.MenuItem(
-                "直前の認識結果をコピー",
+                "直前に入れた文をコピー",
                 lambda _icon, _item: self._copy_last_result(),
             ),
             pystray.MenuItem(
@@ -1241,15 +1254,15 @@ class OnseiManApp:
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                "ホットキーを変更（次のキー/マウスボタン）",
+                "録音のキーを変える（次に押したキーにする）",
                 lambda _icon, _item: self._start_hotkey_capture(),
             ),
             pystray.MenuItem(
-                "AI 整形キーを変更（次のキー/マウスボタン）",
+                "AI で整えるキーを変える（次に押したキーにする）",
                 lambda _icon, _item: self._start_ai_hotkey_capture(),
             ),
             pystray.MenuItem(
-                "辞書を編集",
+                "辞書",
                 lambda _icon, _item: self.web_ui.open_window("dict"),
             ),
             pystray.MenuItem(
@@ -1257,15 +1270,15 @@ class OnseiManApp:
                 lambda _icon, _item: self.web_ui.open_window("settings"),
             ),
             pystray.MenuItem(
-                "使い方（ヘルプ）",
+                "使い方",
                 lambda _icon, _item: self.web_ui.open_window("help"),
             ),
             pystray.MenuItem(
-                "ログファイルを開く (onseiman.log)",
+                "動きの記録を開く（困ったときに作った人へ）",
                 lambda _icon, _item: _open_path_in_shell(self.app_logger.log_file),
             ),
             pystray.MenuItem(
-                "履歴テキストを開く (history.txt)",
+                "入れた文の一覧を開く（テキスト）",
                 lambda _icon, _item: _open_path_in_shell(self.app_logger.history_txt),
             ),
             pystray.MenuItem(
@@ -1318,6 +1331,41 @@ class OnseiManApp:
             )
         return info
 
+    _TS_CACHE_SEC = 600.0
+
+    def _tailscale_names(self) -> dict:
+        """IP → (パソコンの名前, Tailscale の IP)。Tailscale の一覧から作る（10 分ごとに作り直す）。
+        古い認識役は自分の名前を返さないので、名前と「同じパソコンか」はここから引く。"""
+        now = time.monotonic()
+        cache = getattr(self, "_ts_cache", None)
+        if cache and now - cache[0] < self._TS_CACHE_SEC:
+            return cache[1]
+        table: dict = {}
+        try:
+            from client.discovery import tailscale_peers
+
+            for p in tailscale_peers():
+                for ip in [p.get("ip")] + list(p.get("lan_ips") or []):
+                    if ip:
+                        table[ip] = (str(p.get("name") or ""), str(p.get("ip") or ""))
+        except Exception:
+            pass
+        self._ts_cache = (now, table)
+        return table
+
+    def _server_info_for_ui(self) -> dict:
+        """画面に出すサーバーの情報。名前を返さない古い認識役は、Tailscale の名前で補う。"""
+        out = {}
+        ts = self._tailscale_names()
+        for url in list(self.config.server_urls or []):
+            info = dict(self.transcriber.server_info.get(url.rstrip("/")) or self.transcriber.server_info.get(url) or {})
+            ip = url.split("//", 1)[-1].rsplit(":", 1)[0]
+            if not info.get("name") and ip in ts:
+                info["name"] = ts[ip][0]
+            if info:
+                out[url] = info
+        return out
+
     def _outdated_servers(self) -> list:
         """プログラムが古い認識役（このパソコンの一式と指紋が違い、版も古いもの）。"""
         from client.updater import is_newer
@@ -1326,6 +1374,7 @@ class OnseiManApp:
         if not getattr(self, "_local_fingerprint", ""):
             self._local_fingerprint = fingerprint(ROOT_DIR)
         out = []
+        seen = set()
         names = dict(getattr(self.config, "server_names", {}) or {})
         for url in list(self.config.server_urls or []):
             info = self.transcriber.server_info.get(url.rstrip("/")) or self.transcriber.server_info.get(url)
@@ -1334,7 +1383,15 @@ class OnseiManApp:
             ver = info.get("version") or ""
             if ver and not is_newer(__version__, ver):
                 continue  # 認識役のほうが新しい（このパソコンの更新はお知らせの帯で）
-            out.append({"url": url, "name": names.get(url) or info.get("name") or url, "version": ver or "1.1.0 以前"})
+            # 同じパソコンが Tailscale と家のネットワークの両方で登録されていたら、1 つにまとめる
+            ip = url.split("//", 1)[-1].rsplit(":", 1)[0]
+            ts_name, ts_ip = self._tailscale_names().get(ip, ("", ""))
+            key = info.get("id") or ts_ip or info.get("name") or url
+            if key in seen:
+                continue
+            seen.add(key)
+            name = names.get(url) or info.get("name") or ts_name
+            out.append({"url": url, "name": f"{name}（{ip}）" if name else ip, "version": ver or "1.1.0 以前"})
         return out
 
     def _update_payload(self) -> Optional[dict]:

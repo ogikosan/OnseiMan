@@ -93,7 +93,10 @@
       b.className = "btn";
       b.textContent = `${f.label} を使う`;
       b.title = f.path;
-      b.addEventListener("click", () => { $("#set-dict-folder").value = f.path; });
+      b.addEventListener("click", () => {
+        $("#set-dict-folder").value = f.path;
+        $("#set-dict-folder").dispatchEvent(new Event("change", { bubbles: true }));
+      });
       box.appendChild(b);
     });
     if (!box.children.length) {
@@ -137,8 +140,11 @@
   const userNamed = new Set();   // 自分で名前を付けたサーバー（探し直しても上書きしない）
   const ipOf = (u) => String(u).replace(/^https?:\/\//, "").replace(/:\d+\/?$/, "");
   // まだ探していないときは、使っているサーバーを名前つきで出す
+  let serverInfo = {};   // サーバーの URL → {name, version}（つながったときに分かったもの）
   function savedAsFound() {
-    return serverLines().map((u) => ({ url: u, name: serverNames[u] || ipOf(u), via: "使っています", ready: true, saved: true }));
+    return serverLines().map((u) => ({
+      url: u, name: serverNames[u] || (serverInfo[u] && serverInfo[u].name) || ipOf(u), via: "", ready: true, saved: true,
+    }));
   }
   function renderFound(list) {
     foundServers = list;
@@ -152,13 +158,15 @@
       const speed = s.saved ? "" : ` ・ 返事 ${Number(s.ms) || 0}ms`;
       const shown = serverNames[s.url] || s.name;
       const checked = using.has(s.url);
-      const isPref = checked && (preferredServer === s.url || (!preferredServer && using.size === 1));
+      // 「いつも使う」を選んでいなければ、一覧のいちばん上を使う
+      const firstUsed = serverLines()[0];
+      const isPref = checked && (preferredServer ? preferredServer === s.url : firstUsed === s.url);
       const role = !checked ? "" : isPref ? '<span class="srv-role main">いつも使う</span>'
         : `<button type="button" class="srv-role sub" title="このパソコンを優先して使います">いつもこれにする</button>`;
       const roleNote = !checked ? "" : isPref ? "" : "いつも使うパソコンが止まっているときに使います ・ ";
       row.innerHTML = `<input type="checkbox" ${using.has(s.url) ? "checked" : ""}>
         <span class="srv-info"><input class="srv-name" maxlength="40" title="クリックで名前を変えられます">
-        <small>${esc(roleNote)}${esc(s.via)}${esc(kind)}${esc(speed)} ・ ${esc(ipOf(s.url))}</small></span>
+        <small>${esc([roleNote.replace(/ ・ $/, ""), s.via, kind.replace(/^ ・ /, ""), speed.replace(/^ ・ /, ""), `${/^100\./.test(ipOf(s.url)) ? "Tailscale" : "家のネットワーク"} ${ipOf(s.url)}`].filter(Boolean).join(" ・ "))}</small></span>
         ${role}<span class="srv-edit" aria-hidden="true">✎</span>`;
       const roleBtn = row.querySelector("button.srv-role");
       if (roleBtn) roleBtn.addEventListener("click", (e) => {
@@ -337,21 +345,28 @@
   $$("nav .seg-btn").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
   // ---- State / History / Candidates ----
+  // 上の表示（接続・録音キー・候補の数・お知らせ）
+  function renderHeader(st) {
+    $("#hdr-backend").textContent = st.server_name && String(st.backend || "").startsWith("LAN")
+      ? `${st.server_name} で認識` : friendlyStatus(st.backend);
+    $("#conn").title = st.backend ? `くわしく: ${st.backend}` : "";
+    $("#conn").dataset.state = (st.backend || "").startsWith("LAN") ? "ok" : "local";
+    $("#hdr-hotkey").textContent = friendlyKey(st.hotkey || "ralt");
+    $$(".help-hk").forEach((k) => { k.textContent = friendlyKey(st.hotkey || "ralt"); });
+    const cc = $("#cand-count");
+    cc.textContent = String((st.candidates || []).length);
+    cc.classList.toggle("has-items", (st.candidates || []).length > 0);
+    renderUpdate(st.update);
+    renderServerOutdated(st.server_outdated);
+  }
+  async function loadHeader() {
+    try { renderHeader(await api("/api/state")); } catch (e) { console.error(e); }
+  }
   async function loadState() {
     try {
       state = await api("/api/state");
-      $("#hdr-backend").textContent = state.server_name && String(state.backend || "").startsWith("LAN")
-        ? `${state.server_name} で認識` : friendlyStatus(state.backend);
-      $("#conn").title = state.backend ? `くわしく: ${state.backend}` : "";
-      $("#conn").dataset.state = (state.backend || "").startsWith("LAN") ? "ok" : "local";
-      $("#hdr-hotkey").textContent = state.hotkey || "ralt";
-      $$(".help-hk").forEach((k) => { k.textContent = friendlyKey(state.hotkey || "ralt"); });
-      const cc = $("#cand-count");
-      cc.textContent = String(state.candidates.length);
-      cc.classList.toggle("has-items", state.candidates.length > 0);
+      renderHeader(state);
       renderStats(state.stats || {});
-      renderUpdate(state.update);
-      renderServerOutdated(state.server_outdated);
       renderHistory();
       renderCandidates();
     } catch (e) {
@@ -882,8 +897,13 @@
 
   $("#btn-rep-add").addEventListener("click", () => {
     const s = $("#rep-src").value.trim();
-    const d = $("#rep-dst").value.trim();
+    let d = $("#rep-dst").value.trim();
     if (!d) return toast("正しい言葉を入れてください", "err");
+    const known = [...(dictData.hotwords || []), ...Object.values(dictData.replacements || {})]
+      .find((w) => w !== d && w.toLowerCase() === d.toLowerCase());
+    if (known && confirm(`「${known}」がすでに登録されています。そちらにまとめますか？\n（「キャンセル」なら「${d}」を別の言葉として登録します）`)) {
+      d = known;
+    }
     if (s && !okToReplace(s, d)) return;
     if (s) dictData.replacements[s] = d;
     if (!(dictData.hotwords || []).includes(d)) dictData.hotwords = [...(dictData.hotwords || []), d];
@@ -944,6 +964,10 @@
 
   // ---- Settings ----
   async function loadSettings() {
+    settingsLoading = true;
+    try { await loadSettingsInner(); } finally { settingsLoading = false; }
+  }
+  async function loadSettingsInner() {
     const s = await api("/api/settings");
     $("#set-hotkey").textContent = friendlyKey(s.hotkey);
     $("#set-ai-hotkey").textContent = s.ai_hotkey ? friendlyKey(s.ai_hotkey) : "（未設定）";
@@ -982,6 +1006,7 @@
     $("#set-overlay").checked = !!s.show_overlay;
     $("#set-servers").value = (s.server_urls || []).join("\n");
     serverNames = { ...(s.server_names || {}) };
+    serverInfo = { ...(s.server_info || {}) };
     preferredServer = s.preferred_server || "";
     Object.keys(serverNames).forEach((u) => userNamed.add(u));
     renderFound(savedAsFound());
@@ -1055,8 +1080,34 @@
     if (!quiet) toast("設定を保存しました（すぐに反映されます）");
     loadState();
   }
-  $("#btn-settings-save").addEventListener("click", async () => {
-    try { await saveSettings(false); } catch (e) { toast(e.message, "err"); }
+  // 設定は、変えたらすぐ保存する（「保存」ボタンの押し忘れで戻らないように）
+  let settingsTimer = null;
+  var settingsLoading = false;   // var: 先に呼ばれても使えるように
+  function noteSaved(text, err = false) {
+    const el = $("#settings-saved-note");
+    el.textContent = text;
+    el.classList.toggle("err-text", err);
+    if (!err) setTimeout(() => { if (el.textContent === text) el.textContent = "変えるとすぐに保存されます"; }, 2500);
+  }
+  $("#view-settings").addEventListener("change", (e) => {
+    if (settingsLoading) return;
+    // サーバーの一覧・名前・アドレスの欄は、それぞれ自分で保存している
+    if (e.target.closest("#found-servers") || e.target.id === "set-servers") return;
+    // 同期フォルダを選んだのに、置く場所がまだ空なら、決まるまで待つ
+    if (dictShareValue() === "folder" && !$("#set-dict-folder").value.trim()) {
+      noteSaved("置くフォルダを選ぶと保存します");
+      return;
+    }
+    clearTimeout(settingsTimer);
+    settingsTimer = setTimeout(async () => {
+      try {
+        await saveSettings(true);
+        noteSaved("✓ 保存しました");
+      } catch (err) {
+        noteSaved(`保存できませんでした: ${err.message}`, true);
+        toast(err.message, "err");
+      }
+    }, 300);
   });
 
   // 使い方ページ用: 設定のキー名を読みやすい名前にする
@@ -1077,9 +1128,13 @@
   // Initial load + live polling every 3s for history/candidates
   const initialTab = (location.hash || "#history").replace("#", "");
   switchTab(["history", "candidates", "dict", "settings", "help"].includes(initialTab) ? initialTab : "history");
+  if (!["history", "candidates", "help"].includes(initialTab)) loadState();   // 上の表示（接続・候補の数）
   setInterval(() => {
-    if (!document.hidden && (!$("#view-history").hidden || !$("#view-candidates").hidden)) {
+    if (document.hidden) return;
+    if (!$("#view-history").hidden || !$("#view-candidates").hidden) {
       loadState();
+    } else {
+      loadHeader();   // 設定などを開いているあいだも、上の表示は新しくする（入力中の欄は書き換えない）
     }
   }, 3000);
 })();

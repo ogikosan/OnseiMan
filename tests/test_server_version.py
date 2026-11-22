@@ -72,6 +72,7 @@ class TestOutdated(unittest.TestCase):
         app.config = mock.MagicMock(server_urls=["http://mac:8765"], server_names={"http://mac:8765": "Mac mini"})
         app.transcriber = mock.MagicMock(server_info={"http://mac:8765": info})
         app._local_fingerprint = "LOCAL"
+        app._tailscale_names = lambda: {}
         return app, version
 
     def _outdated(self, info: dict, version: str = "1.2.1"):
@@ -81,7 +82,34 @@ class TestOutdated(unittest.TestCase):
 
     def test_old_server_is_reported(self) -> None:
         out = self._outdated({"version": "1.1.0", "fingerprint": "OLD"})
-        self.assertEqual([(s["name"], s["version"]) for s in out], [("Mac mini", "1.1.0")])
+        self.assertEqual([(s["name"], s["version"]) for s in out], [("Mac mini（mac）", "1.1.0")])
+
+    def test_same_machine_twice_is_one(self) -> None:
+        # Tailscale と家のネットワークの両方で登録された同じパソコンは、1 つにまとめて出す
+        from client.main import OnseiManApp
+
+        app = OnseiManApp.__new__(OnseiManApp)
+        info = {"version": "", "fingerprint": "", "name": "PC5090", "id": "abc"}
+        app.config = mock.MagicMock(server_urls=["http://100.1.2.3:8765", "http://192.168.1.5:8765"], server_names={})
+        app.transcriber = mock.MagicMock(server_info={"http://100.1.2.3:8765": info, "http://192.168.1.5:8765": info})
+        app._local_fingerprint = "LOCAL"
+        app._tailscale_names = lambda: {}
+        out = app._outdated_servers()
+        self.assertEqual([s["name"] for s in out], ["PC5090（100.1.2.3）"])
+
+    def test_old_server_without_name_uses_tailscale(self) -> None:
+        # 名前も番号も返さない古い認識役は、Tailscale の一覧から名前を引き、家のネットワーク側もまとめる
+        from client.main import OnseiManApp
+
+        app = OnseiManApp.__new__(OnseiManApp)
+        info = {"version": "", "fingerprint": "", "name": "", "id": ""}
+        app.config = mock.MagicMock(server_urls=["http://100.1.2.3:8765", "http://192.168.1.5:8765"], server_names={})
+        app.transcriber = mock.MagicMock(server_info={"http://100.1.2.3:8765": info, "http://192.168.1.5:8765": info})
+        app._local_fingerprint = "LOCAL"
+        app._tailscale_names = lambda: {"100.1.2.3": ("REO-PC5090", "100.1.2.3"), "192.168.1.5": ("REO-PC5090", "100.1.2.3")}
+        out = app._outdated_servers()
+        self.assertEqual([s["name"] for s in out], ["REO-PC5090（100.1.2.3）"])
+        self.assertEqual(app._server_info_for_ui()["http://192.168.1.5:8765"]["name"], "REO-PC5090")
 
     def test_server_without_version_is_old(self) -> None:
         out = self._outdated({"version": "", "fingerprint": ""})

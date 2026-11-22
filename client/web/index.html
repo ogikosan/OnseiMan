@@ -99,20 +99,20 @@
         </div>
 
         <div>
-          <label class="field-label" for="detail-raw">元の認識結果（誤認識した語をドラッグ選択して「辞書に登録」できます）</label>
+          <label class="field-label" for="detail-raw">聞き取ったままの文（間違えた言葉を選んで「辞書に登録」できます）</label>
           <textarea id="detail-raw" class="inp" rows="4" readonly placeholder="履歴を選ぶと AI が生で聞き取った文字が出ます"></textarea>
         </div>
 
         <div style="flex:1;display:flex;flex-direction:column;min-height:0">
-          <label class="field-label" for="detail-final">入力された文字（辞書・変換後 — ここを直して「修正を学習」できます）</label>
+          <label class="field-label" for="detail-final">入力した文（ここを正しく直して「直した所を学習」を押すと、学習候補になります）</label>
           <textarea id="detail-final" class="inp" style="flex:1;min-height:90px" placeholder="変換・貼り付けされたテキスト"></textarea>
         </div>
 
         <div class="btn-row">
           <button type="button" class="btn primary" id="btn-copy">コピー</button>
           <button type="button" class="btn" id="btn-play-sel" title="このときの録音を聞きます">▶ 録音を聞く</button>
-          <button type="button" class="btn" id="btn-quick-dict">辞書に登録</button>
-          <button type="button" class="btn" id="btn-learn-manual">修正を学習</button>
+          <button type="button" class="btn" id="btn-quick-dict" title="上の「聞き取ったままの文」で選んだ言葉を、正しい言葉と一緒に辞書に登録します">辞書に登録</button>
+          <button type="button" class="btn" id="btn-learn-manual" title="下の「入力した文」を正しく直してから押すと、直した所を学習候補に入れます">直した所を学習</button>
           <button type="button" class="btn" id="btn-retry-sel" title="辞書を直したあとなどに。保存してあるこの録音を、いまの辞書でもう一度文字にして、結果をコピーします">もう一度文字にする</button>
         </div>
       </div>
@@ -128,11 +128,11 @@
         <button type="button" class="btn sm" id="btn-cand-refresh">更新</button>
       </div>
       <div class="muted" style="font-size:12.5px">音声入力の直後に手で直した語句を自動で拾っています。「辞書に登録」を押すと次回から自動で置換されます。</div>
-      <div class="scroll" id="cand-list"></div>
       <details class="adv" id="dismissed-box" hidden>
         <summary>消した候補（<span id="dismissed-count">0</span> 件）　間違えて消したものは「戻す」で戻せます</summary>
         <div id="dismissed-list" class="dismissed-list"></div>
       </details>
+      <div class="scroll" id="cand-list"></div>
     </div>
   </section>
 
@@ -246,7 +246,7 @@
       <div class="panel-head">
         <h2 class="panel-title">設定</h2>
         <div class="spacer"></div>
-        <button type="button" class="btn primary" id="btn-settings-save">設定を保存</button>
+        <span class="muted" id="settings-saved-note">変えるとすぐに保存されます</span>
       </div>
       <div class="scroll">
         <div class="settings-grid">

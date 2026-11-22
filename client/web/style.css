@@ -291,6 +291,7 @@ dialog.modal::backdrop { background: rgba(15, 23, 42, .35); backdrop-filter: blu
 }
 .toast.ok { border-left: 4px solid var(--good); }
 .toast.err { border-left: 4px solid var(--danger); }
+.err-text { color: var(--danger); }
 .toast-action { display: flex; align-items: center; gap: 12px; pointer-events: auto; }
 .update-banner { flex: none; display: flex; align-items: flex-start; gap: 16px; padding: 12px 16px; margin-bottom: 12px;
   border-left: 4px solid var(--good); flex-wrap: wrap; }

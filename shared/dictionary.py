@@ -215,6 +215,11 @@ class CustomDictionary:
             except Exception:
                 data = {}
         reps = dict(data.get("replacements") or {})
+        # 大文字・小文字だけ違う「正しい言葉」がすでにあれば、そちらにまとめる（Github と GitHub など）
+        for known in [str(w) for w in (data.get("hotwords") or [])] + [str(v) for v in reps.values()]:
+            if known != dst and known.lower() == dst.lower():
+                dst = known
+                break
         reps[src] = dst
         data["replacements"] = reps
         if also_hotword and dst:

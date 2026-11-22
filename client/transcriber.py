@@ -127,6 +127,7 @@ class HybridTranscriber:
                         "version": str(data.get("version") or "")[:20],
                         "fingerprint": str(data.get("fingerprint") or "")[:64],
                         "name": str(data.get("name") or "")[:64],
+                        "id": str(data.get("id") or "")[:64],
                     }
                     return str(data.get("provider", "lan"))
         except Exception:

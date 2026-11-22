@@ -681,6 +681,7 @@ class WebUIServer:
             "preferred_server": getattr(cfg, "preferred_server", "") or "",
             "recognition_place": (cfg.recognition_place or ("server" if cfg.server_urls else "local")),
             "local_fallback": bool(cfg.local_fallback),
+            "server_info": self._safe_call("get_server_info_fn", {}),
             "dict_share": cfg.dict_share if cfg.dict_share in ("server", "folder") else "",
             "dict_share_folder": cfg.dict_share_folder,
             "dict_share_name": cfg.dict_share_name,
