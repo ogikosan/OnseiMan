@@ -7,7 +7,11 @@ import uuid
 import io
 import logging
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
 import wave
 from pathlib import Path
 from typing import Optional
@@ -37,6 +41,7 @@ _register_nvidia_dll_dirs()
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
@@ -44,6 +49,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from shared.asr_engine import FunASRNanoEngine
 from shared.audio import decode_wav_bytes
+from shared.segmenter import join_texts, split_on_pauses
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,6 +96,63 @@ SERVER_NAME = socket.gethostname()
 MAX_AUDIO_BYTES = 30 * 1024 * 1024
 MAX_HOTWORDS_CHARS = 4000
 MAX_AUDIO_SEC = 300.0  # OnseiMan は 18 秒以内に区切って送る
+CONVERT_TIMEOUT_SEC = 15.0
+
+
+def segment_max_sec(hotwords: str) -> float:
+    """一度に認識に渡す長さ。認識データは一度に扱える量に上限があり（約 30 秒を超えると結果が空になる）、
+    優先語が多いほど短くなる。アプリ（client/main.py の _max_segment_sec）と同じ決め方。"""
+    n = len([h for h in hotwords.split(",") if h.strip()])
+    return max(6.0, min(18.0, 25.0 - 0.4 * n))
+
+
+def is_m4a(raw: bytes) -> bool:
+    """M4A（iPhone のショートカットで録音した音声など）。先頭 4〜8 バイトが ftyp。"""
+    return len(raw) >= 12 and raw[4:8] == b"ftyp"
+
+
+def m4a_command(src: str, dst: str) -> Optional[list]:
+    """M4A を 16kHz・モノラルの WAV にする命令。Mac 標準の afconvert、無ければ ffmpeg。どちらも無ければ None。"""
+    af = shutil.which("afconvert")
+    if af:
+        return [af, "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", src, dst]
+    ff = shutil.which("ffmpeg")
+    if ff:
+        # 外からのデータなので、読むのは手元のファイルだけ・mp4 の形として読むよう決めておく
+        return [ff, "-nostdin", "-hide_banner", "-loglevel", "error", "-protocol_whitelist", "file",
+                "-f", "mov", "-i", src, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000",
+                "-c:a", "pcm_s16le", "-t", str(int(MAX_AUDIO_SEC) + 1), "-f", "wav", "-y", dst]
+    return None
+
+
+def convert_m4a(raw: bytes) -> bytes:
+    """M4A を WAV にして返す。変換中も大きさを見て、上限を超えたら止める（小さな M4A が巨大な WAV になる対策）。"""
+    with tempfile.TemporaryDirectory(prefix="onseiman-") as tmp:
+        src, dst = os.path.join(tmp, "in.m4a"), os.path.join(tmp, "out.wav")
+        with open(src, "wb") as f:
+            f.write(raw)
+        cmd = m4a_command(src, dst)
+        if cmd is None:
+            raise HTTPException(status_code=415, detail="M4A is not supported on this server")
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + CONVERT_TIMEOUT_SEC
+        try:
+            while proc.poll() is None:
+                if os.path.exists(dst) and os.path.getsize(dst) > MAX_AUDIO_BYTES:
+                    raise HTTPException(status_code=413, detail="Audio too long")
+                if time.monotonic() > deadline:
+                    raise HTTPException(status_code=413, detail="Audio conversion took too long")
+                time.sleep(0.05)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        if proc.returncode != 0 or not os.path.exists(dst):
+            raise HTTPException(status_code=400, detail="Invalid M4A audio")
+        if os.path.getsize(dst) > MAX_AUDIO_BYTES:
+            raise HTTPException(status_code=413, detail="Audio too long")
+        with open(dst, "rb") as f:
+            return f.read()
 
 
 @app.middleware("http")
@@ -125,9 +188,11 @@ async def transcribe(
     if len(hotwords) > MAX_HOTWORDS_CHARS:
         hotwords = hotwords[:MAX_HOTWORDS_CHARS]
 
-    # WAV だけを受け付ける（ほかの形式の読み取り処理に、外からのデータを渡さない）
+    # WAV と M4A だけを受け付ける（ほかの形式の読み取り処理に、外からのデータを渡さない）
+    if is_m4a(raw_bytes):
+        raw_bytes = await run_in_threadpool(convert_m4a, raw_bytes)
     if len(raw_bytes) < 44 or raw_bytes[:4] != b"RIFF" or raw_bytes[8:12] != b"WAVE":
-        raise HTTPException(status_code=400, detail="Only WAV audio is accepted")
+        raise HTTPException(status_code=400, detail="Only WAV or M4A audio is accepted")
     try:
         samples, sr = decode_wav_bytes(raw_bytes)
     except Exception:
@@ -141,13 +206,18 @@ async def transcribe(
     if samples.size == 0:
         return {"text": "", "elapsed_ms": 0.0, "provider": engine.active_provider}
 
-    text, elapsed_ms = engine.transcribe(
-        samples=samples,
-        sample_rate=sr,
-        hotwords=hotwords,
-        language=language,
-        itn=itn,
-    )
+    # OnseiMan のアプリは区切って送る。iPhone のショートカットなどから長い音声が来たら、ここで話の切れ目で区切る
+    max_sec = segment_max_sec(hotwords)
+    if samples.size / float(sr) > max_sec:
+        parts = split_on_pauses(samples, sr, max_segment_sec=max_sec, min_segment_sec=min(4.0, max_sec * 0.5))
+    else:
+        parts = [samples]
+    texts, elapsed_ms = [], 0.0
+    for part in parts:
+        t, ms = engine.transcribe(samples=part, sample_rate=sr, hotwords=hotwords, language=language, itn=itn)
+        texts.append(t)
+        elapsed_ms += ms
+    text = join_texts(texts)
     # 話した内容はログに残さない（文字数だけ）
     logger.info(
         "認識完了 (%.0f ms, provider=%s, %.2fs audio, %d文字)",

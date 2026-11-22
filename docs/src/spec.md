@@ -82,7 +82,7 @@ Fun-ASR Nano は一度に扱える量（音声 + 辞書のヒント + 出力）�
   POST は Origin が自分・Content-Type が JSON のものだけ（CSRF）。Sec-Fetch-Site が same-origin / none 以外は 403（ほかのサイトからの読み込み・埋め込み）。
   全応答に CSP（`script-src 'self'`・`frame-ancestors 'none'`・`connect-src 'self'`）・X-Frame-Options・nosniff・CORP。
   画面の HTML に直接スクリプトを書かない（`theme.js`・`app.js` に置く）。`innerHTML` に入れる値は `esc()` か数値にする。
-- 認識サーバー（`server/app.py`）: 認証なし（信頼できるネットワーク前提）。RIFF/WAVE 以外は 400、30MB・300 秒超は 413。
+- 認識サーバー（`server/app.py`）: 認証なし（信頼できるネットワーク前提）。RIFF/WAVE と M4A（先頭 4〜8 バイトが `ftyp`）以外は 400、30MB・300 秒超は 413。M4A は afconvert（無ければ ffmpeg、どちらも無ければ 415）で 16kHz モノラル WAV にする（15 秒・30MB で打ち切り）。18 秒（優先語が多いほど短く）を超える音声は、話の切れ目で区切って認識し、つないで返す。
   `/docs` などは出さない。認識した文はログに書かない。
 - 認識データ: `MODEL_SHA256`（配布元の値）と一致したものだけ展開。展開は `filter="data"`。
 - 履歴の録音・再試行: 名前は `logs/audio/` 直下の `.wav` だけ。
