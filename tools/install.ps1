@@ -21,6 +21,9 @@ if ($Target -eq "server") {
 $Venv = Join-Path $Root $VenvName
 $Py = Join-Path $Venv "Scripts\python.exe"
 $UvExe = Join-Path $Root "tools\bin\uv.exe"
+# 準備が最後まで済んだ印。start_client.bat は、これが無ければ先にこの準備を実行する
+$Ready = Join-Path $Venv "onseiman-ready.txt"
+if (Test-Path $Ready) { Remove-Item -Path $Ready -Force }
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 # 専用の Python は、このフォルダの中に置く
@@ -114,13 +117,17 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "用意したものが正しく動きませんでした。この画面の内容を、作った人に見せてください。"
     exit 1
 }
+Set-Content -Path $Ready -Value "ok" -Encoding ASCII
 
 Write-Host ""
 Write-Host "============================================================"
 if ($Target -eq "server") {
     Write-Host "認識用のデータ（約840MB）を用意しています..."
     & $Py (Join-Path $Root "download_model.py")
-    if ($LASTEXITCODE -ne 0) { exit 1 }
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -Path $Ready -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
     Write-Host ""
     Write-Host "準備できました。server\start_server.bat で起動します。"
     Write-Host "Windows のファイアウォールの確認が出たら「許可」を選んでください。"

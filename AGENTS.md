@@ -16,7 +16,10 @@
   - `*.bat` は英数字だけ・CRLF。日本語の表示や処理は `tools\*.ps1`（BOM つき UTF-8・CRLF）に書く。`tests/test_scripts.py` が形を確かめる。
   - パスを含む編集を、シェルのヒアドキュメント経由の Python で行わない（`\a` `\b` `\r` が制御文字に化けて、2026-11-23 に利用者の環境で失敗した）。
     Write / Edit ツールか、ファイルに書いたスクリプトで編集する。
+  - 編集したあと `python packaging\normalize_scripts.py` で形をそろえる。
   - 形のテストだけで済ませず、まっさらなフォルダに展開して実際に実行する（Python が PATH に無い状態で `install_client.bat`）。
+    古い版からの `update.bat` も、GitHub のタグの ZIP から実際に通す。
+  - `requirements.txt` は英数字だけ（日本語の Windows の pip は cp932 として読む）。
 - 文書のみ：リンク・内容・実際の仕様との整合性。
 
 ## 該当時に読む資料

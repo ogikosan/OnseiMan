@@ -67,6 +67,27 @@ class TestBatchFiles(unittest.TestCase):
         for rel in ("client/requirements.txt", "server/requirements.txt", "download_model.py"):
             self.assertTrue((ROOT / rel).exists(), rel)
 
+    def test_requirements_are_ascii(self) -> None:
+        # 日本語の Windows の pip は、この一覧を cp932 として読む。UTF-8 の日本語があると失敗する
+        for rel in ("client/requirements.txt", "server/requirements.txt"):
+            raw = (ROOT / rel).read_bytes()
+            self.assertTrue(all(b < 127 for b in raw), f"{rel}: 英数字以外の文字があります")
+
+    def test_update_bat_survives_being_replaced(self) -> None:
+        # update.bat は実行中に自分自身が新しい版に置き換わる。cmd は 1 行を読み切ってから実行するので、
+        # 置き換えのあとに実行する命令（pause など）を、更新の命令と同じ 1 行に置く
+        lines = [ln for ln in (ROOT / "update.bat").read_text(encoding="ascii").splitlines()
+                 if ln.strip() and not ln.lower().startswith(("rem ", "@echo off"))]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("update.ps1", lines[0])
+        self.assertTrue(lines[0].rstrip().endswith("exit /b"))
+
+    def test_start_runs_setup_when_not_ready(self) -> None:
+        ps = (ROOT / "tools" / "install.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("onseiman-ready.txt", ps)
+        self.assertIn(".venv\\onseiman-ready.txt", (ROOT / "start_client.bat").read_text(encoding="ascii"))
+        self.assertIn(".venv_server\\onseiman-ready.txt", (ROOT / "server" / "start_server.bat").read_text(encoding="ascii"))
+
 
 if __name__ == "__main__":
     unittest.main()
