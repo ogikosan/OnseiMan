@@ -675,7 +675,7 @@ class UIController:
 
         c_tree.bind("<Double-1>", approve_selected)
         ttk.Button(c_btns, text="辞書に登録（優先語にも追加）", style="Accent.TButton", command=approve_selected).pack(side="right", padx=(6, 0))
-        ttk.Button(c_btns, text="却下（今後出さない）", command=reject_selected).pack(side="right")
+        ttk.Button(c_btns, text="× 候補から消す", command=reject_selected).pack(side="right")
 
         self._history_win = win
         self._history_nb = nb

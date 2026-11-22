@@ -47,6 +47,56 @@ def _find_app_browser() -> Optional[str]:
     return None
 
 
+WINDOW_TITLE = "OnseiMan"  # client/web/index.html の <title>
+
+
+def _find_app_window() -> int:
+    """すでに開いている OnseiMan の画面（Edge / Chrome のアプリ表示）の窓。無ければ 0。"""
+    if os.name != "nt":
+        return 0
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    found: List[int] = []
+    proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def _each(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        title = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, title, 256)
+        if title.value != WINDOW_TITLE:
+            return True
+        cls = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, cls, 256)
+        if cls.value.startswith("Chrome_WidgetWin"):  # 同じ名前のフォルダの窓などは除く
+            found.append(int(hwnd))
+            return False
+        return True
+
+    try:
+        user32.EnumWindows(proc_type(_each), 0)
+    except Exception:
+        return 0
+    return found[0] if found else 0
+
+
+def _bring_to_front(hwnd: int) -> bool:
+    """窓を前に出す（最小化されていれば元に戻す）。"""
+    import ctypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    try:
+        from client.paste import _restore_foreground
+
+        return bool(_restore_foreground(hwnd))
+    except Exception:
+        return bool(user32.SetForegroundWindow(hwnd))
+
+
 def _read_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8-sig"))
@@ -78,6 +128,7 @@ class WebUIServer:
         on_retry_entry: Optional[Callable[[str, str], None]] = None,
         on_approve_candidate: Callable[[str, str], None],
         on_reject_candidate: Callable[[str, str], None],
+        on_restore_candidate: Optional[Callable[[dict], None]] = None,
         on_learn_from_manual_edit: Callable[[str, str], int],
         on_dict_saved: Optional[Callable[[], None]] = None,
         on_config_saved: Optional[Callable[[], None]] = None,
@@ -105,6 +156,7 @@ class WebUIServer:
         self.on_retry_entry = on_retry_entry
         self.on_approve_candidate = on_approve_candidate
         self.on_reject_candidate = on_reject_candidate
+        self.on_restore_candidate = on_restore_candidate
         self.on_learn_from_manual_edit = on_learn_from_manual_edit
         self.on_dict_saved = on_dict_saved
         self.on_config_saved = on_config_saved
@@ -121,6 +173,8 @@ class WebUIServer:
         self._preferred_port = preferred_port
 
         self._server: Optional[ThreadingHTTPServer] = None
+        # 開いている画面に切り替えてほしいタブ（トレイのメニューから押したとき）
+        self._pending_tab: str = ""
         self._thread: Optional[threading.Thread] = None
         self._port: int = 0
 
@@ -276,6 +330,9 @@ class WebUIServer:
                         self._send_json(owner.get_dict_payload())
                     elif path == "/api/settings":
                         self._send_json(owner.get_settings_payload())
+                    elif path == "/api/ui-request":
+                        tab, owner._pending_tab = owner._pending_tab, ""
+                        self._send_json({"tab": tab})
                     elif path == "/api/dict-sync":
                         self._send_json(owner.get_dict_sync_payload())
                     elif path.startswith("/api/audio/"):
@@ -339,6 +396,10 @@ class WebUIServer:
                         if src and dst:
                             owner.on_reject_candidate(src, dst)
                         self._send_json({"ok": True})
+                    elif path == "/api/candidates/restore":
+                        if owner.on_restore_candidate and str(body.get("src", "")).strip() and str(body.get("dst", "")).strip():
+                            owner.on_restore_candidate(body)
+                        self._send_json({"ok": True})
                     elif path == "/api/learn_manual":
                         before = str(body.get("before", ""))
                         after = str(body.get("after", ""))
@@ -396,6 +457,13 @@ class WebUIServer:
 
     def open_window(self, tab: str = "history") -> None:
         url = self.start()
+        # すでに開いていれば、新しく開かずに前に出す（トレイを押すたびに窓が増えないように）
+        hwnd = _find_app_window()
+        if hwnd:
+            self._pending_tab = tab or ""
+            if not _bring_to_front(hwnd):
+                logger.info("OnseiMan の画面を前に出せませんでした（開いたままです）")
+            return
         target = f"{url}/#{tab}" if tab else url
         browser = _find_app_browser()
         if browser:
@@ -453,6 +521,11 @@ class WebUIServer:
                     "example_after": c.example_after,
                 }
             )
+        dismissed = []
+        fn_d = getattr(self, "get_dismissed_candidates_fn", None)
+        for c in (fn_d() if fn_d else [])[:100]:
+            dismissed.append({"src": c.src, "dst": c.dst, "count": int(c.count),
+                              "example_before": c.example_before, "example_after": c.example_after})
         server_name = ""
         fn = getattr(self, "get_server_name_fn", None)
         if fn:
@@ -469,6 +542,7 @@ class WebUIServer:
             "history": history,
             "stats": self._stats(),
             "candidates": candidates,
+            "dismissed": dismissed,
         }
 
     def get_dict_payload(self) -> Dict[str, Any]:

@@ -99,6 +99,10 @@
       </div>
       <div class="muted" style="font-size:12.5px">音声入力の直後に手で直した語句を自動で拾っています。「辞書に登録」を押すと次回から自動で置換されます。</div>
       <div class="scroll" id="cand-list"></div>
+      <details class="adv" id="dismissed-box" hidden>
+        <summary>消した候補（<span id="dismissed-count">0</span> 件）　間違えて消したものは「戻す」で戻せます</summary>
+        <div id="dismissed-list" class="dismissed-list"></div>
+      </details>
     </div>
   </section>
 

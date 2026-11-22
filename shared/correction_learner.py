@@ -228,12 +228,20 @@ class LearningCandidate:
 
 
 class CorrectionCandidateStore:
-    """半自動学習の候補と「今後出さない」リストを JSON で管理する。"""
+    """半自動学習の候補を JSON で管理する。
+
+    - ×で消した候補（dismissed）: 同じ直しをまたしたら候補に出すが、自動では辞書に登録しない。
+      画面の「消した候補」から、いつでも戻せる（回数・例文もそのまま）。
+    - 無視（ignored）: 候補にも出さない。画面からは使わない（前の版の「今後出さない」は、読み込み時に dismissed に移す）。
+    """
+
+    MAX_DISMISSED = 300
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self._candidates: Dict[Tuple[str, str], LearningCandidate] = {}
         self._ignored: set[Tuple[str, str]] = set()
+        self._dismissed: Dict[Tuple[str, str], LearningCandidate] = {}
         self.load()
 
     def load(self) -> None:
@@ -253,15 +261,26 @@ class CorrectionCandidateStore:
             except Exception:
                 continue
         self._ignored = set()
+        self._dismissed = {}
+        for item in data.get("dismissed") or []:
+            try:
+                c = LearningCandidate(**item) if isinstance(item, dict) else LearningCandidate(str(item[0]), str(item[1]))
+                if c.src and c.dst:
+                    self._dismissed[(c.src, c.dst)] = c
+            except Exception:
+                continue
+        # 前の版の「今後出さない」は、二度と出ないように見えて困るので、×で消したものと同じ扱いにする（戻せる）
         for pair in data.get("ignored") or []:
-            if isinstance(pair, list) and len(pair) == 2:
-                self._ignored.add((str(pair[0]), str(pair[1])))
+            if isinstance(pair, list) and len(pair) == 2 and str(pair[0]) and str(pair[1]):
+                key = (str(pair[0]), str(pair[1]))
+                self._dismissed.setdefault(key, LearningCandidate(key[0], key[1]))
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "candidates": [asdict(c) for c in self.list_candidates()],
             "ignored": sorted([list(p) for p in self._ignored]),
+            "dismissed": [asdict(c) for c in self.list_dismissed()],
         }
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -313,6 +332,39 @@ class CorrectionCandidateStore:
             self._candidates[key] = c
         self.save()
         return c
+
+    def dismiss(self, src: str, dst: str) -> None:
+        """×: 候補から消す。同じ直しをまたしたら候補に出すが、自動では登録しない。「消した候補」から戻せる。"""
+        key = (src, dst)
+        c = self._candidates.pop(key, None) or self._dismissed.get(key) or LearningCandidate(src, dst)
+        c.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._dismissed[key] = c
+        if len(self._dismissed) > self.MAX_DISMISSED:
+            for old in self.list_dismissed()[self.MAX_DISMISSED:]:
+                self._dismissed.pop((old.src, old.dst), None)
+        self.save()
+
+    def list_dismissed(self) -> List[LearningCandidate]:
+        """×で消した候補（新しい順）。いま候補に出ているものは除く。"""
+        items = [c for k, c in self._dismissed.items() if k not in self._candidates]
+        return sorted(items, key=lambda c: c.updated_at, reverse=True)
+
+    def restore(self, c: LearningCandidate) -> None:
+        """×の取り消し: 候補を元どおり（回数・例文も）戻す。"""
+        key = (c.src, c.dst)
+        if not c.src or not c.dst:
+            return
+        self._dismissed.pop(key, None)
+        self._ignored.discard(key)
+        old = self._candidates.get(key)
+        if old is not None:
+            old.count = max(old.count, c.count)
+        else:
+            self._candidates[key] = c
+        self.save()
+
+    def is_dismissed(self, src: str, dst: str) -> bool:
+        return (src, dst) in self._dismissed
 
     def remove(self, src: str, dst: str, *, ignore_future: bool = False) -> None:
         key = (src, dst)

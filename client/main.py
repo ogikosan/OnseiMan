@@ -177,6 +177,7 @@ class OnseiManApp:
             ).start(),
             on_approve_candidate=self._approve_learning_candidate,
             on_reject_candidate=self._reject_learning_candidate,
+            on_restore_candidate=self._restore_learning_candidate,
             on_learn_from_manual_edit=self._learn_from_manual_edit,
             on_dict_saved=self._on_dict_saved,
             on_config_saved=self._on_settings_saved,
@@ -193,6 +194,7 @@ class OnseiManApp:
         )
         self.web_ui.get_stats_fn = self.app_logger.stats
         self.web_ui.get_server_name_fn = self._current_server_name
+        self.web_ui.get_dismissed_candidates_fn = self.candidate_store.list_dismissed
         self.hook = GlobalInputHook(
             hotkey=self.config.hotkey,
             cancel_key=self.config.cancel_key,
@@ -604,7 +606,11 @@ class OnseiManApp:
 
             audio_dir = LOG_DIR / "audio"
             audio_dir.mkdir(parents=True, exist_ok=True)
-            name = datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".wav"
+            stem = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            # Windows の時計は細かく刻まれないことがあり、続けて保存すると同じ名前になる → 番号を足す
+            name, n = stem + ".wav", 1
+            while (audio_dir / name).exists():
+                name, n = f"{stem}-{n}.wav", n + 1
             (audio_dir / name).write_bytes(samples_to_wav_bytes(samples, sample_rate))
             files = sorted(audio_dir.glob("*.wav"))
             for old in files[: max(0, len(files) - self.AUDIO_KEEP)]:
@@ -1025,7 +1031,9 @@ class OnseiManApp:
             if cand is None:
                 continue
             # 3 文字以下の短い言い方は、ふだんの言葉まで変わりやすいので自動では登録せず、必ず聞く
-            if threshold > 0 and cand.count >= threshold and len(src) > 3:
+            # ×で消したことのある直しは、自動では登録せず聞く
+            if (threshold > 0 and cand.count >= threshold and len(src) > 3
+                    and not self.candidate_store.is_dismissed(src, dst)):
                 self.dictionary.add_replacement(src, dst, also_hotword=True)
                 self.candidate_store.remove(src, dst, ignore_future=False)
                 auto_added.append((src, dst))
@@ -1047,7 +1055,24 @@ class OnseiManApp:
         self.ui.show_status(f"✓ 辞書に登録しました: {src} → {dst}", bg="#065f46", auto_hide_ms=1800)
 
     def _reject_learning_candidate(self, src: str, dst: str) -> None:
-        self.candidate_store.remove(src, dst, ignore_future=True)
+        self.candidate_store.dismiss(src, dst)
+
+    def _restore_learning_candidate(self, body: dict) -> None:
+        """×の取り消し（画面の「元に戻す」）。"""
+        from shared.correction_learner import LearningCandidate
+
+        try:
+            count = max(1, min(int(body.get("count", 1)), 1000))
+        except (TypeError, ValueError):
+            count = 1
+        self.candidate_store.restore(LearningCandidate(
+            src=str(body.get("src", "")).strip()[:200],
+            dst=str(body.get("dst", "")).strip()[:200],
+            count=count,
+            example_before=str(body.get("example_before", ""))[:2000],
+            example_after=str(body.get("example_after", ""))[:2000],
+            updated_at=str(body.get("updated_at", ""))[:32],
+        ))
 
     def _learn_from_manual_edit(self, before: str, after: str) -> int:
         pairs = extract_corrections(before, after)

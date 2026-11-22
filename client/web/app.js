@@ -14,6 +14,25 @@
     setTimeout(() => el.remove(), 2600);
   }
 
+  // ボタンつきのお知らせ（「元に戻す」など）。少し長めに出す
+  function toastAction(msg, label, onClick, ms = 6000) {
+    const el = document.createElement("div");
+    el.className = "toast ok toast-action";
+    const span = document.createElement("span");
+    span.textContent = msg;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn sm";
+    btn.textContent = label;
+    btn.addEventListener("click", async () => {
+      el.remove();
+      await onClick();
+    });
+    el.append(span, btn);
+    $("#toasts").appendChild(el);
+    setTimeout(() => el.remove(), ms);
+  }
+
   async function api(path, body = null) {
     const opt = body === null
       ? { method: "GET" }
@@ -250,6 +269,16 @@
     try { more.open = localStorage.getItem("onseiman.moreSettings") === "1"; } catch {}
     more.addEventListener("toggle", () => { try { localStorage.setItem("onseiman.moreSettings", more.open ? "1" : "0"); } catch {} });
   })();
+
+  // トレイのメニューから押されて、窓が前に出たとき: 頼まれたタブに切り替える
+  async function checkUiRequest() {
+    try {
+      const r = await api("/api/ui-request");
+      if (r.tab) switchTab(r.tab);
+    } catch {}
+  }
+  window.addEventListener("focus", checkUiRequest);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUiRequest(); });
 
   // ---- Navigation ----
   function switchTab(tab) {
@@ -488,7 +517,38 @@
     } catch (e) { toast(e.message, "err"); }
   });
 
+  // ×で消した候補の一覧（「戻す」で元どおりにする）
+  function renderDismissed() {
+    const list = state.dismissed || [];
+    $("#dismissed-box").hidden = !list.length;
+    $("#dismissed-count").textContent = String(list.length);
+    const box = $("#dismissed-list");
+    box.innerHTML = "";
+    for (const c of list) {
+      const row = document.createElement("div");
+      row.className = "dismissed-row";
+      const pair = document.createElement("span");
+      pair.className = "pair";
+      pair.textContent = `${c.src} → ${c.dst}`;
+      pair.title = c.example_before ? `${c.example_before} → ${c.example_after}` : "";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn sm";
+      btn.textContent = "戻す";
+      btn.addEventListener("click", async () => {
+        try {
+          await api("/api/candidates/restore", c);
+          toast(`候補に戻しました: ${c.src} → ${c.dst}`);
+          loadState();
+        } catch (e) { toast(e.message, "err"); }
+      });
+      row.append(pair, btn);
+      box.appendChild(row);
+    }
+  }
+
   function renderCandidates() {
+    renderDismissed();
     const box = $("#cand-list");
     box.innerHTML = "";
     if (!state.candidates.length) {
@@ -511,7 +571,7 @@
         <div class="btn-row">
           <button type="button" class="btn primary sm" data-act="ok">辞書に登録</button>
           <button type="button" class="btn sm" data-act="later">あとで</button>
-          <button type="button" class="btn danger sm" data-act="no" title="この直しは、もう聞きません">今後出さない</button>
+          <button type="button" class="btn sm" data-act="no" title="この候補を消します（同じ直しをまたしたら、もう一度出します。自動では登録しません）" aria-label="この候補を消す">×</button>
         </div>`;
       card.querySelector('[data-act="ok"]').addEventListener("click", async () => {
         await api("/api/candidates/approve", { src: c.src, dst: c.dst });
@@ -524,8 +584,16 @@
       });
       card.querySelector('[data-act="no"]').addEventListener("click", async () => {
         await api("/api/candidates/reject", { src: c.src, dst: c.dst });
-        toast(`無視しました: ${c.src} → ${c.dst}`);
         loadState();
+        toastAction(`候補から消しました: ${c.src} → ${c.dst}`, "元に戻す", async () => {
+          try {
+            await api("/api/candidates/restore", c);
+            toast(`元に戻しました: ${c.src} → ${c.dst}`);
+            loadState();
+          } catch (e) {
+            toast(e.message, "err");
+          }
+        });
       });
       box.appendChild(card);
     }

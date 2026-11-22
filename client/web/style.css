@@ -291,6 +291,10 @@ dialog.modal::backdrop { background: rgba(15, 23, 42, .35); backdrop-filter: blu
 }
 .toast.ok { border-left: 4px solid var(--good); }
 .toast.err { border-left: 4px solid var(--danger); }
+.toast-action { display: flex; align-items: center; gap: 12px; pointer-events: auto; }
+.dismissed-list { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; max-height: 240px; overflow-y: auto; }
+.dismissed-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.dismissed-row .pair { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 .empty { text-align: center; padding: 36px 16px; color: var(--muted); font-size: 13.5px; }
