@@ -2,7 +2,8 @@
 # - Python が入っていなくてもよい。OnseiMan 専用の Python を、このフォルダの中（tools\python）に用意する。
 #   パソコン全体には何も入れない。管理者の権限もいらない。
 # - 用意には uv（https://github.com/astral-sh/uv）を使う。決まった版を、確認用の値（SHA-256）を確かめてから使う。
-param([ValidateSet("client", "server")][string]$Target = "client")
+# -Starting: start_client.bat / start_server.bat から、起動の前に呼ばれたとき（終わったら、そのまま起動する）
+param([ValidateSet("client", "server")][string]$Target = "client", [switch]$Starting)
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -132,10 +133,10 @@ if ($Target -eq "server") {
         exit 1
     }
     Write-Host ""
-    Write-Host "準備できました。server\start_server.bat で起動します。"
+    if ($Starting) { Write-Host "準備できました。サーバーを起動します。" } else { Write-Host "準備できました。server_windows.bat で起動します。" }
     Write-Host "Windows のファイアウォールの確認が出たら「許可」を選んでください。"
 } else {
-    Write-Host "準備できました。start_client.bat をダブルクリックで起動します。"
+    if ($Starting) { Write-Host "準備できました。OnseiMan を起動します。" } else { Write-Host "準備できました。start_client.bat をダブルクリックで起動します。" }
     Write-Host " - 初めて起動したとき、声を文字にするためのデータ（約840MB）を自動でダウンロードします。"
     Write-Host " - 右Alt を押して話し、もう一度押すと、カーソルの場所に文字が入ります。"
 }
