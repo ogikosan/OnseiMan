@@ -12,9 +12,26 @@ import winsound
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-from PIL import Image, ImageDraw
-import pystray
+
+def _lock_dpi_unaware() -> None:
+    """画面の拡大率の扱いを「拡大率を考えない」に固定する（Windows は最初に決めたものしか受け付けない）。
+
+    OnseiMan の画面（Tk）と録音中の表示（client/pill.py）は、この扱いで座標を計算している。
+    手直しの見張りが使う uiautomation は、読み込んだときにアプリ全体を「画面ごとの実際の画素」に
+    切り替えてしまう。最初の入力のあとから座標が拡大率の分（150% なら 1.5 倍）ずれ、
+    録音中の表示が画面の外に出て「最初の 1 回しか出ない」ようになっていた（2026-11-23）。
+    """
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(0)  # PROCESS_DPI_UNAWARE
+    except Exception:
+        pass
+
+
+_lock_dpi_unaware()
+
+import numpy as np  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
+import pystray  # noqa: E402
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
