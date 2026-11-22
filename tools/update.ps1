@@ -54,13 +54,14 @@ try {
     # いまのプログラムを残しておく（うまく動かなければ backup から戻せる）
     $bk = Join-Path $Root ("backup\" + $local + "_" + (Get-Date -Format "yyyyMMdd-HHmmss"))
     New-Item -ItemType Directory -Path $bk -Force | Out-Null
-    foreach ($item in Get-ChildItem -Path $Root -Force | Where-Object { $Keep -notcontains $_.Name }) {
+    # 専用の Python（tools\python）と道具（tools\bin）は大きく、中に近道（ジャンクション）もあるので、残す分に入れない
+    foreach ($item in Get-ChildItem -Path $Root -Force | Where-Object { $Keep -notcontains $_.Name -and $_.Name -ne "tools" }) {
         Copy-Item -Path $item.FullName -Destination $bk -Recurse -Force
     }
-    # 専用の Python と道具は大きいので、残す分には入れない
-    foreach ($big in @("tools\bin", "tools\python")) {
-        $bp = Join-Path $bk $big
-        if (Test-Path $bp) { Remove-Item -Path $bp -Recurse -Force }
+    $bkTools = Join-Path $bk "tools"
+    New-Item -ItemType Directory -Path $bkTools -Force | Out-Null
+    foreach ($item in Get-ChildItem -Path (Join-Path $Root "tools") -Force | Where-Object { @("bin", "python") -notcontains $_.Name }) {
+        Copy-Item -Path $item.FullName -Destination $bkTools -Recurse -Force
     }
 
     Write-Host "入れ替えています..."
