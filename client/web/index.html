@@ -274,13 +274,14 @@
                   相手のパソコンの前で、そのパソコンを使っている人（自分のパソコンなら自分）が、次の準備をしてください。
                   ほかの人のパソコンを使うときは、先にその人に聞いてください。</p>
                   <ol>
-                    <li>相手のパソコンに OnseiMan のフォルダをコピーする（GitHub の「Code」→「Download ZIP」でも同じ）</li>
-                    <li><b>Windows のとき</b>：<code>server\start_server.bat</code> をダブルクリック。
+                    <li>相手のパソコンに OnseiMan を置く。GitHub の「Releases」から、Windows なら <code>OnseiMan-…-Windows.zip</code>、
+                      Mac なら <code>OnseiMan-…-Mac.zip</code> を取ってきて展開する（このフォルダをコピーしても同じ）</li>
+                    <li><b>Windows のとき</b>：<code>server_windows.bat</code> をダブルクリック。
                       はじめては、そのパソコンに必要なものとデータ（約840MB）をダウンロードするので、数分〜10分かかります。「ファイアウォール」の確認が出たら「許可」。
                       <b>使うあいだは、出てきた黒い窓を閉じないでください。</b></li>
-                    <li><b>Mac のとき</b>：ターミナルでそのフォルダに移動して <code>bash server/setup_macos.sh</code>。
-                      データのダウンロードを含めて 10分ほどかかります。Python が無いと言われたら、先に <code>brew install python@3.11</code>。
-                      一度済めば、Mac を起動するたびに自動で動きます。</li>
+                    <li><b>Mac のとき</b>：<code>server_mac.command</code> をダブルクリック（Python は要りません）。
+                      データのダウンロードを含めて 10分ほどかかります。「開けません」と出たら、右クリック→「開く」。
+                      一度済めば、Mac を起動するたびに自動で動きます。やめるときは <code>server_mac_remove.command</code>。</li>
                     <li>こちらに戻って「サーバーをさがす」を押す</li>
                   </ol>
                   <p class="muted">見つからないとき：2 台が同じ Wi-Fi（または同じ Tailscale）につながっているか、

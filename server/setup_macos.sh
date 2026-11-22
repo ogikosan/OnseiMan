@@ -1,51 +1,99 @@
 #!/usr/bin/env bash
+# OnseiMan の認識サーバーを Mac に準備する（server_mac.command から呼ばれる）。
+# - Python を自分で入れなくてよい。OnseiMan 専用の Python を、このフォルダの中（tools/python）に用意する。
+#   用意には uv（https://github.com/astral-sh/uv）を使う。決まった版を、確認用の値（SHA-256）を確かめてから使う。
+# - 認識用のデータ（約840MB）をダウンロードし、Mac を起動するたびに自動で動くよう登録する（launchd）。
+# - --with-ai を付けると、文章を整える AI（Ollama + qwen2.5:7b、約4.7GB）も入れる。
 set -euo pipefail
-
-# OnseiMan macOS (Apple Silicon / M4 Pro) オールインワン セットアップスクリプト
-# - Fun-ASR Nano Multilingual API サーバー (ポート 8765)
-# - Ollama + qwen2.5:7b (ポート 11434, LAN 公開, Metal GPU)
-# - launchd によるログイン時自動常駐
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$BASE_DIR"
-export PATH="/opt/homebrew/opt/python@3.11/libexec/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-echo "=== [1/4] Python 3.11 仮想環境と ASR サーバー依存パッケージを導入します ==="
-PYTHON_BIN="$(command -v python3.11 || command -v python3 || true)"
-if [ -z "$PYTHON_BIN" ]; then
-  echo "python3 が見つかりません。Homebrew で python@3.11 を入れてください。"
+PORT=8765
+VENV="$BASE_DIR/.venv_server"
+PY="$VENV/bin/python"
+UV="$BASE_DIR/tools/bin/uv"
+UV_VERSION="0.13.9"
+case "$(uname -m)" in
+  arm64)  UV_ARCH="aarch64-apple-darwin"; UV_SHA256="5aeca67f2283f75235de40d0bd9c0a5bbc5fce23b6d48b3bf9fa1b2db08382ca" ;;
+  x86_64) UV_ARCH="x86_64-apple-darwin";  UV_SHA256="617a3211261b0fc739562f0071aa34e9739797c510208ede8e2977c30903d041" ;;
+  *)      UV_ARCH="";                     UV_SHA256="" ;;
+esac
+export UV_PYTHON_INSTALL_DIR="$BASE_DIR/tools/python"
+export UV_NO_PROGRESS=1
+
+get_uv() {
+  [ -x "$UV" ] && return 0
+  [ -n "$UV_ARCH" ] || return 1
+  echo "準備の道具をダウンロードしています..."
+  local tmp
+  tmp="$(mktemp -d)"
+  if ! curl -fsSL -o "$tmp/uv.tar.gz" "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-$UV_ARCH.tar.gz"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  local got
+  got="$(shasum -a 256 "$tmp/uv.tar.gz" | awk '{print $1}')"
+  if [ "$got" != "$UV_SHA256" ]; then
+    echo "ダウンロードしたものが正しいものと一致しませんでした。"
+    rm -rf "$tmp"
+    return 1
+  fi
+  tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
+  mkdir -p "$(dirname "$UV")"
+  cp "$tmp/uv-$UV_ARCH/uv" "$UV"
+  chmod +x "$UV"
+  rm -rf "$tmp"
+}
+
+echo "=== [1/4] 必要なものを用意します ==="
+if get_uv; then
+  if [ ! -x "$PY" ]; then
+    echo "OnseiMan 専用の Python を用意しています..."
+    "$UV" venv --managed-python --python 3.11 "$VENV"
+  fi
+  "$UV" pip install --python "$PY" -r server/requirements.txt sherpa-onnx
+else
+  # 道具を取れないとき: Mac に入っている Python 3.11 以上で代わりに用意する
+  PYTHON_BIN=""
+  for cand in python3.12 python3.11 python3; do
+    if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+      PYTHON_BIN="$(command -v "$cand")"
+      break
+    fi
+  done
+  if [ -z "$PYTHON_BIN" ]; then
+    echo "必要なものを用意できませんでした。インターネットにつながっているか確かめて、もう一度実行してください。"
+    exit 1
+  fi
+  [ -x "$PY" ] || "$PYTHON_BIN" -m venv "$VENV"
+  "$PY" -m pip install -r server/requirements.txt sherpa-onnx
+fi
+if ! "$PY" -c "import fastapi, uvicorn, numpy, soundfile, sherpa_onnx"; then
+  echo "用意したものが正しく動きませんでした。この画面の内容を、作った人に見せてください。"
   exit 1
 fi
-echo "Using Python: $PYTHON_BIN ($("$PYTHON_BIN" --version))"
 
-if [ ! -d ".venv_server" ]; then
-  "$PYTHON_BIN" -m venv .venv_server
-fi
-source .venv_server/bin/activate
-pip install --upgrade pip
-pip install fastapi uvicorn python-multipart numpy soundfile sherpa-onnx
-
-echo "=== [2/4] Fun-ASR Nano Multilingual モデル (約803MB) を取得します ==="
-python download_model.py
+echo "=== [2/4] 認識用のデータ（約840MB）を用意します ==="
+"$PY" download_model.py
 
 if [ "${1:-}" != "--with-ai" ]; then
   echo "=== [3/4] AI 整形（Ollama, 約4.7GB）は入れません（入れるときは --with-ai を付けて実行） ==="
 else
-echo "=== [3/4] Ollama と軽量日本語モデル (qwen2.5:7b) を準備します ==="
-if ! command -v ollama >/dev/null 2>&1; then
-  if command -v brew >/dev/null 2>&1; then
-    brew install ollama
-  else
-    echo "Homebrew が見つかりません。https://ollama.com から Ollama をインストールしてください。"
+  echo "=== [3/4] Ollama と軽量日本語モデル (qwen2.5:7b) を準備します ==="
+  if ! command -v ollama >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      brew install ollama
+    else
+      echo "Homebrew が見つかりません。https://ollama.com から Ollama をインストールしてください。"
+    fi
   fi
-fi
-
-if command -v ollama >/dev/null 2>&1; then
-  # LAN から接続できるよう OLLAMA_HOST=0.0.0.0 で起動
-  OLLAMA_BIN="$(command -v ollama)"
-  mkdir -p "$HOME/Library/LaunchAgents" "$BASE_DIR/logs"
-
-  cat > "$HOME/Library/LaunchAgents/com.onseiman.ollama.plist" <<EOF
+  if command -v ollama >/dev/null 2>&1; then
+    # 同じネットワークから使えるよう OLLAMA_HOST=0.0.0.0 で起動
+    OLLAMA_BIN="$(command -v ollama)"
+    mkdir -p "$HOME/Library/LaunchAgents" "$BASE_DIR/logs"
+    cat > "$HOME/Library/LaunchAgents/com.onseiman.ollama.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -68,15 +116,14 @@ if command -v ollama >/dev/null 2>&1; then
 </dict>
 </plist>
 EOF
-
-  launchctl unload "$HOME/Library/LaunchAgents/com.onseiman.ollama.plist" 2>/dev/null || true
-  launchctl load "$HOME/Library/LaunchAgents/com.onseiman.ollama.plist"
-  sleep 2
-  ollama pull qwen2.5:7b
+    launchctl unload "$HOME/Library/LaunchAgents/com.onseiman.ollama.plist" 2>/dev/null || true
+    launchctl load "$HOME/Library/LaunchAgents/com.onseiman.ollama.plist"
+    sleep 2
+    ollama pull qwen2.5:7b
+  fi
 fi
-fi
 
-echo "=== [4/4] OnseiMan ASR サーバーを launchd で常駐登録します ==="
+echo "=== [4/4] Mac を起動するたびに自動で動くよう登録します ==="
 THREADS="$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || sysctl -n hw.ncpu)"
 if [ "$THREADS" -gt 8 ]; then THREADS=8; fi
 mkdir -p "$HOME/Library/LaunchAgents" "$BASE_DIR/logs"
@@ -89,10 +136,10 @@ cat > "$HOME/Library/LaunchAgents/com.onseiman.asr.plist" <<EOF
   <key>WorkingDirectory</key><string>${BASE_DIR}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${BASE_DIR}/.venv_server/bin/python</string>
+    <string>${PY}</string>
     <string>${BASE_DIR}/server/app.py</string>
     <string>--host</string><string>0.0.0.0</string>
-    <string>--port</string><string>8765</string>
+    <string>--port</string><string>${PORT}</string>
     <string>--provider</string><string>cpu</string>
     <string>--threads</string><string>${THREADS}</string>
   </array>
@@ -103,12 +150,29 @@ cat > "$HOME/Library/LaunchAgents/com.onseiman.asr.plist" <<EOF
 </dict>
 </plist>
 EOF
-
 launchctl unload "$HOME/Library/LaunchAgents/com.onseiman.asr.plist" 2>/dev/null || true
 launchctl load "$HOME/Library/LaunchAgents/com.onseiman.asr.plist"
-sleep 3
 
-echo "=== 疎通確認 ==="
-curl -s http://127.0.0.1:8765/health && echo ""
-curl -s http://127.0.0.1:11434/api/tags 2>/dev/null | head -c 200 && echo "" || true
-echo "セットアップ完了！"
+echo "サーバーの起動を待っています（データの読み込みに 1 分ほどかかります）..."
+ok=""
+for _ in $(seq 1 90); do
+  if curl -fs "http://127.0.0.1:${PORT}/health" 2>/dev/null | grep -q '"ok"'; then ok="yes"; break; fi
+  sleep 2
+done
+echo
+if [ -z "$ok" ]; then
+  echo "サーバーが起動しませんでした。logs/server.log の内容を、作った人に見せてください。"
+  exit 1
+fi
+echo "準備できました。この Mac で OnseiMan のサーバーが動いています（Mac を起動するたびに自動で動きます）。"
+echo "Windows の OnseiMan で、設定の「声を文字にする場所」→「別のパソコン」を選ぶと、自動で見つかります。"
+echo "見つからないときに手で書くアドレス:"
+for ifc in en0 en1; do
+  ip="$(ipconfig getifaddr "$ifc" 2>/dev/null || true)"
+  if [ -n "$ip" ]; then echo "  家のネットワーク: http://${ip}:${PORT}"; fi
+done
+if command -v tailscale >/dev/null 2>&1; then
+  tip="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+  if [ -n "$tip" ]; then echo "  Tailscale:        http://${tip}:${PORT}"; fi
+fi
+exit 0

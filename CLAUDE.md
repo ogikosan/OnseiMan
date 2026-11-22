@@ -11,7 +11,7 @@
 ```text
 start_client.bat                                   起動
 .venv\Scripts\python.exe -m unittest discover -s tests   テスト
-python packaging\make_friend_package.py            友達に渡す zip を作る
+python packaging\make_friend_package.py            配る zip（Windows 用・Mac 用）を作る
 ```
 
 ## 注意点

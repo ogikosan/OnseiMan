@@ -7,7 +7,7 @@
 - コード変更時の必須確認：`.venv\Scripts\python.exe -m unittest discover -s tests`（全件 OK）。
 - 認識まわりを変えたとき：付属の音声で実際に認識させて確かめる（`models/.../test_wavs/`。長い発話は複数をつないで試す）。
 - 画面（`client/web/`）を変えたとき：`node -e "new Function(require('fs').readFileSync('client/web/app.js','utf8'))"` で文法確認し、ヘッドレス Edge で撮影して見た目を確かめる。動いている OnseiMan と同じポートを取り合うので、試験用の Web サーバーは `_preferred_port = 0` で起動する。
-- 友達に渡す一式：`python packaging\make_friend_package.py`（個人の情報が混ざっていたら作らない。確認する言葉は `packaging/private-patterns.txt`、公開しない）。
+- 配る zip（Windows 用・Mac 用の 2 つ）：`python packaging\make_friend_package.py`（個人の情報が混ざっていたら作らない。確認する言葉は `packaging/private-patterns.txt`、公開しない）。
 - 公開：GitHub `ogikosan/OnseiMan`（公開リポジトリ）。利用者は `update.bat` で `main` の最新版に入れ替える。
   新しい版を出す手順：`client/version.py` を上げる → `packaging/friend/変更点.md` に追記 → テスト全件 OK →
   `develop` にコミット → `main` を早送りで合わせる → タグ `vX.Y.Z` → `git push origin main develop refs/tags/vX.Y.Z`。
@@ -25,7 +25,7 @@
 ## 該当時に読む資料
 - 機能変更：`docs/src/spec.md`
 - 人間向けの説明が変わる場合：`docs/index.html`、アプリ内の「使い方」（`client/web/index.html` の `view-help`）、`packaging/friend/はじめに.md`
-- サーバー（Mac / Windows）：`server/`、`server/setup_macos.sh`
+- サーバー（Mac / Windows）：`server/`。入口は直下の `server_mac.command`（中身は `server/setup_macos.sh`）・`server_mac_remove.command`・`server_windows.bat`
 
 ## 固有の制約
 - 利用者のデータ：`config.json`・`dict.json`・`logs/`（履歴・録音・学習候補を含む）は消さない・上書きしない。辞書を整理するときは `logs/` にバックアップを取ってから。

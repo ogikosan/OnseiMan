@@ -1,5 +1,6 @@
 # Mac で動かすスクリプトは LF に固定
 *.sh text eol=lf
+*.command text eol=lf
 # バッチと PowerShell は、入れてあるとおり（CRLF。ps1 は BOM つき）のまま配る。git に改行を変えさせない
 *.bat -text
 *.ps1 -text

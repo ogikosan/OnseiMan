@@ -27,11 +27,13 @@
 
 利用者の許可を得たパソコンにだけ入れる。
 
-- **Mac**: Python 3.11 を用意（無ければ `brew install python@3.11`）→ リポジトリ直下で `bash server/setup_macos.sh`。
-  `.venv_server` を作って依存とモデルを入れ、launchd（`~/Library/LaunchAgents/com.onseiman.asr.plist`）で常駐登録する。
+- **Mac**: Mac 用の zip（または同じリポジトリ）の直下で `server_mac.command` を実行（中身は `server/setup_macos.sh`）。
+  Python の用意は不要。uv（版と SHA-256 を固定）で専用の Python 3.11 を `tools/python` に用意して `.venv_server` を作り、
+  依存とモデルを入れ、launchd（`~/Library/LaunchAgents/com.onseiman.asr.plist`）で常駐登録し、`/health` を待つ。
+  やめるときは `server_mac_remove.command`（登録を外すだけで、フォルダは消さない）。
   `--with-ai` を付けると Ollama + qwen2.5:7b（約 4.7GB）も入れる（「AI で文章を整える」を使うときだけ）。
-- **Windows**: `server\install_server_windows.bat`（Python 不要。`.venv_server` を作り、モデルも取得）→
-  `server\start_server.bat`（`0.0.0.0:8765`）。
+- **Windows**: リポジトリ直下の `server_windows.bat`（Python 不要。初回は `.venv_server` を作りモデルも取得してから、
+  `0.0.0.0:8765` で動かす。中身は `server\start_server.bat`）。
   ファイアウォールで Python の受信を許可する。
 - 確認: そのパソコンで `curl http://127.0.0.1:8765/health` が `{"status":"ok",...}` を返すこと。
 
@@ -48,8 +50,8 @@
    zip には `config.json` / `dict.json` / `logs/` / `models/` / `.venv` が入っていないので、利用者のデータは残る。
 3. `install_client.bat` を再実行（`client/requirements.txt` の追加分を入れる）。
 4. `start_client.bat` で起動し、トレイのメニューの先頭に新しい版の番号が出ることを確かめる。
-5. サーバー（Mac）側は、`server/` か `shared/` が変わったときだけ同じように上書きし、
-   `launchctl kickstart -k gui/$(id -u)/com.onseiman.asr` で再起動する。
+5. サーバー（Mac）側は、`server/` か `shared/` が変わったときだけ、新しい Mac 用 zip の中身を上書きして
+   `server_mac.command` を再実行する（依存を入れ直して常駐を再登録する。モデルは取り直さない）。
 
 ## 注意
 

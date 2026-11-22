@@ -89,5 +89,84 @@ class TestBatchFiles(unittest.TestCase):
         self.assertIn(".venv_server\\onseiman-ready.txt", (ROOT / "server" / "start_server.bat").read_text(encoding="ascii"))
 
 
+class TestMacFiles(unittest.TestCase):
+    """Mac で動かすファイル（.command / .sh）。Mac は CRLF だと `bash\\r` を探して失敗する。"""
+
+    MAC_FILES = ["server_mac.command", "server_mac_remove.command", "server/setup_macos.sh", "server/start_server.sh"]
+
+    def test_mac_files_are_lf_with_shebang(self) -> None:
+        for rel in self.MAC_FILES:
+            raw = (ROOT / rel).read_bytes()
+            self.assertNotIn(b"\r", raw, f"{rel}: CR があります（改行は LF だけにする）")
+            self.assertTrue(raw.startswith(b"#!/"), f"{rel}: 1 行目に #! がありません")
+            ctrl = sorted({b for b in raw if b < 32 and b not in (9, 10)})
+            self.assertEqual(ctrl, [], f"{rel}: 制御文字があります")
+
+    def test_mac_files_are_executable_in_git(self) -> None:
+        # GitHub の ZIP や clone で、ダブルクリック・実行できる印が付いたまま届くように
+        out = subprocess.run(["git", "ls-files", "-s", *self.MAC_FILES], cwd=ROOT,
+                             capture_output=True, text=True, encoding="utf-8").stdout
+        modes = {line.split("\t", 1)[1]: line.split()[0] for line in out.splitlines()}
+        for rel in self.MAC_FILES:
+            self.assertEqual(modes.get(rel), "100755", f"{rel}: git に実行の印（100755）がありません")
+
+    def test_mac_launchers_point_to_existing_files(self) -> None:
+        self.assertIn("server/setup_macos.sh", (ROOT / "server_mac.command").read_text(encoding="utf-8"))
+        setup = (ROOT / "server" / "setup_macos.sh").read_text(encoding="utf-8")
+        for rel in ("server/requirements.txt", "download_model.py", "server/app.py"):
+            self.assertIn(rel.split("/")[-1], setup)
+            self.assertTrue((ROOT / rel).exists(), rel)
+        # uv は版と確認用の値を固定して使う（Mac の 2 種類とも）
+        self.assertEqual(len(re.findall(r'UV_SHA256="[0-9a-f]{64}"', setup)), 2)
+        self.assertIn('UV_VERSION="0.13.9"', setup)
+
+    def test_mac_shell_syntax(self) -> None:
+        import shutil
+        bash = shutil.which("bash")
+        if not bash:
+            self.skipTest("bash が無い")
+        for rel in self.MAC_FILES:
+            r = subprocess.run([bash, "-n", rel], cwd=ROOT, capture_output=True)
+            self.assertEqual(r.returncode, 0, f"{rel}: {r.stderr.decode('utf-8', 'replace')}")
+
+
+class TestPackages(unittest.TestCase):
+    """配る zip（Windows 用・Mac 用）の中身。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        sys.path.insert(0, str(ROOT / "packaging"))
+        import make_friend_package
+        cls.pkg = make_friend_package
+
+    def _names(self, kind: str) -> set:
+        files = self.pkg.collect(kind)
+        for src, arc in files:
+            self.assertTrue(src.exists(), f"{kind}: {arc} の元がありません")
+        return {arc for _, arc in files}
+
+    def test_windows_package(self) -> None:
+        names = self._names("Windows")
+        for need in ("install_client.bat", "start_client.bat", "update.bat", "server_windows.bat",
+                     "client/main.py", "server/app.py", "server/start_server.bat", "tools/install.ps1",
+                     "はじめに.md", "AGENTS.md", "変更点.md", "LICENSE"):
+            self.assertIn(need, names)
+        self.assertFalse([n for n in names if n.endswith((".command", ".sh"))])
+
+    def test_mac_package_has_only_server(self) -> None:
+        names = self._names("Mac")
+        for need in ("server_mac.command", "server_mac_remove.command", "server/setup_macos.sh", "server/app.py",
+                     "server/requirements.txt", "shared/asr_engine.py", "download_model.py",
+                     "はじめに.md", "変更点.md", "LICENSE"):
+            self.assertIn(need, names)
+        self.assertFalse([n for n in names if n.startswith(("client/", "tools/")) or n.endswith((".bat", ".ps1"))])
+
+    def test_no_user_data_in_packages(self) -> None:
+        for kind in self.pkg.PACKAGES:
+            for name in self._names(kind):
+                self.assertFalse(name in ("config.json", "dict.json") or name.startswith(("logs/", "models/", ".venv")),
+                                 f"{kind}: {name}")
+
+
 if __name__ == "__main__":
     unittest.main()
