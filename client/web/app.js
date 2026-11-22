@@ -45,49 +45,120 @@
 
   $$('input[name="rec_place"]').forEach((r) => r.addEventListener("change", () => {
     $("#server-fields").hidden = r.value !== "server" || !r.checked;
+    // 「別のパソコン」を選んだら、ボタンを押さなくても探し始める
+    if (r.value === "server" && r.checked && !foundServers.length) findServers();
   }));
 
   // 「別のパソコン」: サーバーを自動でさがして選ぶ
   function serverLines() {
     return $("#set-servers").value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
   }
+  let foundServers = [];
+  let serverNames = {};
+  const userNamed = new Set();   // 自分で名前を付けたサーバー（探し直しても上書きしない）
+  const ipOf = (u) => String(u).replace(/^https?:\/\//, "").replace(/:\d+\/?$/, "");
+  // まだ探していないときは、使っているサーバーを名前つきで出す
+  function savedAsFound() {
+    return serverLines().map((u) => ({ url: u, name: serverNames[u] || ipOf(u), via: "使っています", ready: true, saved: true }));
+  }
   function renderFound(list) {
+    foundServers = list;
     const box = $("#found-servers");
     box.innerHTML = "";
     const using = new Set(serverLines());
     for (const s of list) {
       const row = document.createElement("label");
       row.className = "found-item";
-      const kind = s.ready ? (s.provider === "cuda" || s.provider === "coreml" ? "GPU" : "CPU") : "準備中";
+      const kind = s.saved ? "" : s.ready ? (s.provider === "cuda" || s.provider === "coreml" ? " ・ GPU" : " ・ CPU") : " ・ 準備中";
+      const speed = s.saved ? "" : ` ・ 返事 ${Number(s.ms) || 0}ms`;
+      const shown = serverNames[s.url] || s.name;
       row.innerHTML = `<input type="checkbox" ${using.has(s.url) ? "checked" : ""}>
-        <span><b>${esc(s.name)}</b><small>${esc(s.via)} ・ ${esc(kind)} ・ 返事 ${Number(s.ms) || 0}ms</small></span>`;
+        <span class="srv-info"><input class="srv-name" maxlength="40" title="クリックで名前を変えられます">
+        <small>${esc(s.via)}${esc(kind)}${esc(speed)} ・ ${esc(ipOf(s.url))}</small></span>
+        <span class="srv-edit" aria-hidden="true">✎</span>`;
+      const nameIn = row.querySelector(".srv-name");
+      nameIn.value = shown;
+      const commitName = () => {
+        const v = nameIn.value.trim();
+        if (!v) { nameIn.value = shown; return; }
+        if (v === (serverNames[s.url] || s.name)) return;
+        serverNames[s.url] = v;
+        userNamed.add(s.url);
+        autoSaveServers(`✓ 名前を「${v}」にしました`);
+      };
+      nameIn.addEventListener("click", (e) => e.preventDefault());   // 名前の欄を押してもチェックは変えない
+      nameIn.addEventListener("blur", commitName);
+      nameIn.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); nameIn.blur(); }
+        if (e.key === "Escape") { nameIn.value = shown; nameIn.blur(); }
+      });
       row.querySelector("input").addEventListener("change", (e) => {
         let lines = serverLines().filter((u) => u !== s.url);
         if (e.target.checked) lines = [...lines, s.url];
         $("#set-servers").value = lines.join("\n");
+        autoSaveServers("✓ 使うパソコンを変えました");
       });
       box.appendChild(row);
     }
   }
-  $("#btn-find-servers").addEventListener("click", async () => {
+  let finding = false;
+  async function findServers() {
+    if (finding) return;
+    finding = true;
     const st = $("#find-status");
     st.textContent = "さがしています…（数秒かかります）";
     $("#btn-find-servers").disabled = true;
     try {
       const r = await api("/api/find_servers", {});
       const list = r.servers || [];
-      if (!list.length) {
-        st.textContent = "見つかりませんでした。相手のパソコンで OnseiMan のサーバーが動いているか確かめてください";
-      } else {
-        st.textContent = `${list.length} 台見つかりました。使うものにチェックを入れて「設定を保存」`;
-        if (!serverLines().length) $("#set-servers").value = list.filter((s) => s.ready).map((s) => s.url).join("\n");
+      // 同じパソコンが 2 つの行き方（Tailscale と家のネットワーク）で登録されていたら、1 つにまとめる
+      let lines = serverLines();
+      let mergedCount = 0;
+      for (const s of list) {
+        const dup = (s.aliases || []).filter((a) => lines.includes(a));
+        if (!dup.length) continue;
+        mergedCount += dup.length;
+        lines = lines.map((u) => (dup.includes(u) ? s.url : u));
+        for (const a of dup) {
+          if (serverNames[a] && !serverNames[s.url]) serverNames[s.url] = serverNames[a];
+          if (userNamed.has(a)) userNamed.add(s.url);
+        }
       }
+      lines = lines.filter((u, i) => lines.indexOf(u) === i);
+      // 見つかったもの（準備できているもの）は自動で使う
+      for (const s of list) if (s.ready && !lines.includes(s.url)) lines.push(s.url);
+      for (const s of list) if (!serverNames[s.url]) serverNames[s.url] = s.name;
+      $("#set-servers").value = lines.join("\n");
       renderFound(list);
+      if (!list.length) {
+        st.textContent = "見つかりませんでした。相手のパソコンで OnseiMan のサーバー（start_server）が動いているか、同じ Wi-Fi か Tailscale につながっているか確かめてください";
+      } else {
+        const names = list.filter((s) => s.ready).map((s) => s.name).join("、");
+        st.textContent = `${names} を見つけて、使うように設定しました` +
+          (mergedCount ? "（同じパソコンが 2 つの行き方で登録されていたので、1 つにまとめました）" : "");
+        await autoSaveServers("");
+      }
     } catch (e) {
       st.textContent = "さがせませんでした: " + e.message;
     } finally {
+      finding = false;
       $("#btn-find-servers").disabled = false;
     }
+  }
+  $("#btn-find-servers").addEventListener("click", findServers);
+  // 使うサーバーの変更は、その場で保存する（「設定を保存」を押さなくてよい）
+  async function autoSaveServers(msg) {
+    try {
+      await saveSettings(true);
+      if (msg) toast(msg);
+    } catch (e) {
+      toast(e.message, "err");
+    }
+  }
+  // 「アドレスを自分で書く」欄を直したら、上のチェックも合わせる
+  $("#set-servers").addEventListener("input", () => {
+    const searched = foundServers.filter((s) => !s.saved);
+    renderFound(searched.length ? searched : savedAsFound());
   });
 
   // 「詳しい設定」を開いていたかを覚えておく
@@ -112,7 +183,8 @@
   async function loadState() {
     try {
       state = await api("/api/state");
-      $("#hdr-backend").textContent = friendlyStatus(state.backend);
+      $("#hdr-backend").textContent = state.server_name && String(state.backend || "").startsWith("LAN")
+        ? `${state.server_name} で認識` : friendlyStatus(state.backend);
       $("#conn").title = state.backend ? `くわしく: ${state.backend}` : "";
       $("#conn").dataset.state = (state.backend || "").startsWith("LAN") ? "ok" : "local";
       $("#hdr-hotkey").textContent = state.hotkey || "ralt";
@@ -711,6 +783,9 @@
     $("#set-beep").checked = !!s.beep_enabled;
     $("#set-overlay").checked = !!s.show_overlay;
     $("#set-servers").value = (s.server_urls || []).join("\n");
+    serverNames = { ...(s.server_names || {}) };
+    Object.keys(serverNames).forEach((u) => userNamed.add(u));
+    renderFound(savedAsFound());
     $$('input[name="rec_place"]').forEach((r) => { r.checked = r.value === (s.recognition_place || "local"); });
     $("#server-fields").hidden = (s.recognition_place || "local") !== "server";
     $("#set-local-fb").checked = !!s.local_fallback;
@@ -734,10 +809,9 @@
     loadSettings();
   });
 
-  $("#btn-settings-save").addEventListener("click", async () => {
+  async function saveSettings(quiet = false) {
     const modeEl = $('input[name="hotkey_mode"]:checked');
-    try {
-      await api("/api/settings", {
+    await api("/api/settings", {
         hotkey_mode: modeEl ? modeEl.value : "toggle",
         auto_stop_on_silence: $("#set-auto-stop").checked,
         silence_stop_sec: parseFloat($("#set-silence-sec").value || "1.8"),
@@ -764,14 +838,17 @@
         beep_enabled: $("#set-beep").checked,
         show_overlay: $("#set-overlay").checked,
         server_urls: $("#set-servers").value,
+        server_names: Object.fromEntries(serverLines().filter((u) => serverNames[u]).map((u) => [u, serverNames[u]])),
         recognition_place: ($('input[name="rec_place"]:checked') || {}).value || "local",
         local_fallback: $("#set-local-fb").checked,
         llm_base_url: $("#set-llm-url").value.trim(),
         llm_model: $("#set-llm-model").value.trim(),
       });
-      toast("設定を保存しました（すぐに反映されます）");
-      loadState();
-    } catch (e) { toast(e.message, "err"); }
+    if (!quiet) toast("設定を保存しました（すぐに反映されます）");
+    loadState();
+  }
+  $("#btn-settings-save").addEventListener("click", async () => {
+    try { await saveSettings(false); } catch (e) { toast(e.message, "err"); }
   });
 
   // 使い方ページ用: 設定のキー名を読みやすい名前にする

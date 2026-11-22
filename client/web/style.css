@@ -431,3 +431,11 @@ details.adv summary { cursor: pointer; font-size: 13px; color: var(--muted); fon
 .more-settings[open] > summary::before { content: "－"; }
 .more-settings > summary small { font-size: 12px; font-weight: 500; color: var(--muted); }
 .more-settings > .settings-grid { margin-top: 12px; }
+
+/* 見つかったサーバー: 名前はその場で直せる */
+.found-item .srv-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.srv-name { font: inherit; font-weight: 700; font-size: 14px; color: var(--text); background: transparent;
+  border: 1px solid transparent; border-radius: 6px; padding: 1px 6px; margin-left: -7px; width: 100%; cursor: text; }
+.srv-name:hover { border-color: var(--line); }
+.srv-name:focus { outline: none; border-color: var(--accent); background: var(--input); }
+.srv-edit { color: var(--muted); font-size: 13px; }

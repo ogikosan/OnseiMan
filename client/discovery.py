@@ -23,6 +23,8 @@ import requests
 logger = logging.getLogger("onseiman.discovery")
 
 PORT = 8765
+# 家・会社のネットワークのアドレス（RFC 1918）
+_HOME_NETS = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
 CREATE_NO_WINDOW = 0x08000000
 
 
@@ -52,7 +54,17 @@ def tailscale_peers() -> List[Dict[str, str]]:
     for p in (data.get("Peer") or {}).values():
         ips = [ip for ip in (p.get("TailscaleIPs") or []) if ":" not in ip]
         if p.get("Online") and ips:
-            peers.append({"ip": ips[0], "name": str(p.get("HostName") or ips[0])})
+            # Tailscale が知っている、相手の家のネットワークでのアドレス（同じパソコンかどうかの判定に使う）
+            lan = set()
+            for addr in [p.get("CurAddr") or ""] + list(p.get("Addrs") or []):
+                host = str(addr).rsplit(":", 1)[0].strip("[]")
+                try:
+                    a = ipaddress.ip_address(host)
+                except ValueError:
+                    continue
+                if a.version == 4 and any(a in n for n in _HOME_NETS):
+                    lan.add(host)
+            peers.append({"ip": ips[0], "name": str(p.get("HostName") or ips[0]), "lan_ips": sorted(lan)})
     return peers
 
 
@@ -96,32 +108,88 @@ def _probe(ip: str, port: int, timeout: float) -> Optional[dict]:
         elif status != "initializing":
             return None
         return {"url": url, "provider": str(data.get("provider", "")), "ms": round((time.perf_counter() - t0) * 1000),
-                "ready": data.get("status") == "ok"}
+                "ready": data.get("status") == "ok",
+                # 新しいサーバーは、起動ごとの番号とパソコンの名前を返す（同じパソコンかどうかの判定に使う）
+                "id": str(data.get("id", ""))[:64], "host": str(data.get("name", ""))[:64]}
     except Exception:
         return None
 
 
-def find_servers(port: int = PORT, timeout: float = 0.8) -> List[dict]:
-    """見つかったサーバーを、返事の速い順に返す。各要素: url, name, via（Tailscale / 家のネットワーク）, provider, ms。"""
+def merge_same_machines(found: List[dict], peers: List[Dict]) -> List[dict]:
+    """同じパソコンが「Tailscale」と「家のネットワーク」の両方で見つかったら、1 つにまとめる。
+
+    両方を登録すると、外出先で家のアドレスの待ち時間が毎回かかるなど、動きが不安定になる。
+    Tailscale は家の中では自動で直接つながるので、Tailscale のアドレスだけを残す（家でも外でも使える）。
+    まとめられた側のアドレスは aliases に入れる（登録済みなら画面で外す）。
+
+    同じパソコンの判定: (1) サーバーが返す番号（id）が同じ (2) Tailscale が知っている相手の家のアドレスと一致
+    """
+    lan_owner: Dict[str, str] = {}  # 家のアドレス → その相手の Tailscale アドレス
+    for p in peers:
+        for lan_ip in p.get("lan_ips", []):
+            lan_owner[lan_ip] = p["ip"]
+
+    def ip_of(r: dict) -> str:
+        return r["url"].split("//")[1].split(":")[0]
+
+    groups: List[List[dict]] = []
+    for r in found:
+        placed = False
+        for g in groups:
+            for o in g:
+                same_id = bool(r.get("id")) and r.get("id") == o.get("id")
+                a, b = ip_of(r), ip_of(o)
+                same_ts = lan_owner.get(a) == b or lan_owner.get(b) == a
+                if same_id or same_ts:
+                    g.append(r)
+                    placed = True
+                    break
+            if placed:
+                break
+        if not placed:
+            groups.append([r])
+
+    merged: List[dict] = []
+    for g in groups:
+        # Tailscale を優先。同じ種類なら返事の速いほう
+        g.sort(key=lambda r: (r.get("via") != "Tailscale", not r.get("ready"), r.get("ms", 0)))
+        best = dict(g[0])
+        best["aliases"] = [r["url"] for r in g[1:]]
+        if best["aliases"] and best.get("via") == "Tailscale":
+            best["via"] = "Tailscale（家でも外でも使えます）"
+        merged.append(best)
+    merged.sort(key=lambda r: (not r["ready"], r["ms"]))
+    return merged
+
+
+def find_servers(port: int = PORT, timeout: float = 1.0) -> List[dict]:
+    """見つかったサーバーを、返事の速い順に返す。同じパソコンは 1 つにまとめる。
+
+    各要素: url, name, via（Tailscale / 家のネットワーク）, provider, ms, ready, aliases（同じパソコンの別のアドレス）
+    """
+    peers = tailscale_peers()
     targets: Dict[str, Dict[str, str]] = {}
-    for p in tailscale_peers():
+    for p in peers:
         targets[p["ip"]] = {"name": p["name"], "via": "Tailscale"}
     for ip in lan_hosts():
         targets.setdefault(ip, {"name": ip, "via": "家のネットワーク"})
     found: List[dict] = []
-    with ThreadPoolExecutor(max_workers=64) as pool:
+    with ThreadPoolExecutor(max_workers=96) as pool:
         results = pool.map(lambda ip: (ip, _probe(ip, port, timeout)), list(targets))
         for ip, res in results:
             if res:
                 res.update(targets[ip])
                 found.append(res)
+    merged = merge_same_machines(found, peers)
     # 家のネットワークで見つかったものは、分かればパソコンの名前を付ける
-    for r in found:
+    for r in merged:
         if r["name"] == r["url"].split("//")[1].split(":")[0]:
+            if r.get("host"):
+                r["name"] = r["host"]
+                continue
             try:
                 r["name"] = socket.gethostbyaddr(r["name"])[0].split(".")[0]
             except Exception:
                 pass
-    found.sort(key=lambda r: (not r["ready"], r["ms"]))
-    logger.info("サーバーをさがしました: %d 台（%s）", len(found), ", ".join(f"{r['name']}" for r in found))
-    return found
+    logger.info("サーバーをさがしました: %d 台（%s）", len(merged), ", ".join(f"{r['name']}" for r in merged))
+    return merged

@@ -444,8 +444,16 @@ class WebUIServer:
                     "example_after": c.example_after,
                 }
             )
+        server_name = ""
+        fn = getattr(self, "get_server_name_fn", None)
+        if fn:
+            try:
+                server_name = fn() or ""
+            except Exception:
+                server_name = ""
         return {
             "backend": backend,
+            "server_name": server_name,
             "hotkey_info": hotkey_info,
             "hotkey": self.get_hotkey() if self.get_hotkey else "",
             "ai_hotkey": self.get_ai_hotkey() if self.get_ai_hotkey else "",
@@ -521,6 +529,7 @@ class WebUIServer:
             "beep_enabled": bool(cfg.beep_enabled),
             "show_overlay": bool(cfg.show_overlay),
             "server_urls": list(cfg.server_urls),
+            "server_names": dict(getattr(cfg, "server_names", {}) or {}),
             "recognition_place": (cfg.recognition_place or ("server" if cfg.server_urls else "local")),
             "local_fallback": bool(cfg.local_fallback),
             "llm_base_url": cfg.llm_base_url,
@@ -583,9 +592,14 @@ class WebUIServer:
         cfg.beep_enabled = bool(body.get("beep_enabled", True))
         cfg.show_overlay = bool(body.get("show_overlay", True))
         cfg.server_urls = urls
+        names = body.get("server_names")
+        if isinstance(names, dict):
+            old = dict(getattr(cfg, "server_names", {}) or {})
+            old.update({str(k): str(v)[:64] for k, v in names.items() if str(k) in urls and str(v).strip()})
+            cfg.server_names = {u: old[u] for u in urls if u in old}
         cfg.recognition_place = "server" if body.get("recognition_place") == "server" else "local"
         if cfg.recognition_place == "server" and not urls:
-            raise ValueError("「別のパソコン」を選んだときは、サーバーのアドレスを入れてください")
+            raise ValueError("使うパソコンが選ばれていません。「サーバーをさがす」を押して、見つかったパソコンにチェックを入れてください")
         cfg.local_fallback = bool(body.get("local_fallback", True))
         cfg.llm_base_url = llm_url
         cfg.llm_model = str(body.get("llm_model", "")).strip()

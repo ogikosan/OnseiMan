@@ -181,6 +181,7 @@ class OnseiManApp:
             set_startup_enabled=lambda enabled: set_startup_enabled(enabled, ROOT_DIR),
         )
         self.web_ui.get_stats_fn = self.app_logger.stats
+        self.web_ui.get_server_name_fn = self._current_server_name
         self.hook = GlobalInputHook(
             hotkey=self.config.hotkey,
             cancel_key=self.config.cancel_key,
@@ -1034,6 +1035,14 @@ class OnseiManApp:
             if cand is not None:
                 added += 1
         return added
+
+    def _current_server_name(self) -> str:
+        """いま使っているサーバーのパソコンの名前（分からなければ空）。"""
+        if not str(self.transcriber.last_backend_status).startswith("LAN"):
+            return ""
+        url = getattr(self.transcriber, "_preferred", "") or ""
+        names = getattr(self.config, "server_names", {}) or {}
+        return names.get(url) or names.get(url.rstrip("/")) or ""
 
     @staticmethod
     def friendly_backend(status: str) -> str:

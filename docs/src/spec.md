@@ -8,7 +8,7 @@
    - マイクは開いたまま待機し、押す 0.4 秒前から録る（`keep_mic_open`, `preroll_sec`）。
    - 録音中はほかのアプリの音を消す（`client/audio_mute.py`、`mute_other_audio`）。落ちても次の起動で戻す。
 2. 話しながら、切れ目（0.6 秒の無音）ごとに区切って裏で認識する（`shared/segmenter.py`, `client/live_session.py`）。
-3. もう一度押す（または無音で自動確定、カプセルの左の印）→ 残りを認識してつなぐ。
+3. もう一度押す（またはカプセルの左の印）→ 残りを認識してつなぐ。黙ったら自動で確定する設定（`auto_stop_on_silence`）もあるが、初期設定はオフ。
 4. 文を整える（`client/main.py: _format_recognized_text`）：言いよどみを消す → 辞書の置き換え → 標準の変換（漢数字・略語）→ 声のコマンド（改行・記号）→ 文末の「。」。言い直し（「あ、違う」等）があれば整理。
 5. 入力先のウィンドウに Ctrl+V で貼る（`client/paste.py`）。「今のなし」で取り消し。
 
@@ -18,6 +18,9 @@
 - サーバー：`server/app.py`（`GET /health`, `POST /transcribe`、既定ポート 8765）。
 - クライアントは最後に成功したサーバーを先に使い、失敗したものは 60 秒後回し（`client/transcriber.py`）。
 - 「サーバーをさがす」：Tailscale の相手と同じ /24 のホストの `:8765/health` を調べる（`client/discovery.py`）。
+  同じパソコンが Tailscale と家のネットワークの両方で見つかったら 1 つにまとめ、Tailscale のアドレスを残す
+  （判定: サーバーが返す `id`、または Tailscale の `CurAddr`/`Addrs` にある相手の家のアドレス）。
+  両方を登録すると、外出先で家のアドレスの待ちが毎回かかるなど不安定になる。
 
 ## 量の上限（重要）
 

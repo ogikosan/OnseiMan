@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import socket
+import uuid
 import io
 import logging
 import os
@@ -62,8 +64,28 @@ def health() -> dict:
         "status": "ok",
         "model": engine.model_dir.name,
         "provider": engine.active_provider,
+        # さがす側が「同じパソコンが 2 つの行き方で見つかった」と分かるようにする
+        "id": SERVER_ID,
+        "name": SERVER_NAME,
     }
 
+
+def local_addresses() -> list:
+    """このパソコンのアドレス（つなぐ側に手で書くとき用）。(種類, IP) の一覧。"""
+    out = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip.startswith("127.") or ip.startswith("169.254.") or any(ip == o[1] for o in out):
+                continue
+            out.append(("Tailscale" if ip.startswith("100.") else "家のネットワーク", ip))
+    except Exception:
+        pass
+    return out
+
+
+SERVER_ID = uuid.uuid4().hex          # 起動ごとの番号
+SERVER_NAME = socket.gethostname()
 
 MAX_AUDIO_BYTES = 30 * 1024 * 1024
 MAX_HOTWORDS_CHARS = 4000
@@ -171,6 +193,12 @@ def main() -> None:
     engine.load()
 
     logger.info("サーバー起動: http://%s:%d (provider=%s)", args.host, args.port, engine.active_provider)
+    print()
+    print("OnseiMan のサーバーが動いています。この窓は開いたままにしてください。")
+    print("つなぐ側は、設定の「別のパソコン」→「サーバーをさがす」で自動で見つかります。")
+    for kind, ip in local_addresses():
+        print(f"  見つからないときに手で書くアドレス（{kind}）: http://{ip}:{args.port}")
+    print(flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

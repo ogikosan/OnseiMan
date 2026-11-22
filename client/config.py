@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger("onseiman.config")
 
@@ -15,8 +15,9 @@ class ClientConfig:
     # "toggle": 1回押して録音開始 → もう1回押して確定・入力（押しっぱなし不要）
     # "hold"  : 押している間だけ録音し、離したら確定・入力
     hotkey_mode: str = "toggle"
-    # トグル録音時、発話を検出したあとに無音が続いたら自動で確定する
-    auto_stop_on_silence: bool = True
+    # トグル録音時、発話を検出したあとに無音が続いたら自動で確定する。
+    # 考えている間に確定してしまい不具合に見えるので、初期設定はオフ（もう一度キーを押すまで録音を続ける）
+    auto_stop_on_silence: bool = False
     silence_stop_sec: float = 1.8
     silence_rms_threshold: float = 0.012
     # 「うん、」「えーと」などの言いよどみを取り除く（対象語は dict.json の fillers）
@@ -72,6 +73,8 @@ class ClientConfig:
     # 空なら、サーバーの登録があれば "server"、なければ "local"（前の設定のまま動くように）
     recognition_place: str = ""
     server_urls: List[str] = field(default_factory=list)
+    # サーバーのアドレス → パソコンの名前（「サーバーをさがす」で見つけたときに覚える。画面の表示用）
+    server_names: Dict[str, str] = field(default_factory=dict)
     server_connect_timeout_sec: float = 1.5
     server_read_timeout_sec: float = 30.0
     local_fallback: bool = True
