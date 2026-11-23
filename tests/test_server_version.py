@@ -49,6 +49,9 @@ class TestFingerprint(unittest.TestCase):
     def test_client_only_change_does_not_matter(self) -> None:
         # アプリだけの部品（辞書など）が変わっても、認識役の指紋は変わらない
         self.assertNotIn("shared/dictionary.py", SERVER_FILES)
+        # 辞書の合わせ方（アプリだけで使う）を直しても、認識役が「古い版」にならない
+        self.assertNotIn("shared/dict_sync.py", SERVER_FILES)
+        self.assertIn("shared/dict_format.py", SERVER_FILES)
         self.assertFalse([f for f in SERVER_FILES if f.startswith("client/")])
 
     def test_server_files_exist(self) -> None:
@@ -126,6 +129,30 @@ class TestOutdated(unittest.TestCase):
         app, _ = self._app({})
         app.transcriber.server_info = {}
         self.assertEqual(app._outdated_servers(), [])
+
+
+@unittest.skipUnless(HAVE_CLIENT, "アプリの部品が入っていません")
+class TestTailscaleNamesDoNotBlock(unittest.TestCase):
+    def test_slow_tailscale_does_not_block_the_screen(self) -> None:
+        # Tailscale の返事が遅くても、画面からの問い合わせはすぐ返り、一覧は裏で取り直す
+        import time
+        from client.main import OnseiManApp
+
+        app = OnseiManApp.__new__(OnseiManApp)
+
+        def slow_peers():
+            time.sleep(1.5)
+            return [{"ip": "100.1.2.3", "name": "PC5090", "lan_ips": ["192.168.1.5"]}]
+
+        with mock.patch("client.discovery.tailscale_peers", slow_peers):
+            t = time.monotonic()
+            self.assertEqual(app._tailscale_names(), {})   # まだ取っていない → 待たずに空で返す
+            self.assertLess(time.monotonic() - t, 0.3)
+            for _ in range(40):
+                if getattr(app, "_ts_cache", None):
+                    break
+                time.sleep(0.1)
+            self.assertEqual(app._tailscale_names()["192.168.1.5"], ("PC5090", "100.1.2.3"))
 
 
 @unittest.skipUnless(HAVE_SERVER, "fastapi が入っていません")

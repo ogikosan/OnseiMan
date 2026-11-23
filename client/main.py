@@ -1359,12 +1359,30 @@ class OnseiManApp:
     _TS_CACHE_SEC = 600.0
 
     def _tailscale_names(self) -> dict:
-        """IP → (パソコンの名前, Tailscale の IP)。Tailscale の一覧から作る（10 分ごとに作り直す）。
-        古い認識役は自分の名前を返さないので、名前と「同じパソコンか」はここから引く。"""
-        now = time.monotonic()
+        """IP → (パソコンの名前, Tailscale の IP)。古い認識役は自分の名前を返さないので、名前と「同じパソコンか」はここから引く。
+
+        画面からの問い合わせ（3 秒ごと）の途中で Tailscale を待つと、Tailscale の返事が遅いとき
+        （相手のパソコンがつながったり切れたりしたときなど。最大 6 秒）に画面の更新が止まる。
+        そこで、取ってある一覧だけを返し、古ければ裏で取り直す。"""
         cache = getattr(self, "_ts_cache", None)
-        if cache and now - cache[0] < self._TS_CACHE_SEC:
-            return cache[1]
+        if cache is None or time.monotonic() - cache[0] >= self._TS_CACHE_SEC:
+            self._refresh_tailscale_names_later()
+        return cache[1] if cache else {}
+
+    def _refresh_tailscale_names_later(self) -> None:
+        if getattr(self, "_ts_refreshing", False):
+            return
+        self._ts_refreshing = True
+
+        def run() -> None:
+            try:
+                self._refresh_tailscale_names()
+            finally:
+                self._ts_refreshing = False
+
+        threading.Thread(target=run, name="tailscale-names", daemon=True).start()
+
+    def _refresh_tailscale_names(self) -> dict:
         table: dict = {}
         try:
             from client.discovery import tailscale_peers
@@ -1375,7 +1393,7 @@ class OnseiManApp:
                         table[ip] = (str(p.get("name") or ""), str(p.get("ip") or ""))
         except Exception:
             pass
-        self._ts_cache = (now, table)
+        self._ts_cache = (time.monotonic(), table)
         return table
 
     def _server_info_for_ui(self) -> dict:
@@ -1584,6 +1602,7 @@ class OnseiManApp:
                     auto_hide_ms=2500,
                 )
                 logger.info("初期ヘルスチェック完了: %s", self.transcriber.last_backend_status)
+                self._refresh_tailscale_names_later()  # 名前の一覧を裏で取っておく（画面を待たせない）
                 if FROZEN:
                     threading.Thread(target=self._check_update, daemon=True).start()
                 else:

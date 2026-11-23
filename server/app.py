@@ -51,7 +51,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from shared.asr_engine import FunASRNanoEngine
 from shared.audio import decode_wav_bytes
-from shared.dict_sync import NAME_RE, clean_data
+from shared.dict_format import NAME_RE, clean_data
 from shared.segmenter import join_texts, split_on_pauses
 from shared.server_fingerprint import fingerprint, read_version
 

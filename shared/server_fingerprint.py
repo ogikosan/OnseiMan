@@ -18,7 +18,7 @@ SERVER_FILES = (
     "shared/asr_engine.py",
     "shared/audio.py",
     "shared/segmenter.py",
-    "shared/dict_sync.py",
+    "shared/dict_format.py",
     "shared/server_fingerprint.py",
 )
 VERSION_RE = re.compile(r'__version__\s*=\s*"(\d+(?:\.\d+){0,3})"')

@@ -24,50 +24,21 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("onseiman.dict_sync")
 
-LIST_KEYS = ("hotwords", "fillers", "builtin_off")
-MAP_KEYS = ("replacements", "snippets")
-SYNC_KEYS = LIST_KEYS + MAP_KEYS
-NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
-DEFAULT_NAME = "shared"
-
-# 預ける辞書の大きさの上限（サーバー側と同じ）
-MAX_ITEMS = 5000
-MAX_WORD_CHARS = 200
-MAX_TEXT_CHARS = 10000
+from shared.dict_format import (  # noqa: F401  形の決まりは dict_format に（認識役と共通）
+    DEFAULT_NAME,
+    LIST_KEYS,
+    MAP_KEYS,
+    MAX_ITEMS,
+    MAX_TEXT_CHARS,
+    MAX_WORD_CHARS,
+    NAME_RE,
+    SYNC_KEYS,
+    clean_data,
+)
 
 
 class Conflict(Exception):
     """預け先が、読んだあとにほかのパソコンから書き換えられていた。"""
-
-
-# ---------------------------------------------------------------- 合わせ方
-
-
-def clean_data(data: Any, default_fillers: Optional[List[str]] = None) -> Dict[str, Any]:
-    """合わせる項目だけを、決まった形に整える。"""
-    data = data if isinstance(data, dict) else {}
-    out: Dict[str, Any] = {}
-    for k in LIST_KEYS:
-        v = data.get(k)
-        if v is None and k == "fillers" and default_fillers is not None:
-            v = list(default_fillers)  # 書いていないときは標準のものを使っている
-        if isinstance(v, list):
-            seen: List[str] = []
-            for w in v:
-                w = str(w).strip()[:MAX_WORD_CHARS]
-                if w and w not in seen:
-                    seen.append(w)
-            out[k] = seen[:MAX_ITEMS]
-        elif v is None:
-            out[k] = []
-    for k in MAP_KEYS:
-        v = data.get(k)
-        if isinstance(v, dict):
-            out[k] = {str(a).strip()[:MAX_WORD_CHARS]: str(b)[:MAX_TEXT_CHARS]
-                      for a, b in list(v.items())[:MAX_ITEMS] if str(a).strip()}
-        else:
-            out[k] = {}
-    return out
 
 
 def _merge_list(base: List[str], local: List[str], remote: List[str]) -> List[str]:

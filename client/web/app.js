@@ -398,13 +398,19 @@
   async function loadHeader() {
     try { renderHeader(await api("/api/state")); } catch (e) { console.error(e); }
   }
-  async function loadState() {
+  // 3 秒ごとに取りに行くが、中身が前回と同じなら描き直さない（大きな画面だと、描き直しが重い）
+  let lastListSig = "";
+  async function loadState(force = false) {
     try {
       state = await api("/api/state");
       renderHeader(state);
       renderStats(state.stats || {});
-      renderHistory();
-      renderCandidates();
+      const sig = JSON.stringify([state.history, state.candidates, state.dismissed]);
+      if (force || sig !== lastListSig) {
+        lastListSig = sig;
+        renderHistory();
+        renderCandidates();
+      }
     } catch (e) {
       console.error(e);
     }

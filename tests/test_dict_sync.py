@@ -138,7 +138,10 @@ class TestFolderSync(unittest.TestCase):
 
     def test_unreachable_server_message_is_plain(self) -> None:
         # 認識役が止まっているときは、機械向けの長いエラーではなく、ふつうの言葉で出す
-        import requests
+        try:
+            import requests
+        except ImportError:
+            self.skipTest("requests が入っていません（サーバーだけの環境）")
         from shared.dict_sync import ServerStore
 
         store = ServerStore("http://192.0.2.1:8765", "shared", timeout=0.2, display="Mac")
