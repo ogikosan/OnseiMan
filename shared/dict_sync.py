@@ -107,15 +107,23 @@ def merge3(base: Optional[Dict[str, Any]], local: Dict[str, Any], remote: Dict[s
 class ServerStore:
     """認識役のパソコン（server/app.py）に預ける。"""
 
-    def __init__(self, url: str, name: str, timeout: float = 4.0) -> None:
+    def __init__(self, url: str, name: str, timeout: float = 4.0, display: str = "") -> None:
         self.url = url.rstrip("/") + "/dict/" + name
         self.timeout = timeout
         self.label = url
+        self.display = display or url.split("//", 1)[-1].rsplit(":", 1)[0]
+
+    def _unreachable(self) -> RuntimeError:
+        return RuntimeError(f"認識役のパソコン（{self.display}）につながりませんでした。"
+                            "止まっているか、ネットワークを確かめてください")
 
     def get(self) -> Tuple[str, int, Dict[str, Any]]:
         import requests
 
-        r = requests.get(self.url, timeout=self.timeout)
+        try:
+            r = requests.get(self.url, timeout=self.timeout)
+        except (requests.ConnectionError, requests.Timeout):
+            raise self._unreachable() from None
         if r.status_code == 404:
             raise RuntimeError("このサーバーは辞書を預かれません（サーバーを新しい版にしてください）")
         r.raise_for_status()
@@ -125,7 +133,10 @@ class ServerStore:
     def put(self, version: int, data: Dict[str, Any]) -> Tuple[str, int]:
         import requests
 
-        r = requests.put(self.url, json={"version": version, "data": data}, timeout=self.timeout)
+        try:
+            r = requests.put(self.url, json={"version": version, "data": data}, timeout=self.timeout)
+        except (requests.ConnectionError, requests.Timeout):
+            raise self._unreachable() from None
         if r.status_code == 409:
             raise Conflict()
         r.raise_for_status()

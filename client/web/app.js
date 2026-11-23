@@ -306,15 +306,50 @@
     try { sessionStorage.setItem("onseiman.updateLater", $("#update-banner").dataset.version || ""); } catch {}
     $("#update-banner").hidden = true;
   });
-  $("#btn-update-run").addEventListener("click", async () => {
-    const v = $("#update-banner").dataset.version || "";
+  // 「今すぐ更新」（お知らせの帯と、設定の「新しい版にする」の両方から）
+  async function runUpdate(v) {
     if (!confirm(`OnseiMan を終了して ${v} に更新し、起動し直します。よろしいですか？\n（設定・辞書・履歴はそのまま残ります。前の版は backup フォルダに残ります）`)) return;
     try {
       await api("/api/update/run", {});
       $("#btn-update-run").disabled = true;
+      $("#btn-ver-run").disabled = true;
+      $("#ver-status").textContent = "更新しています。まもなく起動し直します…";
       toast("更新を始めました。まもなく OnseiMan が起動し直します");
     } catch (e) { toast(e.message, "err"); }
+  }
+  $("#btn-update-run").addEventListener("click", () => runUpdate($("#update-banner").dataset.version || ""));
+
+  // 設定の「新しい版にする」
+  function renderVersionCard(st, checkedNow = false) {
+    $("#ver-current").textContent = st.version || "-";
+    const u = st.update;
+    $("#btn-ver-run").hidden = !(u && u.can_run);
+    $("#ver-dev").hidden = !(u && !u.can_run);
+    $("#ver-notes-box").hidden = !(u && u.notes);
+    $("#ver-notes").textContent = (u && u.notes) || "";
+    if (u) {
+      $("#ver-status").textContent = `新しい版があります: ${u.version}`;
+      $("#btn-ver-run").dataset.version = u.version;
+      $("#btn-ver-run").textContent = `今すぐ ${u.version} に更新`;
+    } else if (checkedNow) {
+      $("#ver-status").textContent = "✓ 最新版です";
+    }
+  }
+  $("#btn-ver-check").addEventListener("click", async () => {
+    const btn = $("#btn-ver-check");
+    btn.disabled = true;
+    $("#ver-status").textContent = "確かめています…";
+    try {
+      const r = await api("/api/update/check", {});
+      renderVersionCard({ version: $("#ver-current").textContent, update: r.update }, true);
+      if (r.update) renderUpdate(r.update);
+    } catch (e) {
+      $("#ver-status").textContent = "確かめられませんでした（インターネットにつながっているか確かめてください）";
+    } finally {
+      btn.disabled = false;
+    }
   });
+  $("#btn-ver-run").addEventListener("click", () => runUpdate($("#btn-ver-run").dataset.version || ""));
 
   // ---- 認識役のパソコンが古い版のとき ----
   function renderServerOutdated(list) {
@@ -358,6 +393,7 @@
     cc.classList.toggle("has-items", (st.candidates || []).length > 0);
     renderUpdate(st.update);
     renderServerOutdated(st.server_outdated);
+    renderVersionCard(st);
   }
   async function loadHeader() {
     try { renderHeader(await api("/api/state")); } catch (e) { console.error(e); }

@@ -288,7 +288,11 @@ class OnseiManApp:
         name = cfg.dict_share_name if NAME_RE.match(cfg.dict_share_name or "") else DEFAULT_NAME
         if cfg.dict_share == "server":
             url = self.transcriber._chosen() or next(iter(self.transcriber._server_list()), "")
-            return ServerStore(url, name) if url else None
+            if not url:
+                return None
+            info = self._server_info_for_ui().get(url) or {}
+            display = (getattr(cfg, "server_names", {}) or {}).get(url) or info.get("name") or ""
+            return ServerStore(url, name, display=display)
         if cfg.dict_share == "folder" and cfg.dict_share_folder:
             return FolderStore(cfg.dict_share_folder, name)
         return None
@@ -1164,8 +1168,29 @@ class OnseiManApp:
         while not self._stop_event.is_set():
             if not self.recorder.is_recording and not self._processing:
                 self.transcriber.check_server_health()
+                self._remember_server_names()
                 self._restore_idle_icon()
             self._stop_event.wait(15.0)
+
+    def _remember_server_names(self) -> None:
+        """認識役が返した名前を、まだ名前のないサーバーに覚えておく（止まっているときも名前で出せるように）。
+        自分で付けた名前は変えない。"""
+        try:
+            with self._config_lock:
+                self._reload_config_locked()
+                names = dict(getattr(self.config, "server_names", {}) or {})
+                added = False
+                for url in list(self.config.server_urls or []):
+                    info = self.transcriber.server_info.get(url.rstrip("/")) or self.transcriber.server_info.get(url) or {}
+                    if url not in names and info.get("name"):
+                        names[url] = str(info["name"])[:64]
+                        added = True
+                if added:
+                    self.config.server_names = names
+                    self.config.save(self.config_path)
+                    self._config_mtime = self.config_path.stat().st_mtime
+        except Exception:
+            logger.exception("サーバーの名前を覚えられませんでした")
 
     def _start_hotkey_capture(self) -> None:
         self.ui.show_status(
@@ -1360,6 +1385,7 @@ class OnseiManApp:
         for url in list(self.config.server_urls or []):
             info = dict(self.transcriber.server_info.get(url.rstrip("/")) or self.transcriber.server_info.get(url) or {})
             ip = url.split("//", 1)[-1].rsplit(":", 1)[0]
+            # 名前を返さない古い認識役や、いま止まっている認識役は、Tailscale の一覧の名前を使う
             if not info.get("name") and ip in ts:
                 info["name"] = ts[ip][0]
             if info:

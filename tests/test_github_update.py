@@ -160,6 +160,8 @@ class TestWebUI(unittest.TestCase):
     def test_state_has_update_and_run(self) -> None:
         state = json.loads(urllib.request.urlopen(self.url + "/api/state").read())
         self.assertEqual(state["update"]["version"], "9.9.9")
+        from client.version import __version__
+        self.assertEqual(state["version"], __version__)  # 設定の「新しい版にする」に、いまの版を出す
         self.assertTrue(self._post("/api/update/run")["ok"])
         self.assertEqual(self.runs, [1])
 

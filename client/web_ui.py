@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 from client.config import ClientConfig
+from client.version import __version__
 from shared.fillers import DEFAULT_FILLERS
 from shared.normalize import BUILTIN_TERMS
 
@@ -591,6 +592,7 @@ class WebUIServer:
             "candidates": candidates,
             "dismissed": dismissed,
             "update": update,
+            "version": __version__,
             "server_outdated": self._safe_call("get_outdated_servers_fn", []),
         }
 

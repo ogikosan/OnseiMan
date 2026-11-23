@@ -368,6 +368,21 @@
               <span class="muted" id="dict-sync-status"></span>
             </div>
           </div>
+
+          <div class="setting-card">
+            <h3>新しい版にする</h3>
+            <p>いまの版: <b id="ver-current">-</b>　<span class="muted" id="ver-status">起動したときと、1 日 1 回確かめています</span></p>
+            <details id="ver-notes-box" hidden>
+              <summary>何が変わったか</summary>
+              <pre id="ver-notes" class="ub-notes"></pre>
+            </details>
+            <p class="muted" id="ver-dev" hidden>このフォルダは開発用（git で管理）なので、ここからは更新しません。git pull で更新してください。</p>
+            <div class="find-row">
+              <button type="button" class="btn" id="btn-ver-check">更新を確認</button>
+              <button type="button" class="btn primary" id="btn-ver-run" hidden>今すぐ更新</button>
+            </div>
+            <p class="muted">設定・辞書・履歴はそのまま残ります。前の版は backup フォルダに残ります。</p>
+          </div>
         </div>
 
         <details class="more-settings" id="more-settings">

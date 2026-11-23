@@ -136,6 +136,19 @@ class TestFolderSync(unittest.TestCase):
             self.assertEqual(sorted(pc.read()["hotwords"]), ["A", "B"])
             self.assertEqual(pc.read()["replacements"], {"x": "1", "y": "2"})
 
+    def test_unreachable_server_message_is_plain(self) -> None:
+        # 認識役が止まっているときは、機械向けの長いエラーではなく、ふつうの言葉で出す
+        import requests
+        from shared.dict_sync import ServerStore
+
+        store = ServerStore("http://192.0.2.1:8765", "shared", timeout=0.2, display="Mac")
+        with mock.patch("requests.get", side_effect=requests.ConnectionError("HTTPConnectionPool(...) Max retries")):
+            self.a.sync.get_store = lambda: store
+            self.assertEqual(self.a.sync.sync_once(), "error")
+        err = self.a.sync.status()["last_error"]
+        self.assertIn("認識役のパソコン（Mac）につながりませんでした", err)
+        self.assertNotIn("HTTPConnectionPool", err)
+
     def test_conflict_is_detected(self) -> None:
         self.store.put(0, d(["A"]))
         with self.assertRaises(Conflict):
