@@ -386,7 +386,7 @@
       ? `${st.server_name} で認識` : friendlyStatus(st.backend);
     $("#conn").title = st.backend ? `くわしく: ${st.backend}` : "";
     $("#conn").dataset.state = (st.backend || "").startsWith("LAN") ? "ok" : "local";
-    $("#hdr-hotkey").textContent = friendlyKey(st.hotkey || "ralt");
+    $("#hdr-hotkey").textContent = friendlyKey(st.hotkey || "ralt") + (st.hotkey_extra ? ` / ${friendlyKey(st.hotkey_extra)}` : "");
     $$(".help-hk").forEach((k) => { k.textContent = friendlyKey(st.hotkey || "ralt"); });
     const cc = $("#cand-count");
     cc.textContent = String((st.candidates || []).length);
@@ -1012,6 +1012,8 @@
   async function loadSettingsInner() {
     const s = await api("/api/settings");
     $("#set-hotkey").textContent = friendlyKey(s.hotkey);
+    $("#set-hotkey-extra").textContent = s.hotkey_extra ? friendlyKey(s.hotkey_extra) : "なし";
+    $("#btn-clr-hk2").hidden = !s.hotkey_extra;
     $("#set-ai-hotkey").textContent = s.ai_hotkey ? friendlyKey(s.ai_hotkey) : "（未設定）";
     $$('input[name="hotkey_mode"]').forEach((r) => { r.checked = r.value === s.hotkey_mode; });
     $("#set-auto-stop").checked = !!s.auto_stop_on_silence;
@@ -1068,6 +1070,27 @@
     await api("/api/capture_hotkey", {});
     toast("割り当てたいキー／マウスボタンを押してください（Escで中止）");
     setTimeout(loadSettings, 2500);
+  });
+  // 次に押したキーが設定されるまで、少しのあいだ設定を読み直す（押すのが遅くても表示が追いつくように）
+  async function waitForKeyChange(field, before) {
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const s = await api("/api/settings");
+      if ((s[field] || "") !== (before || "")) { loadSettings(); return; }
+    }
+    loadSettings();
+  }
+  $("#btn-cap-hk2").addEventListener("click", async () => {
+    const before = (await api("/api/settings")).hotkey_extra;
+    await api("/api/capture_extra_hotkey", {});
+    toast("もう 1 つの録音キーにしたいキーか、マウスのボタンを押してください（Escで中止）");
+    waitForKeyChange("hotkey_extra", before);
+  });
+  $("#btn-clr-hk2").addEventListener("click", async () => {
+    await api("/api/clear_extra_hotkey", {});
+    toast("もう 1 つの録音キーを外しました");
+    loadSettings();
+    loadHeader();
   });
   $("#btn-cap-ai").addEventListener("click", async () => {
     await api("/api/capture_ai_hotkey", {});

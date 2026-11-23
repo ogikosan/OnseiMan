@@ -222,6 +222,9 @@ class OnseiManApp:
         self.web_ui.get_update_fn = self._update_payload
         self.web_ui.get_outdated_servers_fn = self._outdated_servers
         self.web_ui.get_server_info_fn = self._server_info_for_ui
+        self.web_ui.get_extra_hotkey_fn = lambda: str(getattr(self.config, "hotkey_extra", "") or "")
+        self.web_ui.on_capture_extra_hotkey = self._start_extra_hotkey_capture
+        self.web_ui.on_clear_extra_hotkey = self._clear_extra_hotkey
         self.web_ui.on_run_update = self._run_github_update
         self.web_ui.on_check_update = lambda: self._check_github_update(manual=True)
         # GitHub に出ている新しい版（なければ None）
@@ -238,6 +241,7 @@ class OnseiManApp:
             secondary_hotkey=self.config.ai_hotkey,
             on_secondary_press=self._on_ai_hotkey_press,
             on_secondary_release=self._on_ai_hotkey_release,
+            extra_hotkeys=self._extra_hotkeys(),
         )
 
         self._busy_lock = threading.Lock()
@@ -342,6 +346,7 @@ class OnseiManApp:
                 new_cfg.cancel_key,
                 new_cfg.suppress_hotkey,
                 secondary_hotkey=new_cfg.ai_hotkey,
+                extra_hotkeys=self._extra_hotkeys(new_cfg),
             )
         except ValueError as exc:
             logger.error("設定のホットキーが無効です: %s", exc)
@@ -546,6 +551,8 @@ class OnseiManApp:
             self._set_tray_state("#0284c7" if ai_mode else "#2563eb", "AI録音中" if ai_mode else "録音中")
             cancel = self.config.cancel_key.upper()
             active_key = self.config.ai_hotkey if ai_mode else self.config.hotkey
+            if not ai_mode and self._extra_hotkeys():
+                active_key = f"{self.config.hotkey}（か {self._extra_hotkeys()[0]}）"
             if self._is_toggle_mode():
                 self._toggle_active = True
                 self._cancel_max_timer()
@@ -1243,6 +1250,63 @@ class OnseiManApp:
                 self.ui.show_status(f"✕ 変更失敗: {exc}", bg="#991b1b", auto_hide_ms=2000)
 
         self.hook.start_capture_next_input(on_captured)
+
+    def _extra_hotkeys(self, cfg=None) -> list:
+        """もう 1 つの録音キー（無効な書き方なら使わない）。"""
+        from client.input_hook import parse_binding
+
+        name = str(getattr(cfg or self.config, "hotkey_extra", "") or "").strip()
+        if not name:
+            return []
+        try:
+            parse_binding(name)
+        except ValueError:
+            logger.error("もう 1 つの録音キーの書き方が正しくありません: %s", name)
+            return []
+        return [name]
+
+    def _start_extra_hotkey_capture(self) -> None:
+        self.ui.show_status(
+            "もう 1 つの録音キーにしたいキーまたはマウスのボタンを押してください (Escで中止)",
+            bg="#0369a1",
+        )
+
+        def on_captured(new_key: str) -> None:
+            if not new_key:
+                self.ui.show_status("もう 1 つの録音キーの設定を中止しました", bg="#4b5563", auto_hide_ms=1200)
+                return
+            used = {self.config.hotkey: "録音キー", self.config.ai_hotkey: "AI で整えるキー", self.config.cancel_key: "やめるキー"}
+            if new_key in used:
+                self.ui.show_status(f"✕ {used[new_key]}とは別のキーを選んでください", bg="#991b1b", auto_hide_ms=2000)
+                return
+            try:
+                self.config.hotkey_extra = new_key
+                self.hook.update_bindings(
+                    self.config.hotkey,
+                    self.config.cancel_key,
+                    self.config.suppress_hotkey,
+                    extra_hotkeys=[new_key],
+                )
+                self.config.save(self.config_path)
+                self._config_mtime = self.config_path.stat().st_mtime
+                self._restore_idle_icon()
+                self.ui.show_status(f"✓ もう 1 つの録音キーを「{new_key}」にしました", bg="#065f46", auto_hide_ms=1800)
+            except Exception as exc:
+                self.ui.show_status(f"✕ 設定できませんでした: {exc}", bg="#991b1b", auto_hide_ms=2000)
+
+        self.hook.start_capture_next_input(on_captured)
+
+    def _clear_extra_hotkey(self) -> None:
+        self.hook.update_bindings(
+            self.config.hotkey,
+            self.config.cancel_key,
+            self.config.suppress_hotkey,
+            extra_hotkeys=[],
+        )
+        self.config.hotkey_extra = ""
+        self.config.save(self.config_path)
+        self._config_mtime = self.config_path.stat().st_mtime
+        self.ui.show_status("もう 1 つの録音キーを外しました", bg="#4b5563", auto_hide_ms=1400)
 
     def _clear_ai_hotkey(self) -> None:
         self.hook.update_bindings(

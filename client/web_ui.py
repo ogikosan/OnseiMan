@@ -463,6 +463,16 @@ class WebUIServer:
                         if owner.on_change_ai_hotkey:
                             owner.on_change_ai_hotkey()
                         self._send_json({"ok": True})
+                    elif path == "/api/capture_extra_hotkey":
+                        fn_cap = getattr(owner, "on_capture_extra_hotkey", None)
+                        if fn_cap:
+                            fn_cap()
+                        self._send_json({"ok": True})
+                    elif path == "/api/clear_extra_hotkey":
+                        fn_clr = getattr(owner, "on_clear_extra_hotkey", None)
+                        if fn_clr:
+                            fn_clr()
+                        self._send_json({"ok": True})
                     elif path == "/api/clear_ai_hotkey":
                         if owner.on_clear_ai_hotkey:
                             owner.on_clear_ai_hotkey()
@@ -587,6 +597,7 @@ class WebUIServer:
             "hotkey_info": hotkey_info,
             "hotkey": self.get_hotkey() if self.get_hotkey else "",
             "ai_hotkey": self.get_ai_hotkey() if self.get_ai_hotkey else "",
+            "hotkey_extra": self._safe_call("get_extra_hotkey_fn", ""),
             "history": history,
             "stats": self._stats(),
             "candidates": candidates,
@@ -652,6 +663,7 @@ class WebUIServer:
         return {
             "hotkey": self.get_hotkey() if self.get_hotkey else cfg.hotkey,
             "ai_hotkey": self.get_ai_hotkey() if self.get_ai_hotkey else cfg.ai_hotkey,
+            "hotkey_extra": self._safe_call("get_extra_hotkey_fn", "") or getattr(cfg, "hotkey_extra", ""),
             "hotkey_mode": "hold" if str(cfg.hotkey_mode).lower() == "hold" else "toggle",
             "auto_stop_on_silence": bool(cfg.auto_stop_on_silence),
             "silence_stop_sec": float(cfg.silence_stop_sec),

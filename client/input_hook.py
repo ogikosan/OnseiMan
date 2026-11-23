@@ -7,7 +7,7 @@ import logging
 import queue
 import threading
 from ctypes import wintypes
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 logger = logging.getLogger("onseiman.hook")
 
@@ -252,10 +252,14 @@ class GlobalInputHook:
         secondary_hotkey: str = "",
         on_secondary_press: Optional[Callable[[], None]] = None,
         on_secondary_release: Optional[Callable[[], None]] = None,
+        extra_hotkeys: Optional[List[str]] = None,
     ) -> None:
         self._lock = threading.Lock()
         self.hotkey_name = hotkey
         self.hotkey_binding = parse_binding(hotkey)
+        # もう 1 つの録音キー（いまの録音キーとまったく同じ動き。キーボードでもマウスのボタンでもよい）
+        self.extra_hotkey_names: List[str] = [h.strip() for h in (extra_hotkeys or []) if h and h.strip()]
+        self.extra_bindings: List[Tuple[str, int | str]] = [parse_binding(h) for h in self.extra_hotkey_names]
         self.secondary_hotkey_name = (secondary_hotkey or "").strip()
         self.secondary_binding: Optional[Tuple[str, int | str]] = (
             parse_binding(self.secondary_hotkey_name) if self.secondary_hotkey_name else None
@@ -303,8 +307,13 @@ class GlobalInputHook:
         cancel_key: str,
         suppress_hotkey: bool,
         secondary_hotkey: Optional[str] = None,
+        extra_hotkeys: Optional[List[str]] = None,
     ) -> None:
         new_hotkey = parse_binding(hotkey)
+        new_extra_names = (
+            [h.strip() for h in extra_hotkeys if h and h.strip()] if extra_hotkeys is not None else None
+        )
+        new_extra = [parse_binding(h) for h in new_extra_names] if new_extra_names is not None else None
         new_cancel = parse_binding(cancel_key)
         new_secondary = (
             (parse_binding(secondary_hotkey.strip()) if secondary_hotkey.strip() else None)
@@ -317,17 +326,25 @@ class GlobalInputHook:
             if secondary_hotkey is not None:
                 self.secondary_hotkey_name = secondary_hotkey.strip()
                 self.secondary_binding = new_secondary
+            if new_extra is not None:
+                self.extra_hotkey_names = new_extra_names
+                self.extra_bindings = new_extra
             self.cancel_binding = new_cancel
             self.suppress_hotkey = suppress_hotkey
             self._pressed = False
             self._secondary_pressed = False
         self._request_hook_sync()
         logger.info(
-            "ホットキーを更新しました: hotkey=%s, ai_hotkey=%s, cancel=%s",
+            "ホットキーを更新しました: hotkey=%s, もう1つ=%s, ai_hotkey=%s, cancel=%s",
             hotkey,
+            ",".join(self.extra_hotkey_names) or "(なし)",
             self.secondary_hotkey_name or "(なし)",
             cancel_key,
         )
+
+    def _primary_bindings(self) -> List[Tuple[str, int | str]]:
+        """録音キー（いまの録音キーと、もう 1 つの録音キー）。呼ぶ側で self._lock を持つこと。"""
+        return [self.hotkey_binding] + list(self.extra_bindings)
 
     def start_capture_next_input(self, callback: Callable[[str], None]) -> None:
         with self._lock:
@@ -338,7 +355,8 @@ class GlobalInputHook:
         """The mouse hook slows every mouse event system-wide, so install it only when needed."""
         with self._lock:
             sec_is_mouse = self.secondary_binding is not None and self.secondary_binding[0] == "mouse"
-            return self.hotkey_binding[0] == "mouse" or sec_is_mouse or self._capture_callback is not None
+            primary_is_mouse = any(b[0] == "mouse" for b in self._primary_bindings())
+            return primary_is_mouse or sec_is_mouse or self._capture_callback is not None
 
     def _request_hook_sync(self) -> None:
         if self._thread_id:
@@ -448,6 +466,7 @@ class GlobalInputHook:
                     self.hotkey_binding,
                     self.secondary_binding,
                     self.cancel_binding,
+                    *self.extra_bindings,
                 ):
                     self.typed_key_count += 1
 
@@ -456,7 +475,7 @@ class GlobalInputHook:
                     self._suppressed_down.discard(vk)
                     release_event = None
                     with self._lock:
-                        if self._pressed and self.hotkey_binding == ("key", vk):
+                        if self._pressed and ("key", vk) in self._primary_bindings():
                             self._pressed = False
                             release_event = "release"
                         elif self._secondary_pressed and self.secondary_binding == ("key", vk):
@@ -480,7 +499,7 @@ class GlobalInputHook:
                     return 1
 
                 with self._lock:
-                    hk_kind, hk_val = self.hotkey_binding
+                    primaries = self._primary_bindings()
                     sec_binding = self.secondary_binding
                     ck_kind, ck_val = self.cancel_binding
                     suppress = self.suppress_hotkey
@@ -495,7 +514,7 @@ class GlobalInputHook:
 
                 # Hotkey (keyboard) — primary or secondary (AI refine)
                 matched_role = None
-                if hk_kind == "key" and vk == hk_val:
+                if ("key", vk) in primaries:
                     matched_role = "primary"
                 elif sec_binding is not None and sec_binding == ("key", vk):
                     matched_role = "secondary"
@@ -561,12 +580,12 @@ class GlobalInputHook:
                         return 1
 
                     with self._lock:
-                        hk_kind, hk_val = self.hotkey_binding
+                        primaries = self._primary_bindings()
                         sec_binding = self.secondary_binding
                         suppress = self.suppress_hotkey
 
                     matched_role = None
-                    if hk_kind == "mouse" and btn == hk_val:
+                    if ("mouse", btn) in primaries:
                         matched_role = "primary"
                     elif sec_binding is not None and sec_binding == ("mouse", btn):
                         matched_role = "secondary"
