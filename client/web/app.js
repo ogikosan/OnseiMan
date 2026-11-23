@@ -298,7 +298,7 @@
     $("#ub-title").textContent = `新しい版があります（${u.current} → ${u.version}）`;
     $("#ub-notes").textContent = u.notes || "";
     $("#ub-notes-box").hidden = !u.notes;
-    $("#ub-dev").hidden = !!u.can_run;
+    $("#ub-dev").hidden = !u.dev;
     $("#btn-update-run").hidden = !u.can_run;
     box.dataset.version = u.version;
   }
@@ -324,7 +324,7 @@
     $("#ver-current").textContent = st.version || "-";
     const u = st.update;
     $("#btn-ver-run").hidden = !(u && u.can_run);
-    $("#ver-dev").hidden = !(u && !u.can_run);
+    $("#ver-dev").hidden = !(u && u.dev);
     $("#ver-notes-box").hidden = !(u && u.notes);
     $("#ver-notes").textContent = (u && u.notes) || "";
     if (u) {

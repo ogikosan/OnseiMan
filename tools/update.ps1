@@ -44,17 +44,65 @@ function Get-RunningOnseiMan {
         }
 }
 
-# git で管理している開発用のフォルダは上書きしない（作業中の変更を壊さないため）
-if (Test-Path (Join-Path $Root ".git")) {
-    Write-Host "このフォルダは git で管理している開発用のフォルダです。上書きはしません（git pull で更新してください）。"
-    Finish 1
-}
-
 if ($WaitPid -gt 0) {
     Write-Host "OnseiMan が終わるのを待っています..."
     try { Wait-Process -Id $WaitPid -Timeout 60 -ErrorAction Stop } catch { }
     # 起動用の小さな処理が残っていることがあるので、少し待つ
     for ($i = 0; $i -lt 30 -and (Get-RunningOnseiMan); $i++) { Start-Sleep -Milliseconds 500 }
+}
+
+# git で管理している開発用のフォルダ: 上書きはせず、安全なとき（作業中の変更も、手元だけの記録もない）だけ
+# GitHub の分を足して新しくする（git pull --ff-only と同じ）。そうでなければ、何も変えずに理由を出す
+if (Test-Path (Join-Path $Root ".git")) {
+    Write-Host "このフォルダは git で管理している開発用のフォルダです。GitHub の分を足して新しくします。"
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Host "git が見つからないので、新しくできませんでした。"
+        Finish 1
+    }
+    if (Get-RunningOnseiMan) {
+        Write-Host ""
+        Write-Host "OnseiMan が動いています。タスクバーのアイコンを右クリック →「終了」してから、もう一度 update.bat を実行してください。"
+        Finish 1
+    }
+    $before = Get-LocalVersion
+    $dirty = @(git -C $Root status --porcelain --untracked-files=no)
+    if ($dirty.Count -gt 0) {
+        Write-Host "作業中の変更があるため、何も変えずにやめました（変更を記録するか元に戻してから、もう一度）。"
+        Finish 1
+    }
+    $branch = (git -C $Root rev-parse --abbrev-ref HEAD).Trim()
+    git -C $Root fetch --quiet origin
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "GitHub から取ってこられませんでした。インターネットにつながっているか確かめてください。"
+        Finish 1
+    }
+    $up = "origin/$branch"
+    git -C $Root rev-parse --verify --quiet $up | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "GitHub に「$branch」がないため、何も変えずにやめました。"
+        Finish 1
+    }
+    $ahead = [int](git -C $Root rev-list --count "$up..HEAD")
+    $behind = [int](git -C $Root rev-list --count "HEAD..$up")
+    if ($ahead -gt 0) {
+        Write-Host "GitHub にない記録が手元に $ahead 件あるため、何も変えずにやめました（先に GitHub へ送ってください）。"
+        Finish 1
+    }
+    if ($behind -eq 0) {
+        Write-Host "最新版です（$before）。新しくするものはありません。"
+        Finish 0
+    }
+    git -C $Root merge --ff-only --quiet $up
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "新しくできませんでした。何も変えていません。"
+        Finish 1
+    }
+    if ($Restart) { & (Join-Path $Root "tools\install.ps1") -Target client -Starting | Out-Null }
+    else { & (Join-Path $Root "tools\install.ps1") -Target client | Out-Null }
+    Write-Host ""
+    Write-Host "$before から $(Get-LocalVersion) に新しくしました（GitHub の記録 $behind 件を足しました）。"
+    if (-not $Restart) { Write-Host "start_client.bat で起動してください。" }
+    Finish 0
 }
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

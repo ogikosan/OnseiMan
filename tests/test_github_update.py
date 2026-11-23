@@ -123,13 +123,19 @@ class TestApp(unittest.TestCase):
             app._check_github_update(manual=False)
         app.ui.show_status.assert_not_called()
 
-    def test_dev_folder_does_not_run(self) -> None:
+    def test_dev_folder_can_run_and_is_marked(self) -> None:
+        # 開発用のフォルダでも押せる（update.ps1 が、作業中の変更などがあれば何も変えずに止める）
         app = self._app()
         app.update_info = {"version": "9.9.9", "current": "1.1.3", "notes": "", "url": ""}
         with mock.patch("client.github_update.is_dev_folder", return_value=True):
-            self.assertFalse(app._update_payload()["can_run"])
-            with self.assertRaises(ValueError):
-                app._run_github_update()
+            p = app._update_payload()
+            self.assertTrue(p["can_run"])
+            self.assertTrue(p["dev"])
+
+    def test_no_update_cannot_run(self) -> None:
+        app = self._app()
+        with self.assertRaises(ValueError):
+            app._run_github_update()
 
 
 class TestWebUI(unittest.TestCase):

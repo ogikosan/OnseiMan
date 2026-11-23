@@ -1507,7 +1507,8 @@ class OnseiManApp:
             return None
         from client import github_update
 
-        return {**self.update_info, "can_run": not github_update.is_dev_folder(ROOT_DIR)}
+        # 開発用のフォルダ（git）でも押せる。update.ps1 が、作業中の変更や手元だけの記録があれば何も変えずに止める
+        return {**self.update_info, "can_run": True, "dev": github_update.is_dev_folder(ROOT_DIR)}
 
     def _on_tray_update(self) -> None:
         if self.update_info:
@@ -1521,8 +1522,6 @@ class OnseiManApp:
 
         if not self.update_info:
             raise ValueError("新しい版はありません")
-        if github_update.is_dev_folder(ROOT_DIR):
-            raise ValueError("このフォルダは開発用（git で管理）なので、自動では更新しません。git pull で更新してください")
 
         def _go() -> None:
             # 録音中・認識中なら終わるまで待つ
