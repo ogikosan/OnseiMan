@@ -570,6 +570,16 @@
 </main>
 
 <!-- クイック辞書登録モーダル -->
+<!-- 確認の窓（ブラウザの確認の窓は「127.0.0.1:18765 の内容」と出て分かりにくいので、自前で出す） -->
+<dialog class="modal" id="confirm-modal">
+  <h3 id="cm-title" style="margin:0 0 10px;font-size:16px"></h3>
+  <p id="cm-msg" style="margin:0 0 16px;white-space:pre-wrap;font-size:14px;line-height:1.7"></p>
+  <div class="btn-row" style="justify-content:flex-end">
+    <button type="button" class="btn" id="cm-cancel">キャンセル</button>
+    <button type="button" class="btn primary" id="cm-ok">OK</button>
+  </div>
+</dialog>
+
 <dialog class="modal" id="quick-modal">
   <h3 style="margin:0 0 12px;font-size:16px">辞書に登録</h3>
   <div style="display:flex;flex-direction:column;gap:10px">

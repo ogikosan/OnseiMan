@@ -14,6 +14,33 @@
     setTimeout(() => el.remove(), 2600);
   }
 
+  // 確認の窓。押されたボタンで true / false を返す（Esc・外側は「キャンセル」と同じ）
+  function askConfirm(title, message, okLabel = "OK", cancelLabel = "キャンセル") {
+    const dlg = $("#confirm-modal");
+    return new Promise((resolve) => {
+      $("#cm-title").textContent = title;
+      $("#cm-msg").textContent = message;
+      $("#cm-ok").textContent = okLabel;
+      $("#cm-cancel").textContent = cancelLabel;
+      let answered = false;
+      const finish = (v) => {
+        if (answered) return;
+        answered = true;
+        $("#cm-ok").onclick = $("#cm-cancel").onclick = null;
+        dlg.removeEventListener("close", onClose);
+        if (dlg.open) dlg.close();
+        resolve(v);
+      };
+      const onClose = () => finish(false);
+      $("#cm-ok").onclick = () => finish(true);
+      $("#cm-cancel").onclick = () => finish(false);
+      dlg.addEventListener("close", onClose);
+      dlg.showModal();
+      $("#cm-ok").focus();
+    });
+  }
+  const confirmOpen = () => $("#confirm-modal").open;
+
   // ボタンつきのお知らせ（「元に戻す」など）。少し長めに出す
   function toastAction(msg, label, onClick, ms = 6000) {
     const el = document.createElement("div");
@@ -308,7 +335,11 @@
   });
   // 「今すぐ更新」（お知らせの帯と、設定の「新しい版にする」の両方から）
   async function runUpdate(v) {
-    if (!confirm(`OnseiMan を終了して ${v} に更新し、起動し直します。よろしいですか？\n（設定・辞書・履歴はそのまま残ります。前の版は backup フォルダに残ります）`)) return;
+    const ok = await askConfirm(
+      `${v} に更新します`,
+      "OnseiMan をいったん終了して新しくし、起動し直します。\n設定・辞書・履歴はそのまま残ります。前の版は backup フォルダに残ります。",
+      "更新する", "やめる");
+    if (!ok) return;
     try {
       await api("/api/update/run", {});
       $("#btn-update-run").disabled = true;
@@ -790,17 +821,18 @@
       const add = document.createElement("input");
       add.className = "src-add";
       add.placeholder = "＋ 言い方を追加";
-      add.addEventListener("keydown", (e) => {
+      add.addEventListener("keydown", async (e) => {
         if (e.key !== "Enter") return;
         const v = add.value.trim();
-        if (!v || !okToReplace(v, dst)) return;
+        if (!v || !(await okToReplace(v, dst))) return;
         add.value = "";
         dictData.replacements[v] = dst;
         changed(true);
       });
-      add.addEventListener("blur", () => {
+      add.addEventListener("blur", async () => {
+        if (confirmOpen()) return;   // 確認の窓が開いて欄から外れただけ（Enter の側で聞いている）
         const v = add.value.trim();
-        if (v && okToReplace(v, dst)) { add.value = ""; dictData.replacements[v] = dst; changed(); }
+        if (v && (await okToReplace(v, dst))) { add.value = ""; dictData.replacements[v] = dst; changed(); }
       });
       srcBox.appendChild(add);
 
@@ -828,9 +860,12 @@
   }
 
   // 短い言葉を置き換えると、ふだんの言葉まで変わってしまう。そのときだけ確かめる
-  function okToReplace(src, dst) {
+  async function okToReplace(src, dst) {
     if ([...src].length > 3) return true;
-    return window.confirm(`「${src}」は短い言葉なので、ふだん「${src}」と話したときも全部「${dst}」になります。\n\n登録しますか？`);
+    return askConfirm(
+      "短い言葉です",
+      `「${src}」は短い言葉なので、ふだん「${src}」と話したときも、全部「${dst}」になります。\n登録しますか？`,
+      "登録する", "やめる");
   }
 
   let saveTimer = null;
@@ -953,16 +988,19 @@
     }
   }
 
-  $("#btn-rep-add").addEventListener("click", () => {
+  $("#btn-rep-add").addEventListener("click", async () => {
     const s = $("#rep-src").value.trim();
     let d = $("#rep-dst").value.trim();
     if (!d) return toast("正しい言葉を入れてください", "err");
     const known = [...(dictData.hotwords || []), ...Object.values(dictData.replacements || {})]
       .find((w) => w !== d && w.toLowerCase() === d.toLowerCase());
-    if (known && confirm(`「${known}」がすでに登録されています。そちらにまとめますか？\n（「キャンセル」なら「${d}」を別の言葉として登録します）`)) {
+    if (known && await askConfirm(
+      "似た言葉があります",
+      `「${known}」がすでに登録されています。そちらにまとめますか？\n（「別にする」なら「${d}」を別の言葉として登録します）`,
+      `「${known}」にまとめる`, "別にする")) {
       d = known;
     }
-    if (s && !okToReplace(s, d)) return;
+    if (s && !(await okToReplace(s, d))) return;
     if (s) dictData.replacements[s] = d;
     if (!(dictData.hotwords || []).includes(d)) dictData.hotwords = [...(dictData.hotwords || []), d];
     $("#rep-src").value = "";
