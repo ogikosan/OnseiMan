@@ -162,8 +162,8 @@
       const firstUsed = serverLines()[0];
       const isPref = checked && (preferredServer ? preferredServer === s.url : firstUsed === s.url);
       const role = !checked ? "" : isPref ? '<span class="srv-role main">いつも使う</span>'
-        : `<button type="button" class="srv-role sub" title="このパソコンを優先して使います">いつもこれにする</button>`;
-      const roleNote = !checked ? "" : isPref ? "" : "いつも使うパソコンが止まっているときに使います ・ ";
+        : `<button type="button" class="srv-role sub" title="ふだんはこのパソコンを使います（予備は、いつも使うパソコンが止まっているときに使います）">いつもこれにする</button>`;
+      const roleNote = !checked ? "" : isPref ? "" : "予備 ・ ";
       row.innerHTML = `<input type="checkbox" ${using.has(s.url) ? "checked" : ""}>
         <span class="srv-info"><input class="srv-name" maxlength="40" title="クリックで名前を変えられます">
         <small>${esc([roleNote.replace(/ ・ $/, ""), s.via, kind.replace(/^ ・ /, ""), speed.replace(/^ ・ /, ""), `${/^100\./.test(ipOf(s.url)) ? "Tailscale" : "家のネットワーク"} ${ipOf(s.url)}`].filter(Boolean).join(" ・ "))}</small></span>
@@ -350,6 +350,17 @@
     }
   });
   $("#btn-ver-run").addEventListener("click", () => runUpdate($("#btn-ver-run").dataset.version || ""));
+  // 右上の版のボタン → 設定の「新しい版にする」へ
+  $("#ver-btn").addEventListener("click", () => {
+    switchTab("settings");
+    const card = $("#ver-card");
+    setTimeout(() => {
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+      card.classList.remove("flash");
+      void card.offsetWidth;
+      card.classList.add("flash");
+    }, 50);
+  });
 
   // ---- 認識役のパソコンが古い版のとき ----
   function renderServerOutdated(list) {
@@ -394,6 +405,11 @@
     renderUpdate(st.update);
     renderServerOutdated(st.server_outdated);
     renderVersionCard(st);
+    // 右上の版のボタン: 新しい版があれば色を変えて知らせる
+    const pill = $("#ver-btn");
+    pill.classList.toggle("has-update", !!st.update);
+    $("#ver-pill-text").textContent = st.update ? `${st.version} → ${st.update.version}` : (st.version || "-");
+    pill.title = st.update ? "新しい版があります。押すと「新しい版にする」を開きます" : "押すと「新しい版にする」を開きます（更新を確認できます）";
   }
   async function loadHeader() {
     try { renderHeader(await api("/api/state")); } catch (e) { console.error(e); }

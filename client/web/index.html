@@ -38,6 +38,8 @@
     <kbd id="hdr-hotkey">ralt</kbd>
   </div>
 
+  <button type="button" class="hotkey-pill ver-pill" id="ver-btn" title="押すと「新しい版にする」を開きます">版 <b id="ver-pill-text">-</b></button>
+
   <button type="button" class="icon-btn" id="theme-btn" title="ライト / ダーク切替">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
   </button>
@@ -91,7 +93,7 @@
         <div class="scroll" id="hist-list"></div>
       </div>
 
-      <div class="panel glass">
+      <div class="panel glass detail-panel">
         <div class="panel-head">
           <h2 class="panel-title">詳細・辞書登録・手動学習</h2>
           <div class="spacer"></div>
@@ -100,12 +102,12 @@
 
         <div>
           <label class="field-label" for="detail-raw">聞き取ったままの文（間違えた言葉を選んで「辞書に登録」できます）</label>
-          <textarea id="detail-raw" class="inp" rows="4" readonly placeholder="履歴を選ぶと AI が生で聞き取った文字が出ます"></textarea>
+          <textarea id="detail-raw" class="inp" rows="3" readonly placeholder="履歴を選ぶと AI が生で聞き取った文字が出ます"></textarea>
         </div>
 
-        <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+        <div class="detail-final-box">
           <label class="field-label" for="detail-final">入力した文（ここを正しく直して「直した所を学習」を押すと、学習候補になります）</label>
-          <textarea id="detail-final" class="inp" style="flex:1;min-height:90px" placeholder="変換・貼り付けされたテキスト"></textarea>
+          <textarea id="detail-final" class="inp" style="flex:1;min-height:70px" placeholder="変換・貼り付けされたテキスト"></textarea>
         </div>
 
         <div class="btn-row">
@@ -252,18 +254,20 @@
         <div class="settings-grid">
           <div class="setting-card">
             <h3>よく使う設定</h3>
-            <div class="form-row">
+            <div class="form-row key-row">
               <label class="lbl">録音キー</label>
-              <strong id="set-hotkey">ralt</strong>
-              <div class="spacer"></div>
-              <button type="button" class="btn sm" id="btn-cap-hk">変更（次に押すキー）</button>
+              <strong id="set-hotkey" style="white-space:nowrap">ralt</strong>
+              <span class="key-btns">
+                <button type="button" class="btn sm" id="btn-cap-hk">変更（次に押すキー）</button>
+              </span>
             </div>
-            <div class="form-row">
+            <div class="form-row key-row">
               <label class="lbl">2 つ目のキー</label>
               <strong id="set-hotkey-extra" style="white-space:nowrap">なし</strong>
-              <div class="spacer"></div>
-              <button type="button" class="btn sm" id="btn-cap-hk2" title="次に押したキーかマウスのボタン（戻る・進む・ホイールクリック）を、2 つ目の録音キーにします">設定（次に押す）</button>
-              <button type="button" class="btn sm" id="btn-clr-hk2" hidden>外す</button>
+              <span class="key-btns">
+                <button type="button" class="btn sm" id="btn-cap-hk2" title="次に押したキーかマウスのボタン（戻る・進む・ホイールクリック）を、2 つ目の録音キーにします">設定（次に押す）</button>
+                <button type="button" class="btn sm" id="btn-clr-hk2" hidden>外す</button>
+              </span>
             </div>
             <p class="muted" style="margin:-4px 0 6px;font-size:12px">録音キーをもう 1 つ。キーボードのキーでも、マウスのボタン（戻る・進む・ホイールクリック）でも選べます</p>
             <div class="form-row">
@@ -377,7 +381,7 @@
             </div>
           </div>
 
-          <div class="setting-card">
+          <div class="setting-card" id="ver-card">
             <h3>新しい版にする</h3>
             <p>いまの版: <b id="ver-current">-</b>　<span class="muted" id="ver-status">起動したときと、1 日 1 回確かめています</span></p>
             <details id="ver-notes-box" hidden>
