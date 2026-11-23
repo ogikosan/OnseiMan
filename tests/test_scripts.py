@@ -44,6 +44,18 @@ class TestBatchFiles(unittest.TestCase):
             for m in re.finditer(r'(?<![\w\\."])((?:client|server|packaging|tools)\\[A-Za-z0-9_\\.\-]+\.py)', text):
                 self.assertTrue((ROOT / m.group(1).replace("\\", "/")).exists(), f"{f.name}: {m.group(1)} がありません")
 
+    def test_hidden_server_launcher(self) -> None:
+        # Windows のログイン時に、窓を出さずに認識役を動かす仕組み（英数字だけ・CRLF）
+        p = ROOT / "server" / "start_server_hidden.vbs"
+        raw = p.read_bytes()
+        self.assertTrue(all(b < 127 for b in raw), "英数字以外の文字があります")
+        self.assertEqual(raw.count(b"\r\n"), raw.count(b"\n"), "改行が CRLF ではありません")
+        text = raw.decode("ascii")
+        self.assertIn("onseiman-ready.txt", text)   # 準備前は start_server.bat で準備から
+        self.assertIn("start_server.bat", text)
+        self.assertTrue((ROOT / "server" / "start_server.bat").exists())
+        self.assertIn("--port 8765", text)
+
     def test_ps1_files_have_bom_and_crlf(self) -> None:
         ps = _files("*.ps1")
         self.assertGreaterEqual(len(ps), 2)

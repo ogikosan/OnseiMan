@@ -91,6 +91,8 @@ Fun-ASR Nano は一度に扱える量（音声 + 辞書のヒント + 出力）�
   違っていて、しかも認識役の版が古い（または版を返さない）ときだけ「認識役のパソコンが古い版です」の帯を出す。
   Mac 用 zip には版を返すために `client/version.py` だけ入れる。認識役が使うファイルを足したら `SERVER_FILES` にも足す。
 
+- Windows の認識役を窓なしで常に動かすときは、ログイン時の自動起動に `wscript.exe "<OnseiMan>\server\start_server_hidden.vbs"` を登録する（準備前なら `start_server.bat` を開いて準備から。CPU の数の半分、2〜8 で動かし、記録は `logs\server.log`）。
+
 ## データの場所
 
 - ソースで動かすとき：プロジェクト直下（`config.json`, `dict.json`, `logs/`, `models/`）。
