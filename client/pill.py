@@ -153,14 +153,16 @@ class PillRenderer:
         main, sub = st.get("main", ""), st.get("sub", "")
         x_text = PAD_L + ICON_R * 2 + GAP
         max_text = MAX_W - x_text - right_w - 14
-        main_w = min(self._text_w(main, self.f_main), max_text)
+        # 本文も、入りきらなければ「…」で切る（長い本文がカプセルからはみ出していた）
+        main_fit = self._fit(main, self.f_main, max_text * self.s, keep_tail=False) if main else ""
+        main_w = min(self._text_w(main_fit, self.f_main), max_text)
         sub_room = max(0.0, max_text - main_w - (8 if main else 0))
         sub_fit = self._fit(sub, self.f_sub, sub_room * self.s, keep_tail=(kind == "rec")) if sub and sub_room > 24 else ""
         sub_w = self._text_w(sub_fit, self.f_sub)
         w = x_text + main_w + ((8 + sub_w) if sub_fit else 0) + right_w + 14
         w = max(MIN_W if kind == "rec" else 0, min(MAX_W, w))
         w = max(w, x_text + 60)
-        return {"w": w, "x_text": x_text, "main_w": main_w, "sub": sub_fit, "right_w": right_w}
+        return {"w": w, "x_text": x_text, "main": main_fit, "main_w": main_w, "sub": sub_fit, "right_w": right_w}
 
     # ------------------------------------------------------------ 描画
     def _base(self, w_px: int) -> Image.Image:
@@ -273,8 +275,8 @@ class PillRenderer:
         # 文字
         d = ImageDraw.Draw(img)
         x = m + self.px(lay["x_text"])
-        if st.get("main"):
-            d.text((x, cy), st["main"], font=self.f_main, fill=self.c["text"], anchor="lm")
+        if lay["main"]:
+            d.text((x, cy), lay["main"], font=self.f_main, fill=self.c["text"], anchor="lm")
             x += self.px(lay["main_w"] + 8)
         if lay["sub"]:
             d.text((x, cy), lay["sub"], font=self.f_sub, fill=self.c["muted"], anchor="lm")

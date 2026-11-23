@@ -1414,7 +1414,7 @@ class OnseiManApp:
         if manual or self._update_notified != info["version"]:
             self._update_notified = info["version"]
             self.ui.show_status(
-                f"新しい版があります（{__version__} → {info['version']}）。画面の上のお知らせから更新できます",
+                f"新しい版 {info['version']} があります（右上の版のボタンから更新）",
                 bg="#0369a1",
                 auto_hide_ms=5000,
             )
