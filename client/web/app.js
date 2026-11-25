@@ -423,7 +423,16 @@
 
   // ---- State / History / Candidates ----
   // 上の表示（接続・録音キー・候補の数・お知らせ）
+  // この画面を読み込んだときの OnseiMan の版。起動し直して版が変わっていたら、画面を読み直す
+  // （開きっぱなしの古い画面のままだと、新しい版の仕組みとかみ合わずにボタンが空振りする）
+  let pageVersion = "";
+  function reloadIfVersionChanged(v) {
+    if (!v) return;
+    if (!pageVersion) { pageVersion = v; return; }
+    if (v !== pageVersion) location.reload();
+  }
   function renderHeader(st) {
+    reloadIfVersionChanged(st.version);
     $("#hdr-backend").textContent = st.server_name && String(st.backend || "").startsWith("LAN")
       ? `${st.server_name} で認識` : friendlyStatus(st.backend);
     $("#conn").title = st.backend ? `くわしく: ${st.backend}` : "";
