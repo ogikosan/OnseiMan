@@ -192,6 +192,29 @@ class TestTextNormalize(unittest.TestCase):
         for src, want in cases.items():
             self.assertEqual(self.n.normalize(src), want, src)
 
+    def test_single_digits_and_decimals(self) -> None:
+        cases = {
+            "五を押して": "5を押して",
+            "バージョン五にして": "バージョン5にして",
+            "答えは五です": "答えは5です",
+            "五": "5",
+            "OPAS五点五とOPAS四点八": "OPAS5.5とOPAS4.8",
+            "五点五です": "5.5です",
+            # 辞書で「五→5」にしていて「5点5」になっていても小数にする
+            "OPAS5点5とOPAS4点8": "OPAS5.5とOPAS4.8",
+            "4点八": "4.8",
+            "四点8": "4.8",
+            "一か月": "1か月",
+        }
+        for src, want in cases.items():
+            self.assertEqual(self.n.normalize(src), want, src)
+
+    def test_digits_inside_words_kept(self) -> None:
+        for s in ("一緒に行く", "一番いい", "もう一度", "二人で", "第五回", "一つください", "五つある",
+                  "一か八か", "九九を覚える", "一から十まで", "七夕", "九州に行く", "一応", "唯一の", "三点セット",
+                  "十分間に合う"):
+            self.assertEqual(self.n.normalize(s), s)
+
     def test_idioms_kept(self) -> None:
         for s in ("十分間に合う", "八百屋さん", "五十嵐さん", "千葉に行く", "万が一のため", "一人で行く",
                   "二三日待って", "一点一点確認", "百人一首", "十人十色", "三人で", "第一回"):

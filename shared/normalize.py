@@ -83,7 +83,12 @@ _KEEP_WORDS = (
     "八百屋", "八百長", "嘘八百", "五十嵐", "十八番", "百人一首", "千葉", "千代田", "百貨店", "百科",
     "万引き", "万が一", "万一", "千差万別", "一石二鳥", "十人十色", "百聞", "百発百中", "九十九里",
     "三十路", "四十肩", "五十肩", "十字", "十二支", "一千一秒", "一点一点",
+    "一か八か", "九九", "一から十まで", "一も二もなく",
 )
+# 漢字（前後がこれなら、漢数字は言葉の一部: 一緒・一番・十分・二人・第五 など）
+_KANJI = "\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF々〆"
+# 1 文字の漢数字のあとにこれが来たら、数え方の言葉なのでそのまま（一つ・五つ）
+_NATIVE_AFTER = ("つ",)
 _NUM_BEFORE = f"[{_NUM_CHARS}0-9]"
 
 
@@ -129,7 +134,13 @@ def _should_convert(run: str, before: str, after: str) -> bool:
     has_unit = any(c in _SMALL or c in _BIG for c in run)
     has_zero = any(c in "〇零" for c in run)
     if not has_unit and not has_zero:
-        return False  # 一人・三つ・二三日 などはそのまま
+        # 1 文字の数（五）: 前後が漢字でなければ数として使っている（「五を押して」「バージョン五」「五です」）。
+        # 前後が漢字なら言葉の一部（一緒・一番・二人・第五）、「一つ・五つ」は数え方なのでそのまま
+        if len(run) == 1:
+            prev_kanji = bool(before) and re.match(f"[{_KANJI}]", before[-1]) is not None
+            next_kanji = bool(after) and re.match(f"[{_KANJI}]", after[0]) is not None
+            return not prev_kanji and not next_kanji and not after.startswith(_NATIVE_AFTER)
+        return False  # 二三日・四五人 などはそのまま
     if not has_unit and len(run) < 2:
         return False
     if len(run) == 1:
@@ -176,6 +187,18 @@ def convert_kanji_numbers(text: str) -> str:
     result = re.sub(
         f"(?<![{_NUM_CHARS}])([{''.join(_DIGITS)}])点([{''.join(_DIGITS)}]+)",
         lambda m2: f"{_DIGITS[m2.group(1)]}.{''.join(str(_DIGITS[c]) for c in m2.group(2))}",
+        result,
+    )
+    # 点の両側が数字なら小数（辞書の「五→5」が先に効いて「5点5」になっていても直す。「4点八」「四点8」も）
+    result = re.sub(r"(?<![0-9.])([0-9]+)点([0-9]+)(?![0-9])", r"\1.\2", result)
+    result = re.sub(
+        f"([0-9]+)点([{''.join(_DIGITS)}]+)",
+        lambda m2: f"{m2.group(1)}.{''.join(str(_DIGITS[c]) for c in m2.group(2))}",
+        result,
+    )
+    result = re.sub(
+        f"(?<![{_NUM_CHARS}])([{''.join(_DIGITS)}]+)点([0-9]+)",
+        lambda m2: f"{''.join(str(_DIGITS[c]) for c in m2.group(1))}.{m2.group(2)}",
         result,
     )
     # 3パーセント → 3%
