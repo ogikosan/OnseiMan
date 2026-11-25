@@ -441,7 +441,9 @@ class OnseiManApp:
         return {
             "rms_threshold": self.config.silence_rms_threshold,
             "pause_sec": self.config.segment_pause_sec,
-            "min_segment_sec": min(float(self.config.segment_min_sec), max_sec * 0.5),
+            # 区切るのは、一度に聞き取れる長さの近くまで来たときだけ。短い区切りは前後のつながりが切れて
+            # 聞き間違いが増え、区切り目に「。」も入るので、上限の 85% までは区切らずに通しで聞き取る
+            "min_segment_sec": max_sec * 0.85,
             "max_segment_sec": max_sec,
         }
 
@@ -778,7 +780,7 @@ class OnseiManApp:
         kwargs = self._segment_kwargs() or {
             "rms_threshold": self.config.silence_rms_threshold,
             "pause_sec": 0.6,
-            "min_segment_sec": max_sec * 0.5,
+            "min_segment_sec": max_sec * 0.85,
             "max_segment_sec": max_sec,
         }
         parts = [samples]
