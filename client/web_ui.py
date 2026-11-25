@@ -78,8 +78,14 @@ def app_browser_args(browser: str, target: str, profile_dir: Optional[Path]) -> 
 
 def _find_app_window() -> int:
     """すでに開いている OnseiMan の画面（Edge / Chrome のアプリ表示）の窓。無ければ 0。"""
+    found = _find_app_windows(first_only=True)
+    return found[0] if found else 0
+
+
+def _find_app_windows(first_only: bool = False) -> List[int]:
+    """開いている OnseiMan の画面の窓をすべて。"""
     if os.name != "nt":
-        return 0
+        return []
     import ctypes
     from ctypes import wintypes
 
@@ -98,14 +104,27 @@ def _find_app_window() -> int:
         user32.GetClassNameW(hwnd, cls, 256)
         if cls.value.startswith("Chrome_WidgetWin"):  # 同じ名前のフォルダの窓などは除く
             found.append(int(hwnd))
-            return False
+            return not first_only
         return True
 
     try:
         user32.EnumWindows(proc_type(_each), 0)
     except Exception:
-        return 0
-    return found[0] if found else 0
+        return []
+    return found
+
+
+def _close_windows(hwnds: List[int], timeout: float = 3.0) -> None:
+    """窓に「閉じて」と伝え、閉じるまで少し待つ。"""
+    import ctypes
+    import time
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    for hwnd in hwnds:
+        user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+    end = time.monotonic() + timeout
+    while time.monotonic() < end and any(user32.IsWindow(h) for h in hwnds):
+        time.sleep(0.1)
 
 
 def _bring_to_front(hwnd: int) -> bool:
@@ -206,6 +225,8 @@ class WebUIServer:
         self._pending_tab: str = ""
         self._thread: Optional[threading.Thread] = None
         self._port: int = 0
+        # この OnseiMan を起動する前から開いていた画面（前の起動の画面）。中身が古いので、出すときは開き直す
+        self._stale_windows: set = set(_find_app_windows())
 
     @property
     def url(self) -> str:
@@ -510,6 +531,14 @@ class WebUIServer:
         url = self.start()
         # すでに開いていれば、新しく開かずに前に出す（トレイを押すたびに窓が増えないように）
         hwnd = _find_app_window()
+        if hwnd and self._stale_windows:
+            # 前の起動（前の版）のときから開いたままの画面は、ボタンが今の OnseiMan とかみ合わないことがあるので開き直す
+            stale = [h for h in _find_app_windows() if h in self._stale_windows]
+            self._stale_windows = set()
+            if stale:
+                logger.info("前の起動のときから開いていた画面を開き直します")
+                _close_windows(stale)
+                hwnd = _find_app_window()
         if hwnd:
             self._pending_tab = tab or ""
             if not _bring_to_front(hwnd):
