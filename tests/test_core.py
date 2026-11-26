@@ -344,6 +344,8 @@ class TestAppBusyAndPasteFlow(unittest.TestCase):
         app._toggle_active = False
         app._ai_recording = False
         app._ai_selected_text = ""
+        app._ai_refining = False
+        app._ai_skip = __import__("threading").Event()
         app._last_audio = None
         app._last_audio_path = Path(tempfile.gettempdir()) / "onseiman_test_last.wav"
         app._max_timer = None
@@ -374,6 +376,34 @@ class TestAppBusyAndPasteFlow(unittest.TestCase):
         app.recorder.stop.assert_not_called()
         app.ui.hide_overlay.assert_not_called()
         self.assertIn("認識中", app.ui.show_status.call_args_list[0].args[0])
+
+    def test_press_while_ai_refining_skips_ai(self) -> None:
+        import threading
+
+        app = self._make_app()
+        app._processing = True
+        release = threading.Event()
+
+        def slow():
+            release.wait(5)
+            return "整えた文"
+
+        got = {}
+        t = threading.Thread(target=lambda: got.setdefault("r", app._refine_skippable(slow)))
+        t.start()
+        for _ in range(100):
+            if app._ai_refining:
+                break
+            __import__("time").sleep(0.01)
+        app._on_hotkey_press()          # 整えている途中に押す → 待たずに None（整える前の文）
+        t.join(2)
+        release.set()
+        self.assertIsNone(got["r"])
+        self.assertFalse(app._ai_refining)
+        app.recorder.start.assert_not_called()
+        self.assertIn("整える前", app.ui.show_status.call_args_list[-1].args[0])
+        # 押さなければ、AI の答えを返す
+        self.assertEqual(app._refine_skippable(lambda: "整えた文"), "整えた文")
 
     def test_release_marks_busy_before_worker_runs(self) -> None:
         from unittest import mock
@@ -565,27 +595,79 @@ class TestNewFeatures(unittest.TestCase):
         from unittest import mock
         from client.llm_refine import LLMRefiner
 
+        def ok(body):
+            return mock.MagicMock(status_code=200, json=lambda: body)
+
         with mock.patch("client.llm_refine.requests.get") as mget, mock.patch("client.llm_refine.requests.post") as mpost:
-            mget.return_value = mock.MagicMock(status_code=200, json=lambda: {"models": [{"name": "qwen2.5:7b"}]})
-            mpost.return_value = mock.MagicMock(
-                status_code=200,
-                raise_for_status=lambda: None,
-                json=lambda: {"message": {"content": "明後日の15時でお願いします。"}},
-            )
-            ref = LLMRefiner("http://192.168.1.50:11434")
+            mget.return_value = ok({"models": [{"name": "qwen2.5:7b"}]})
+            mpost.return_value = ok({"message": {"content": "明後日の15時でお願いします。"}})
+            ref = LLMRefiner("ollama", base_url="http://192.168.1.50:11434")
             res = ref.refine_dictation("明日、あいや明後日の3時でお願いします")
             self.assertEqual(res.text, "明後日の15時でお願いします。")
             self.assertEqual(res.model, "qwen2.5:7b")
+            self.assertTrue(mpost.call_args.args[0].endswith("/api/chat"))
 
         with mock.patch("client.llm_refine.requests.post") as mpost:
-            mpost.return_value = mock.MagicMock(
-                status_code=200,
-                raise_for_status=lambda: None,
-                json=lambda: {"choices": [{"message": {"content": "Hello world"}}]},
-            )
-            ref2 = LLMRefiner("http://192.168.1.50:1234/v1", model="local-llm")
-            res2 = ref2.rewrite_selection("こんにちは世界", "英語にして")
-            self.assertEqual(res2.text, "Hello world")
+            mpost.return_value = ok({"choices": [{"message": {"content": "Hello world"}}]})
+            ref2 = LLMRefiner("ollama", model="local-llm", base_url="http://192.168.1.50:1234/v1")
+            self.assertEqual(ref2.rewrite_selection("こんにちは世界", "英語にして").text, "Hello world")
+            self.assertEqual(mpost.call_args.args[0], "http://192.168.1.50:1234/v1/chat/completions")
+
+    def test_llm_refiner_cloud_providers(self) -> None:
+        from unittest import mock
+        from client.llm_refine import LLMRefiner, PROVIDERS
+
+        def ok(body):
+            return mock.MagicMock(status_code=200, json=lambda: body)
+
+        with mock.patch("client.llm_refine.requests.post") as mpost:
+            mpost.return_value = ok({"choices": [{"message": {"content": "GPT の文"}}]})
+            r = LLMRefiner("openai", api_key="sk-test").refine_dictation("え")
+            self.assertEqual((r.text, r.model), ("GPT の文", PROVIDERS["openai"]["model"]))
+            self.assertEqual(mpost.call_args.args[0], "https://api.openai.com/v1/chat/completions")
+            self.assertEqual(mpost.call_args.kwargs["headers"]["Authorization"], "Bearer sk-test")
+
+            mpost.return_value = ok({"content": [{"type": "text", "text": "Claude の文"}]})
+            r = LLMRefiner("anthropic", api_key="ak").refine_dictation("え")
+            self.assertEqual(r.text, "Claude の文")
+            self.assertEqual(mpost.call_args.args[0], "https://api.anthropic.com/v1/messages")
+            self.assertEqual(mpost.call_args.kwargs["headers"]["x-api-key"], "ak")
+            self.assertIn("system", mpost.call_args.kwargs["json"])
+
+            mpost.return_value = ok({"candidates": [{"content": {"parts": [
+                {"text": "考え中", "thought": True}, {"text": "Gemini の文"}]}}]})
+            r = LLMRefiner("gemini", model="gemini-x", api_key="gk").refine_dictation("え")
+            self.assertEqual(r.text, "Gemini の文")
+            self.assertTrue(mpost.call_args.args[0].endswith("/models/gemini-x:generateContent"))
+
+            mpost.return_value = mock.MagicMock(status_code=401, json=lambda: {"error": {"message": "bad key"}})
+            with self.assertRaisesRegex(RuntimeError, "API キーが正しくありません"):
+                LLMRefiner("anthropic", api_key="ak").refine_dictation("え")
+
+        with self.assertRaisesRegex(RuntimeError, "API キーが入っていません"):
+            LLMRefiner("openai")
+        with self.assertRaisesRegex(RuntimeError, "AI が選ばれていません"):
+            LLMRefiner("")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows だけ")
+    def test_llm_keys_saved_locked_and_old_settings_carried_over(self) -> None:
+        import json as _json
+        from client.secret_store import protect, unprotect
+
+        locked = protect("sk-secret")
+        self.assertTrue(locked.startswith("dpapi:"))
+        self.assertNotIn("sk-secret", locked)
+        self.assertEqual(unprotect(locked), "sk-secret")
+        self.assertEqual(unprotect("dpapi:壊れた"), "")
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.json"
+            path.write_text(_json.dumps({"llm_base_url": "http://mac:11434", "llm_api_key": "old"}), encoding="utf-8")
+            cfg = ClientConfig.load(path)
+            self.assertEqual(cfg.llm_provider, "ollama")
+            self.assertEqual(cfg.llm_key(), "old")
+            cfg.save(path)
+            self.assertNotIn('"old"', path.read_text(encoding="utf-8"))
+            self.assertEqual(ClientConfig.load(path).llm_key("ollama"), "old")
 
     def test_secondary_ai_hotkey_binding(self) -> None:
         from client.input_hook import GlobalInputHook, KBDLLHOOKSTRUCT, WM_KEYDOWN, WM_KEYUP

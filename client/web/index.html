@@ -251,10 +251,21 @@
         <div class="spacer"></div>
         <span class="muted" id="settings-saved-note">変えるとすぐに保存されます</span>
       </div>
+      <div class="set-layout">
+        <nav class="set-nav" aria-label="設定の項目">
+          <button type="button" data-sec="basic">基本</button>
+          <button type="button" data-sec="place">声を文字にする場所</button>
+          <button type="button" data-sec="rec">録音</button>
+          <button type="button" data-sec="finish">文の仕上げ</button>
+          <button type="button" data-sec="ai">AI で整える</button>
+          <button type="button" data-sec="view">表示と学習</button>
+          <button type="button" data-sec="sync">辞書の共有</button>
+          <button type="button" data-sec="update">新しい版</button>
+        </nav>
       <div class="scroll">
         <div class="settings-grid">
-          <div class="setting-card">
-            <h3>よく使う設定</h3>
+          <div class="setting-card" data-sec="basic">
+            <h3>基本</h3>
             <div class="form-row key-row">
               <label class="lbl">録音キー</label>
               <strong id="set-hotkey" style="white-space:nowrap">ralt</strong>
@@ -301,7 +312,7 @@
             <label class="switch"><input type="checkbox" id="set-startup"><span class="track"></span><span>Windows を起動したら自動で始める</span></label>
           </div>
 
-          <div class="setting-card">
+          <div class="setting-card" data-sec="place">
             <h3>声を文字にする場所</h3>
             <div class="place-choice">
               <label class="place-opt">
@@ -353,7 +364,7 @@
             </div>
           </div>
 
-          <div class="setting-card">
+          <div class="setting-card" data-sec="sync">
             <h3>辞書をほかのパソコンと合わせる</h3>
             <p class="muted">どれか 1 台で登録した言葉（辞書・定型文）が、ほかのパソコンにも自動で入ります。ほかのパソコンでも同じ設定にしてください。</p>
             <div class="place-choice">
@@ -388,7 +399,7 @@
             </div>
           </div>
 
-          <div class="setting-card" id="ver-card">
+          <div class="setting-card" data-sec="update" id="ver-card">
             <h3>新しい版にする</h3>
             <p>いまの版: <b id="ver-current">-</b>　<span class="muted" id="ver-status">起動したときと、1 日 1 回確かめています</span></p>
             <details id="ver-notes-box" hidden>
@@ -402,12 +413,7 @@
             </div>
             <p class="muted">設定・辞書・履歴はそのまま残ります。前の版は backup フォルダに残ります。</p>
           </div>
-        </div>
-
-        <details class="more-settings" id="more-settings">
-          <summary>詳しい設定<small>ふだんは変えなくて大丈夫です</small></summary>
-          <div class="settings-grid">
-            <div class="setting-card">
+            <div class="setting-card" data-sec="rec">
               <h3>録音</h3>
               <label class="switch"><input type="checkbox" id="set-auto-stop"><span class="track"></span><span>黙ったら自動で入力する（1回押して開始のとき）</span></label>
               <div class="form-row">
@@ -428,7 +434,7 @@
               <label class="switch"><input type="checkbox" id="set-live-seg"><span class="track"></span><span>話しながら区切って認識する（長く話しても消えません）</span></label>
             </div>
 
-            <div class="setting-card">
+            <div class="setting-card" data-sec="finish">
               <h3>文の仕上げ</h3>
               <label class="switch"><input type="checkbox" id="set-fillers"><span class="track"></span><span>「えーと」「あのー」などを消す</span></label>
               <label class="switch"><input type="checkbox" id="set-normalize"><span class="track"></span><span>数字と略語を読みやすくする（五千九十 → 5090）</span></label>
@@ -438,7 +444,7 @@
               <label class="switch"><input type="checkbox" id="set-app-rules"><span class="track"></span><span>チャットアプリでだけ文末の「。」を消す</span></label>
             </div>
 
-            <div class="setting-card">
+            <div class="setting-card" data-sec="view">
               <h3>表示と学習</h3>
               <label class="switch"><input type="checkbox" id="set-overlay"><span class="track"></span><span>録音中などの表示を出す</span></label>
               <div class="form-row">
@@ -458,27 +464,57 @@
               <label class="switch"><input type="checkbox" id="set-restore-cb"><span class="track"></span><span>入力のあと、コピーしていた内容を元に戻す</span></label>
             </div>
 
-            <div class="setting-card">
-              <h3>AI で文章を整える</h3>
-              <p class="muted" style="margin:0;font-size:12.5px">別に AI（Ollama など）を動かしている人向けです。</p>
+            <div class="setting-card" data-sec="ai">
+              <h3>AI で整える</h3>
+              <p class="muted">話した文を AI に渡して、言い直しや「えーと」を整えた、読みやすい文にします。
+              使うときだけ、文字（音声ではありません）を選んだ会社に送ります。</p>
               <div class="form-row">
-                <label class="lbl">AI整形キー</label>
-                <strong id="set-ai-hotkey">（未設定）</strong>
-                <div class="spacer"></div>
-                <button type="button" class="btn sm" id="btn-cap-ai">変更</button>
-                <button type="button" class="btn sm" id="btn-clr-ai">解除</button>
+                <label class="lbl">頼む AI</label>
+                <select id="set-llm-provider" class="inp">
+                  <option value="">使わない</option>
+                  <option value="openai">GPT（OpenAI）</option>
+                  <option value="anthropic">Claude（Anthropic）</option>
+                  <option value="gemini">Gemini（Google）</option>
+                  <option value="ollama">自分で動かす AI（Ollama など）</option>
+                </select>
               </div>
-              <div class="form-row">
-                <label class="lbl">AI のアドレス</label>
-                <input type="text" id="set-llm-url" class="inp" placeholder="http://192.168.1.50:11434">
-              </div>
-              <div class="form-row">
-                <label class="lbl">AI のモデル名</label>
-                <input type="text" id="set-llm-model" class="inp" placeholder="qwen2.5:7b">
+              <div id="llm-fields" class="sub-fields" hidden>
+                <div class="form-row" id="llm-key-row">
+                  <label class="lbl">API キー</label>
+                  <input type="password" id="set-llm-key" class="inp" autocomplete="off" spellcheck="false">
+                  <button type="button" class="btn sm" id="btn-llm-key-clear" style="flex:none" hidden>消す</button>
+                </div>
+                <p class="muted" id="llm-key-note"></p>
+                <div class="form-row" id="llm-url-row">
+                  <label class="lbl">AI のアドレス</label>
+                  <input type="text" id="set-llm-url" class="inp" placeholder="http://192.168.1.50:11434">
+                </div>
+                <div class="form-row">
+                  <label class="lbl">モデル</label>
+                  <input type="text" id="set-llm-model" class="inp" list="llm-model-list" spellcheck="false">
+                  <datalist id="llm-model-list"></datalist>
+                  <button type="button" class="btn sm" id="btn-llm-models" style="flex:none">一覧を読み込む</button>
+                </div>
+                <div class="find-row">
+                  <button type="button" class="btn primary" id="btn-llm-test">試す</button>
+                  <span class="muted" id="llm-test-status">例の文を整えてもらって、設定が合っているか確かめます</span>
+                </div>
+                <div class="llm-test-out" id="llm-test-out" hidden></div>
+                <label class="switch"><input type="checkbox" id="set-llm-auto"><span class="track"></span><span>話し終えたら、いつも AI で整える（整えているあいだに録音キーをもう一度押すと、待たずに、整える前の文を入れます）</span></label>
+                <div class="form-row key-row">
+                  <label class="lbl">AI のキー</label>
+                  <strong id="set-ai-hotkey" style="white-space:nowrap">なし</strong>
+                  <span class="key-btns">
+                    <button type="button" class="btn sm" id="btn-cap-ai">変更（次に押すキー）</button>
+                    <button type="button" class="btn sm" id="btn-clr-ai">外す</button>
+                  </span>
+                </div>
+                <p class="muted" style="margin:-4px 0 0;font-size:12px">録音キーの代わりにこのキーで話すと、その 1 回だけ AI で整えます。
+                文を選んでからこのキーで「敬語にして」などと話すと、選んだ文を書き換えます</p>
               </div>
             </div>
           </div>
-        </details>
+      </div>
       </div>
     </div>
   </section>

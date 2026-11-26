@@ -255,6 +255,8 @@ class OnseiManApp:
         self._toggle_active = False          # toggle モードで録音中か（2回目の押下で確定する）
         self._ai_recording = False           # 今回の録音が AI 整形 / 選択書き換えモードか
         self._ai_selected_text = ""          # AI 書き換えモード開始時の選択テキスト
+        self._ai_refining = False            # AI で整えているところか（録音キーをもう一度押すと、整えずに入れる）
+        self._ai_skip = threading.Event()
         self._paste_target = 0               # 録音開始時の入力先ウィンドウ
         self._last_audio: Optional[tuple[np.ndarray, int, float]] = None
         self._last_audio_path = LOG_DIR / "last_audio.wav"
@@ -521,6 +523,13 @@ class OnseiManApp:
             self._finish_recording()
             return
         self._reload_config_if_changed()
+        if self._processing and self._ai_refining:
+            # AI で整えている途中にもう一度押した: 待たずに、整える前の文を入れる
+            self._press_ignored = True
+            self._ai_skip.set()
+            self.ui.show_status("整える前の文を入れます", bg="#374151", auto_hide_ms=900)
+            logger.info("AI で整えるのをやめて、整える前の文を入れます")
+            return
         if self._processing:
             self._press_ignored = True
             self._beep(300, 60)
@@ -597,6 +606,40 @@ class OnseiManApp:
             self._beep(300, 150)
             self._set_tray_state("#dc2626", "マイクエラー")
             self.ui.show_status("✕ マイク録音に失敗しました", bg="#991b1b", auto_hide_ms=2000)
+
+    def _make_refiner(self, timeout_sec: Optional[float] = None) -> LLMRefiner:
+        cfg = self.config
+        return LLMRefiner(
+            provider=cfg.llm_provider,
+            model=cfg.llm_model,
+            api_key=cfg.llm_key(),
+            base_url=cfg.llm_base_url,
+            timeout_sec=timeout_sec or cfg.llm_timeout_sec,
+        )
+
+    def _refine_skippable(self, work):
+        """AI に頼む。待っているあいだに録音キーが押されたら、待つのをやめて None を返す。"""
+        box: dict = {}
+
+        def run() -> None:
+            try:
+                box["res"] = work()
+            except Exception as exc:
+                box["err"] = exc
+
+        self._ai_skip.clear()
+        self._ai_refining = True
+        try:
+            t = threading.Thread(target=run, daemon=True)
+            t.start()
+            while t.is_alive():
+                if self._ai_skip.wait(0.05):
+                    return None
+        finally:
+            self._ai_refining = False
+        if "err" in box:
+            raise box["err"]
+        return box["res"]
 
     def _on_hotkey_press(self) -> None:
         self._begin_recording(ai_mode=False)
@@ -886,42 +929,36 @@ class OnseiManApp:
                         # 定型文: 登録した文をそのまま入れる
                         final_text = snippet
                         backend_label = f"{asr_backend}+定型文"
-                    elif ai_mode:
+                    elif ai_mode or (self.config.llm_auto_refine and self.config.llm_provider and do_paste):
+                        again = self.config.hotkey.upper()
                         self.ui.show_status(
-                            "✦ AI で書き換え中..." if selected_text else "✦ AI で文章を整えています...",
+                            "✦ AI で書き換え中..." if selected_text
+                            else f"✦ AI で整えています...（もう一度 {again} で、整えずに入れる）",
                             bg="#0f766e",
                         )
                         try:
-                            refiner = LLMRefiner(
-                                base_url=self.config.llm_base_url,
-                                model=self.config.llm_model,
-                                api_key=self.config.llm_api_key,
-                                timeout_sec=self.config.llm_timeout_sec,
-                            )
-                            llm_res = (
-                                refiner.rewrite_selection(selected_text, final_text)
+                            refiner = self._make_refiner()
+                            llm_res = self._refine_skippable(
+                                (lambda: refiner.rewrite_selection(selected_text, final_text))
                                 if selected_text
-                                else refiner.refine_dictation(final_text)
+                                else (lambda: refiner.refine_dictation(final_text))
                             )
-                            if llm_res.text:
+                            if llm_res is None:
+                                backend_label = f"{asr_backend}+AI（整えずに入力）"
+                            elif llm_res.text:
                                 final_text = llm_res.text
                                 backend_label = f"{asr_backend}+AI"
                                 total_ms += llm_res.elapsed_ms
                         except Exception as exc:
-                            logger.warning("AI 整形に失敗したため通常テキストを使用します: %s", exc)
-                            self.ui.show_status(f"⚠ AI整形エラー（元の認識結果を使います）: {exc}", bg="#92400e", auto_hide_ms=3000)
+                            logger.warning("AI で整えられなかったため、整える前の文を入れます: %s", exc)
+                            self.ui.show_status(f"⚠ AI で整えられませんでした（整える前の文を入れます）: {exc}", bg="#92400e", auto_hide_ms=3500)
                     elif self.config.auto_refine_self_correction and has_self_correction(final_text):
-                        # 言い直し表現が含まれるときだけ整理（Mac mini 等の LLM が設定されていれば 0.3s 整理、なければ 0ms ルール）
+                        # 言い直し表現が含まれるときだけ整理（AI が設定されていれば AI で、なければルールで）
                         refined_done = False
-                        if self.config.llm_base_url:
+                        if self.config.llm_provider:
                             self.ui.show_status("✦ 言い直しを整理しています...", bg="#0f766e")
                             try:
-                                refiner = LLMRefiner(
-                                    base_url=self.config.llm_base_url,
-                                    model=self.config.llm_model,
-                                    api_key=self.config.llm_api_key,
-                                    timeout_sec=min(self.config.llm_timeout_sec, 6.0),
-                                )
+                                refiner = self._make_refiner(timeout_sec=min(self.config.llm_timeout_sec, 6.0))
                                 llm_res = refiner.resolve_self_correction(final_text)
                                 if llm_res.text and not is_over_truncated(final_text, llm_res.text):
                                     final_text = llm_res.text
@@ -1778,7 +1815,7 @@ def _prepare_first_run() -> None:
             server_urls=[],
             local_fallback=True,
             local_num_threads=max(2, min(8, cpu // 2)),
-            llm_base_url="",            # AI 整形は使わない（使う人は設定で入れる）
+            llm_provider="",            # AI で整えるのは使わない（使う人は設定で選ぶ）
         )
         cfg.save(cfg_path)
     dict_path = DATA_DIR / "dict.json"

@@ -300,11 +300,18 @@
     renderFound(searched.length ? searched : savedAsFound());
   });
 
-  // 「詳しい設定」を開いていたかを覚えておく
+  // 設定: 左の項目を押すと、その項目だけを出す（最後に見た項目を覚えておく）
+  function showSettingsSection(sec) {
+    if (!$(`.set-nav button[data-sec="${sec}"]`)) sec = "basic";
+    $$(".set-nav button").forEach((b) => b.setAttribute("aria-current", String(b.dataset.sec === sec)));
+    $$("#view-settings .setting-card").forEach((c) => { c.hidden = c.dataset.sec !== sec; });
+    try { localStorage.setItem("onseiman.settingsSection", sec); } catch {}
+  }
+  $$(".set-nav button").forEach((b) => b.addEventListener("click", () => showSettingsSection(b.dataset.sec)));
   (() => {
-    const more = $("#more-settings");
-    try { more.open = localStorage.getItem("onseiman.moreSettings") === "1"; } catch {}
-    more.addEventListener("toggle", () => { try { localStorage.setItem("onseiman.moreSettings", more.open ? "1" : "0"); } catch {} });
+    let sec = "basic";
+    try { sec = localStorage.getItem("onseiman.settingsSection") || "basic"; } catch {}
+    showSettingsSection(sec);
   })();
 
   // トレイのメニューから押されて、窓が前に出たとき: 頼まれたタブに切り替える
@@ -386,6 +393,7 @@
   // 右上の版のボタン → 設定の「新しい版にする」へ
   $("#ver-btn").addEventListener("click", () => {
     switchTab("settings");
+    showSettingsSection("update");
     const card = $("#ver-card");
     setTimeout(() => {
       card.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1112,7 +1120,8 @@
     $("#set-hotkey").textContent = friendlyKey(s.hotkey);
     $("#set-hotkey-extra").textContent = s.hotkey_extra ? friendlyKey(s.hotkey_extra) : "なし";
     $("#btn-clr-hk2").hidden = !s.hotkey_extra;
-    $("#set-ai-hotkey").textContent = s.ai_hotkey ? friendlyKey(s.ai_hotkey) : "（未設定）";
+    $("#set-ai-hotkey").textContent = s.ai_hotkey ? friendlyKey(s.ai_hotkey) : "なし";
+    $("#btn-clr-ai").hidden = !s.ai_hotkey;
     $$('input[name="hotkey_mode"]').forEach((r) => { r.checked = r.value === s.hotkey_mode; });
     $("#set-auto-stop").checked = !!s.auto_stop_on_silence;
     $("#set-silence-sec").value = s.silence_stop_sec;
@@ -1160,9 +1169,97 @@
     $("#set-dict-name").value = s.dict_share_name || "shared";
     $("#dict-folder-fields").hidden = (s.dict_share || "") !== "folder";
     loadDictSync();
+    llmProviders = s.llm_providers || {};
+    llmKeySet = s.llm_key_set || {};
+    $("#set-llm-provider").value = s.llm_provider || "";
     $("#set-llm-url").value = s.llm_base_url || "";
     $("#set-llm-model").value = s.llm_model || "";
+    $("#set-llm-auto").checked = !!s.llm_auto_refine;
+    $("#set-llm-key").value = "";
+    renderLlmFields();
   }
+
+  // ---- AI で整える ----
+  let llmProviders = {};
+  let llmKeySet = {};
+  function renderLlmFields() {
+    const p = $("#set-llm-provider").value;
+    const info = llmProviders[p] || {};
+    const own = p === "ollama";
+    $("#llm-fields").hidden = !p;
+    $("#llm-url-row").hidden = !own;
+    const has = !!llmKeySet[p];
+    $("#set-llm-key").placeholder = has ? "保存してあります（変えるときだけ貼り付け）" : (own ? "いらなければ空のまま" : "ここに貼り付け");
+    $("#btn-llm-key-clear").hidden = !has;
+    const note = $("#llm-key-note");
+    note.textContent = "";
+    if (info.key_url) {
+      note.append("API キーは ");
+      const a = document.createElement("a");
+      a.href = info.key_url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "ここ";
+      note.append(a, " で作れます（使った分だけ料金がかかります）。キーは、このパソコンでしか読めない形で保存します");
+    } else {
+      note.textContent = "Ollama か、OpenAI と同じ形の API（…/v1）のアドレスを入れます。キーは要るときだけ";
+    }
+    $("#set-llm-model").placeholder = info.model || (own ? "空なら、入っている最初のモデル" : "");
+    $("#llm-test-out").hidden = true;
+  }
+  function llmBody() {
+    return {
+      provider: $("#set-llm-provider").value,
+      model: $("#set-llm-model").value.trim(),
+      base_url: $("#set-llm-url").value.trim(),
+      api_key: $("#set-llm-key").value.trim(),
+    };
+  }
+  $("#set-llm-provider").addEventListener("change", () => {
+    $("#set-llm-model").value = "";   // 頼む先を変えたら、その AI のはじめのモデルにする
+    $("#llm-model-list").innerHTML = "";
+    renderLlmFields();
+  });
+  $("#btn-llm-key-clear").addEventListener("click", async () => {
+    try {
+      await saveSettings(true, { llm_api_key_clear: true });
+      toast("API キーを消しました");
+      loadSettings();
+    } catch (err) { toast(err.message, "err"); }
+  });
+  $("#btn-llm-models").addEventListener("click", async () => {
+    const btn = $("#btn-llm-models");
+    btn.disabled = true;
+    try {
+      const r = await api("/api/llm/models", llmBody());
+      const list = $("#llm-model-list");
+      list.innerHTML = "";
+      for (const m of r.models || []) {
+        const o = document.createElement("option");
+        o.value = m;
+        list.appendChild(o);
+      }
+      toast(r.models && r.models.length ? `${r.models.length} 個のモデルがあります。モデルの欄を押すと選べます` : "使えるモデルが見つかりませんでした");
+      $("#set-llm-model").focus();
+    } catch (err) {
+      toast(err.message, "err");
+    } finally { btn.disabled = false; }
+  });
+  $("#btn-llm-test").addEventListener("click", async () => {
+    const btn = $("#btn-llm-test");
+    const st = $("#llm-test-status");
+    const out = $("#llm-test-out");
+    btn.disabled = true;
+    st.textContent = "AI に頼んでいます...";
+    st.classList.remove("err-text");
+    out.hidden = true;
+    try {
+      const r = await api("/api/llm/test", llmBody());
+      st.textContent = `✓ 使えます（${r.model}・${(r.ms / 1000).toFixed(1)} 秒）`;
+      out.innerHTML = `<b>話した文</b>${esc(r.before)}<b>AI で整えた文</b>${esc(r.text)}`;
+      out.hidden = false;
+    } catch (err) {
+      st.textContent = err.message;
+      st.classList.add("err-text");
+    } finally { btn.disabled = false; }
+  });
 
   $("#btn-cap-hk").addEventListener("click", async () => {
     await api("/api/capture_hotkey", {});
@@ -1192,16 +1289,16 @@
   });
   $("#btn-cap-ai").addEventListener("click", async () => {
     await api("/api/capture_ai_hotkey", {});
-    toast("AI整形キーに割り当てたいキーを押してください（Escで中止）");
+    toast("AI のキーにしたいキーを押してください（Escで中止）");
     setTimeout(loadSettings, 2500);
   });
   $("#btn-clr-ai").addEventListener("click", async () => {
     await api("/api/clear_ai_hotkey", {});
-    toast("AI整形キーを解除しました");
+    toast("AI のキーを外しました");
     loadSettings();
   });
 
-  async function saveSettings(quiet = false) {
+  async function saveSettings(quiet = false, extra = {}) {
     const modeEl = $('input[name="hotkey_mode"]:checked');
     await api("/api/settings", {
         hotkey_mode: modeEl ? modeEl.value : "toggle",
@@ -1237,9 +1334,19 @@
         dict_share: dictShareValue(),
         dict_share_folder: $("#set-dict-folder").value.trim(),
         dict_share_name: $("#set-dict-name").value.trim() || "shared",
+        llm_provider: $("#set-llm-provider").value,
+        llm_auto_refine: $("#set-llm-auto").checked,
         llm_base_url: $("#set-llm-url").value.trim(),
         llm_model: $("#set-llm-model").value.trim(),
+        llm_api_key: $("#set-llm-key").value.trim(),
+        ...extra,
       });
+    if ($("#set-llm-key").value.trim()) {
+      // 保存したら欄は空に戻す（キーを画面に残さない）
+      $("#set-llm-key").value = "";
+      llmKeySet[$("#set-llm-provider").value] = true;
+      renderLlmFields();
+    }
     if (!quiet) toast("設定を保存しました（すぐに反映されます）");
     loadState();
   }

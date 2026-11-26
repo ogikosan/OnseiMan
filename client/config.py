@@ -59,11 +59,18 @@ class ClientConfig:
             "Chatwork.exe",
         ]
     )
-    # 第2ホットキー: AI 整形 / 選択テキスト書き換え（空文字なら無効）
+    # AI のキー: 押して話すと AI で整える。文を選んでから押すと、話した指示で書き換える（空文字なら無効）
     ai_hotkey: str = ""
+    # AI で整えるときに頼む先: ""（使わない）/ "openai" / "anthropic" / "gemini" / "ollama"（自分で動かす AI）
+    llm_provider: str = ""
+    # 話し終えたら、いつも AI で整える（整えているあいだに録音キーをもう一度押すと、整えずに入れる）
+    llm_auto_refine: bool = False
+    # 自分で動かす AI のアドレス（llm_provider が "ollama" のとき）
     llm_base_url: str = ""
+    # 空なら、選んだ AI のはじめのモデル
     llm_model: str = ""
-    llm_api_key: str = ""
+    # 頼む先ごとの API キー。Windows の仕組み（DPAPI）で鍵をかけて保存する（client/secret_store.py）
+    llm_api_keys: Dict[str, str] = field(default_factory=dict)
     llm_timeout_sec: float = 25.0
     cancel_key: str = "esc"
     suppress_hotkey: bool = True
@@ -123,7 +130,20 @@ class ClientConfig:
 
         valid_fields = {f for f in cls.__dataclass_fields__}
         filtered = {k: v for k, v in data.items() if k in valid_fields}
+        # 1.2.28 までの AI の設定（アドレスだけ）は、自分で動かす AI として引き継ぐ
+        if "llm_provider" not in data and str(data.get("llm_base_url") or "").strip():
+            filtered["llm_provider"] = "ollama"
+            old_key = str(data.get("llm_api_key") or "").strip()
+            if old_key:
+                from client.secret_store import protect
+
+                filtered["llm_api_keys"] = {"ollama": protect(old_key)}
         return cls(**filtered)
+
+    def llm_key(self, provider: str = "") -> str:
+        from client.secret_store import unprotect
+
+        return unprotect(dict(self.llm_api_keys or {}).get(provider or self.llm_provider, ""))
 
     def save(self, path: Path) -> None:
         path.write_text(

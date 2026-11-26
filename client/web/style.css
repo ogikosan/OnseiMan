@@ -447,15 +447,22 @@ details.adv summary { cursor: pointer; font-size: 13px; color: var(--muted); fon
 .snip-row .snip-b:focus { border-color: var(--accent); background: var(--input); }
 
 /* 設定: 詳しい設定をたたむ */
-.more-settings { margin: 14px auto 0; max-width: 860px; }
-.more-settings > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 10px;
-  background: var(--card); border: 1px solid var(--glass-border); border-radius: 14px; padding: 12px 16px;
-  font-size: 14px; font-weight: 700; }
-.more-settings > summary::-webkit-details-marker { display: none; }
-.more-settings > summary::before { content: "＋"; color: var(--accent); font-weight: 400; }
-.more-settings[open] > summary::before { content: "－"; }
-.more-settings > summary small { font-size: 12px; font-weight: 500; color: var(--muted); }
-.more-settings > .settings-grid { margin-top: 12px; }
+/* 設定: 左の項目を押すと、その項目だけを右に出す */
+.set-layout { flex: 1; min-height: 0; display: flex; gap: 16px; }
+.set-nav { flex: none; width: 176px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.set-nav button {
+  text-align: left; border: 0; background: transparent; color: var(--text);
+  font: inherit; font-size: 14px; padding: 9px 12px; border-radius: 8px; cursor: pointer;
+}
+.set-nav button:hover { background: var(--card); }
+.set-nav button[aria-current="true"] { background: var(--card); color: var(--accent); font-weight: 700; }
+.set-layout > .scroll { flex: 1; }
+.llm-test-out { font-size: 13.5px; border: 1px solid var(--glass-border); border-radius: 10px; padding: 10px 12px; }
+.llm-test-out b { display: block; font-size: 12px; color: var(--muted); font-weight: 500; margin-top: 4px; }
+@media (max-width: 640px) {
+  .set-layout { flex-direction: column; }
+  .set-nav { width: auto; flex-direction: row; flex-wrap: wrap; }
+}
 
 /* 見つかったサーバー: 名前はその場で直せる */
 .found-item .srv-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }

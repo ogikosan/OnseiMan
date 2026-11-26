@@ -54,6 +54,18 @@
 - アンインストールで消すのは作り直せる大きなもの（専用の Python・部品・聞き取りの部品・控え）。設定・辞書・履歴は残す。
 - 公開は `python packaging\release.py`（テスト → zip 2 つ → インストーラー → main → タグ → GitHub に公開を全部）。
 
+## AI で整える（`client/llm_refine.py`）
+
+- 頼む先 `llm_provider`: `""`（使わない）/ `openai` / `anthropic` / `gemini` / `ollama`（自分で動かす AI。Ollama か OpenAI と同じ形の API）。
+  どれも requests で直接呼ぶ（更新では部品を入れ直さないので、ライブラリを足さない）。モデルは `llm_model`、空なら `PROVIDERS` のはじめのモデル。
+- API キーは `llm_api_keys`（頼む先ごと）に、Windows の DPAPI で鍵をかけて保存する（`client/secret_store.py`、`dpapi:` で始まる）。
+  画面にはキーを返さず、入っているかだけを返す。1.2.28 までの `llm_base_url` だけの設定は `ollama` として引き継ぐ。
+- 使われ方: `llm_auto_refine` がオンなら毎回、`ai_hotkey` で話したときはその 1 回だけ整える。`ai_hotkey` で文を選んでいれば、話した指示で書き換える。
+  整えているあいだに録音キー（どれでも）を押すと、AI を待たずに整える前の文を入れる（`_refine_skippable`）。
+  整えられなかったときは、整える前の文を入れて理由を出す。
+- 言い直し（「じゃなくて」など）があるときは、AI が選ばれていれば AI で、なければルールで整理する（毎回整える設定のときは、整えるほうで済ませる）。
+- 画面の「試す」は `/api/llm/test`（例の文を整えて、結果と時間を出す）、「一覧を読み込む」は `/api/llm/models`。
+
 ## 辞書（`dict.json`）
 
 - 画面では「正しい言葉」ごとに 1 行。正しい言葉は自動で認識のヒントになる。聞き間違えた言い方（`replacements`）は任意。

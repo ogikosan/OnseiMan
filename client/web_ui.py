@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
+import requests
+
 from client.config import ClientConfig
+from client.llm_refine import PROVIDERS, TEST_TEXT, LLMRefiner
+from client.secret_store import protect
 from client.version import __version__
 from shared.fillers import DEFAULT_FILLERS
 from shared.normalize import BUILTIN_TERMS
@@ -482,6 +486,10 @@ class WebUIServer:
                     elif path == "/api/settings":
                         owner.save_settings_payload(body)
                         self._send_json({"ok": True})
+                    elif path == "/api/llm/test":
+                        self._send_json({"ok": True, **owner.llm_test_payload(body)})
+                    elif path == "/api/llm/models":
+                        self._send_json({"ok": True, "models": owner.llm_models_payload(body)})
                     elif path == "/api/dict-sync/now":
                         result = owner.on_dict_sync_now() if owner.on_dict_sync_now else "off"
                         self._send_json({"ok": result != "error", "result": result, **owner.get_dict_sync_payload()})
@@ -737,9 +745,48 @@ class WebUIServer:
             "dict_share": cfg.dict_share if cfg.dict_share in ("server", "folder") else "",
             "dict_share_folder": cfg.dict_share_folder,
             "dict_share_name": cfg.dict_share_name,
+            "llm_provider": cfg.llm_provider,
+            "llm_auto_refine": bool(cfg.llm_auto_refine),
             "llm_base_url": cfg.llm_base_url,
             "llm_model": cfg.llm_model,
+            # キーそのものは画面へ返さない（入っているかだけ）
+            "llm_key_set": {p: bool(cfg.llm_key(p)) for p in PROVIDERS},
+            "llm_providers": PROVIDERS,
         }
+
+    def _refiner_from_body(self, body: dict) -> LLMRefiner:
+        """画面の「試す」「モデルを読み込む」用。入れたばかりのキーがあればそれを、なければ保存したキーを使う。"""
+        cfg = ClientConfig.load(self.config_path)
+        provider = str(body.get("provider") or "")
+        if provider not in PROVIDERS:
+            raise ValueError("AI を選んでください")
+        key = str(body.get("api_key") or "").strip() or cfg.llm_key(provider)
+        try:
+            return LLMRefiner(provider=provider, model=str(body.get("model") or ""), api_key=key,
+                              base_url=str(body.get("base_url") or ""), timeout_sec=20.0)
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from None
+
+    def llm_test_payload(self, body: dict) -> dict:
+        refiner = self._refiner_from_body(body)
+        try:
+            res = refiner.refine_dictation(TEST_TEXT)
+        except requests.RequestException:
+            raise ValueError("AI につながりませんでした（ネットワークとアドレスを確かめてください）") from None
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from None
+        if not res.text:
+            raise ValueError("AI から返事がありませんでした（モデル名を確かめてください）")
+        return {"before": TEST_TEXT, "text": res.text, "model": res.model, "ms": round(res.elapsed_ms)}
+
+    def llm_models_payload(self, body: dict) -> list[str]:
+        refiner = self._refiner_from_body(body)
+        try:
+            return refiner.list_models()
+        except requests.RequestException:
+            raise ValueError("AI につながりませんでした（ネットワークとアドレスを確かめてください）") from None
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from None
 
     def save_settings_payload(self, body: dict) -> None:
         from client.input_hook import parse_binding
@@ -767,7 +814,10 @@ class WebUIServer:
 
         llm_url = str(body.get("llm_base_url", "")).strip()
         if llm_url and not llm_url.startswith(("http://", "https://")):
-            raise ValueError(f"LLM URL の書き方が正しくありません: {llm_url}")
+            raise ValueError(f"AI のアドレスの書き方が正しくありません（http:// から）: {llm_url}")
+        llm_provider = str(body.get("llm_provider") or "")
+        if llm_provider and llm_provider not in PROVIDERS:
+            raise ValueError("AI の選び方が正しくありません")
 
         cfg = ClientConfig.load(self.config_path)
         cfg.hotkey_mode = "hold" if str(body.get("hotkey_mode", "toggle")).lower() == "hold" else "toggle"
@@ -831,8 +881,17 @@ class WebUIServer:
                         raise ValueError(f"フォルダが見つかりません: {folder}")
                     p.mkdir()
             cfg.dict_share, cfg.dict_share_folder, cfg.dict_share_name = share, folder, name
+        cfg.llm_provider = llm_provider
+        cfg.llm_auto_refine = bool(body.get("llm_auto_refine", False))
         cfg.llm_base_url = llm_url
         cfg.llm_model = str(body.get("llm_model", "")).strip()
+        keys = dict(cfg.llm_api_keys or {})
+        new_key = str(body.get("llm_api_key") or "").strip()
+        if llm_provider and new_key:
+            keys[llm_provider] = protect(new_key)
+        if llm_provider and body.get("llm_api_key_clear"):
+            keys.pop(llm_provider, None)
+        cfg.llm_api_keys = keys
         cfg.save(self.config_path)
 
         if self.set_startup_enabled is not None and "startup_enabled" in body:
