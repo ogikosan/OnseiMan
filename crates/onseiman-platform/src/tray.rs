@@ -1,4 +1,7 @@
 //! システムトレイアイコン（Windows `Shell_NotifyIconW` / macOS スタブ）。
+//!
+//! 元の Python 版（`_make_icon_image`）と同じ「青い丸＋白いマイク」アイコンを
+//! 純 Rust の 32×32 RGBA ビットマップから `CreateIconIndirect` で生成する。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayEvent {
@@ -14,78 +17,22 @@ mod imp {
     use std::sync::{Arc, Mutex, OnceLock};
     use std::thread;
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateBitmap, CreateDIBSection, DeleteObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS,
+    };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::Shell::{
         Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+        AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
         DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
         LoadIconW, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
-        TrackPopupMenu, TranslateMessage, HICON, IDI_APPLICATION, LR_DEFAULTCOLOR, MF_SEPARATOR,
+        TrackPopupMenu, TranslateMessage, HICON, ICONINFO, IDI_APPLICATION, MF_SEPARATOR,
         MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY,
         WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
     };
-
-    const ICON_BYTES: &[u8] = include_bytes!("../assets/onseiman.ico");
-
-    pub(super) unsafe fn load_embedded_icon() -> HICON {
-        // ICO ヘッダ (6 bytes) + ICONDIRENTRY (16 bytes * count) から 32px 以上（なければ最大）を選ぶ
-        if ICON_BYTES.len() >= 22 {
-            let count = u16::from_le_bytes([ICON_BYTES[4], ICON_BYTES[5]]) as usize;
-            let mut best: Option<(usize, usize, u32)> = None;
-            for i in 0..count {
-                let off = 6 + i * 16;
-                if off + 16 > ICON_BYTES.len() {
-                    break;
-                }
-                let w = if ICON_BYTES[off] == 0 {
-                    256u32
-                } else {
-                    ICON_BYTES[off] as u32
-                };
-                let size = u32::from_le_bytes([
-                    ICON_BYTES[off + 8],
-                    ICON_BYTES[off + 9],
-                    ICON_BYTES[off + 10],
-                    ICON_BYTES[off + 11],
-                ]) as usize;
-                let img_off = u32::from_le_bytes([
-                    ICON_BYTES[off + 12],
-                    ICON_BYTES[off + 13],
-                    ICON_BYTES[off + 14],
-                    ICON_BYTES[off + 15],
-                ]) as usize;
-                if img_off + size <= ICON_BYTES.len() {
-                    let take = match best {
-                        None => true,
-                        Some((_, _, bw)) => {
-                            (w == 32) || (bw != 32 && w > bw && w <= 64) || (bw < 32 && w > bw)
-                        }
-                    };
-                    if take {
-                        best = Some((img_off, size, w));
-                    }
-                }
-            }
-            if let Some((img_off, size, _)) = best {
-                let mut buf = ICON_BYTES[img_off..img_off + size].to_vec();
-                let h = CreateIconFromResourceEx(
-                    buf.as_mut_ptr(),
-                    buf.len() as u32,
-                    1,
-                    0x0003_0000,
-                    32,
-                    32,
-                    LR_DEFAULTCOLOR,
-                );
-                if !h.is_null() {
-                    return h;
-                }
-            }
-        }
-        LoadIconW(ptr::null_mut(), IDI_APPLICATION)
-    }
 
     const WM_TRAY_ICON: u32 = WM_APP + 20;
     const CMD_OPEN_UI: usize = 1001;
@@ -95,6 +42,104 @@ mod imp {
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// 元の `_make_icon_image("#2563eb")`（64×64 座標系）と同じ青い丸＋白いマイクを 32×32 BGRA で描く。
+    pub(super) unsafe fn create_mic_icon(r_bg: u8, g_bg: u8, b_bg: u8) -> HICON {
+        const SIZE: i32 = 32;
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: SIZE,
+                biHeight: -SIZE, // top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [std::mem::zeroed(); 1],
+        };
+        let mut bits: *mut std::ffi::c_void = ptr::null_mut();
+        let hbm_color = CreateDIBSection(
+            ptr::null_mut(),
+            &bmi,
+            DIB_RGB_COLORS,
+            &mut bits,
+            ptr::null_mut(),
+            0,
+        );
+        if hbm_color.is_null() || bits.is_null() {
+            return LoadIconW(ptr::null_mut(), IDI_APPLICATION);
+        }
+
+        let buf = std::slice::from_raw_parts_mut(bits as *mut u8, (SIZE * SIZE * 4) as usize);
+        for py in 0..SIZE {
+            for px in 0..SIZE {
+                // 64×64 座標系へ変換（ピクセル中心）
+                let x = (px as f32 + 0.5) * 2.0;
+                let y = (py as f32 + 0.5) * 2.0;
+
+                // 外側の円: 中心 (32, 32), 半径 28
+                let dx = x - 32.0;
+                let dy = y - 32.0;
+                let dist = (dx * dx + dy * dy).sqrt();
+                let circle_a = (28.5 - dist).clamp(0.0, 1.0);
+                if circle_a <= 0.0 {
+                    continue;
+                }
+
+                // 白いマイク本体: カプセル (24..40, 15..38) 半径 8
+                let in_capsule = {
+                    let cy = y.clamp(23.0, 30.0);
+                    let d = ((x - 32.0).powi(2) + (y - cy).powi(2)).sqrt();
+                    d <= 8.0
+                };
+                // U 字アーク: 中心 (32, 35), 半径 13..15, y >= 34
+                let in_arc = {
+                    let d = ((x - 32.0).powi(2) + (y - 34.0).powi(2)).sqrt();
+                    y >= 33.0 && (11.2..=15.0).contains(&d)
+                };
+                // 軸: (30..34, 46..53)
+                let in_stem = (30.0..=34.0).contains(&x) && (46.0..=53.5).contains(&y);
+                // 台座: (23..41, 51..55)
+                let in_base = (23.0..=41.0).contains(&x) && (51.0..=55.0).contains(&y);
+
+                let is_white = in_capsule || in_arc || in_stem || in_base;
+                let (r, g, b) = if is_white {
+                    (255u8, 255u8, 255u8)
+                } else {
+                    (r_bg, g_bg, b_bg)
+                };
+                let a = (circle_a * 255.0).round() as u8;
+                let idx = ((py * SIZE + px) * 4) as usize;
+                // BGRA
+                buf[idx] = b;
+                buf[idx + 1] = g;
+                buf[idx + 2] = r;
+                buf[idx + 3] = a;
+            }
+        }
+
+        let hbm_mask = CreateBitmap(SIZE, SIZE, 1, 1, ptr::null());
+        let ii = ICONINFO {
+            fIcon: 1,
+            xHotspot: 0,
+            yHotspot: 0,
+            hbmMask: hbm_mask,
+            hbmColor: hbm_color,
+        };
+        let icon = CreateIconIndirect(&ii);
+        DeleteObject(hbm_color);
+        DeleteObject(hbm_mask);
+        if icon.is_null() {
+            LoadIconW(ptr::null_mut(), IDI_APPLICATION)
+        } else {
+            icon
+        }
     }
 
     fn emit(ev: TrayEvent) {
@@ -168,6 +213,7 @@ mod imp {
     pub struct TrayIcon {
         hwnd: Arc<Mutex<isize>>,
         join: Option<thread::JoinHandle<()>>,
+        added: bool,
     }
 
     impl TrayIcon {
@@ -179,6 +225,7 @@ mod imp {
             let tip_owned = tooltip.to_string();
             let hwnd_cell = Arc::new(Mutex::new(0isize));
             let hwnd_bg = Arc::clone(&hwnd_cell);
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel::<bool>();
 
             let join = thread::spawn(move || unsafe {
                 let hinst = GetModuleHandleW(ptr::null());
@@ -212,13 +259,15 @@ mod imp {
                     ptr::null(),
                 );
                 if hwnd.is_null() {
+                    let _ = ready_tx.send(false);
                     return;
                 }
                 if let Ok(mut g) = hwnd_bg.lock() {
                     *g = hwnd as isize;
                 }
 
-                let custom_icon = load_embedded_icon();
+                // 元の OnseiMan 待機アイコン（青 #2563eb＋白マイク）
+                let custom_icon = create_mic_icon(0x25, 0x63, 0xeb);
                 let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
                 nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
                 nid.hWnd = hwnd;
@@ -230,7 +279,8 @@ mod imp {
                 for (i, ch) in tip_u16.into_iter().enumerate() {
                     nid.szTip[i] = ch;
                 }
-                Shell_NotifyIconW(NIM_ADD, &nid);
+                let ok = Shell_NotifyIconW(NIM_ADD, &nid) != 0;
+                let _ = ready_tx.send(ok);
 
                 let mut msg: MSG = std::mem::zeroed();
                 while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
@@ -243,10 +293,18 @@ mod imp {
                 }
             });
 
+            let added = ready_rx
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .unwrap_or(false);
             Self {
                 hwnd: hwnd_cell,
                 join: Some(join),
+                added,
             }
+        }
+
+        pub fn is_added(&self) -> bool {
+            self.added
         }
     }
 
@@ -281,6 +339,9 @@ mod imp {
         pub fn start(_tooltip: &str, _tx: Sender<TrayEvent>) -> Self {
             Self
         }
+        pub fn is_added(&self) -> bool {
+            true
+        }
     }
 }
 
@@ -288,14 +349,14 @@ pub use imp::TrayIcon;
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::imp::load_embedded_icon;
+    use super::imp::create_mic_icon;
     use windows_sys::Win32::UI::WindowsAndMessaging::DestroyIcon;
 
     #[test]
-    fn embedded_icon_loads() {
+    fn mic_icon_creates_cleanly() {
         unsafe {
-            let h = load_embedded_icon();
-            assert!(!h.is_null(), "embedded onseiman.ico must load cleanly");
+            let h = create_mic_icon(0x25, 0x63, 0xeb);
+            assert!(!h.is_null(), "mic icon must create cleanly");
             DestroyIcon(h);
         }
     }

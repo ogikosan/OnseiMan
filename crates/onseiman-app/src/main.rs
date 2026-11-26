@@ -147,6 +147,7 @@ async fn main() {
     // システムトレイアイコン（左クリックで管理画面、右クリックで終了）
     let (tray_tx, tray_rx) = mpsc::channel();
     let _tray = TrayIcon::start(&format!("OnseiMan v{}", env!("CARGO_PKG_VERSION")), tray_tx);
+    append_log(&ctx.root_dir, &format!("tray_add={}", _tray.is_added()));
     {
         let url_tray = url.clone();
         let profile = ctx.root_dir.join("logs").join("browser_profile");
