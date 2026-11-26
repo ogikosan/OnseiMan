@@ -280,6 +280,13 @@ mod imp {
                     nid.szTip[i] = ch;
                 }
                 let ok = Shell_NotifyIconW(NIM_ADD, &nid) != 0;
+                if !ok {
+                    let err = windows_sys::Win32::Foundation::GetLastError();
+                    eprintln!(
+                        "Shell_NotifyIconW(NIM_ADD) failed: err=0x{err:08x} cbSize={} hwnd={:?} icon={:?}",
+                        nid.cbSize, hwnd, custom_icon
+                    );
+                }
                 let _ = ready_tx.send(ok);
 
                 let mut msg: MSG = std::mem::zeroed();
