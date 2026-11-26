@@ -145,7 +145,7 @@ fn health_and_unknown_paths() {
         (Some("ok"), Some("haas"), Some("Haas-ja-v1.0"))
     );
     assert_eq!(h["provider"], "speech.cpp-cpu");
-    assert_eq!(h["max_segment_sec"], 15.0);
+    assert_eq!(h["max_segment_sec"], 9.0);
     assert_eq!(h["name"], "TestMac.local");
     assert_eq!(h["id"].as_str().unwrap().len(), 32);
     assert!(!h["version"].as_str().unwrap().is_empty());
@@ -286,14 +286,14 @@ fn long_audio_is_split_at_pauses() {
     let s = start();
     let mut samples = Vec::new();
     for _ in 0..4 {
-        samples.extend(tone(9.0, 16000));
+        samples.extend(tone(6.0, 16000));
         samples.extend(vec![0.0f32; 16000]); // 1 秒の無音
     }
     let (status, body) = s.post_audio(&encode_wav(&samples, 16000), &[]);
     assert_eq!(status, 200, "{body}");
     let text = body["text"].as_str().unwrap();
     assert_eq!(text.matches("こんにちは").count(), 4, "{text}");
-    assert!(text.contains("10秒"), "{text}");
+    assert!(text.contains("7秒"), "{text}");
 }
 
 #[test]

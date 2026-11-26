@@ -4,7 +4,7 @@ resolver = "2"
 members = ["crates/onseiman-core", "crates/onseiman-speech", "crates/onseiman-server", "crates/onseiman-platform", "crates/onseiman-app"]
 
 [workspace.package]
-version = "2.0.6"
+version = "2.0.7"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/ogikosan/OnseiMan"

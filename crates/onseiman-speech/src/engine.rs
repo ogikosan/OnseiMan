@@ -21,7 +21,8 @@ use serde_json::{json, Value};
 
 use crate::setup;
 
-pub const MAX_SEGMENT_SEC: f64 = 15.0;
+// Haas-ja は 1 区間が長すぎると後半の小声が落ちやすいため 9 秒を上限にする
+pub const MAX_SEGMENT_SEC: f64 = 9.0;
 const START_TIMEOUT: Duration = Duration::from_secs(180);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// worker に 1 回で送る量（16kHz・16 ビットで 4 秒分）

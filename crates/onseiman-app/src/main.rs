@@ -45,7 +45,7 @@ fn default_root() -> PathBuf {
     }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
-use onseiman_core::audio::encode_wav;
+use onseiman_core::audio::{encode_wav, normalize_voice_dynamics};
 use onseiman_platform::audio_mute::AudioMuteGuard;
 use onseiman_platform::binding::parse_binding;
 use onseiman_platform::hotkey::{
@@ -487,7 +487,8 @@ fn start_hotkey_loop(
                         let lt_prog = Arc::clone(&live_text);
                         let ov_prog = Arc::clone(ov);
                         let rec_fn = Arc::new(move |seg: &[f32]| {
-                            let wav = encode_wav(seg, 16_000);
+                            let norm = normalize_voice_dynamics(seg, 16_000);
+                            let wav = encode_wav(&norm, 16_000);
                             ctx_live
                                 .transcriber
                                 .transcribe_wav(&cfg_live, &wav, &hw, &rd)
@@ -566,7 +567,8 @@ fn start_hotkey_loop(
             let use_ai = sess.use_ai;
             let live_opt = sess.live.take();
             thread::spawn(move || {
-                let wav = encode_wav(&all_samples, 16_000);
+                let norm_samples = normalize_voice_dynamics(&all_samples, 16_000);
+                let wav = encode_wav(&norm_samples, 16_000);
                 let ts = Local::now().format("%Y%m%d_%H%M%S").to_string();
                 let audio_name = format!("{ts}.wav");
                 let _ = std::fs::create_dir_all(&ctx_job.audio_dir);
@@ -776,9 +778,9 @@ fn start_hotkey_loop(
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // 長めの録音中（10 秒以上）なら裏でライブ分割して先行文字起こし
+                    // 長めの録音中（8.5 秒以上）なら裏でライブ分割して先行文字起こし
                     if let Some(sess) = active.as_mut() {
-                        if sess.live.is_some() && sess.handle.elapsed_sec() >= 10.0 {
+                        if sess.live.is_some() && sess.handle.elapsed_sec() >= 8.5 {
                             let chunk = sess.handle.drain_16k();
                             if !chunk.is_empty() {
                                 sess.submitted_samples.extend_from_slice(&chunk);

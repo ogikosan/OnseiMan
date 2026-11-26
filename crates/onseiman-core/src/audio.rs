@@ -63,6 +63,62 @@ pub fn decode_wav(data: &[u8], max_sec: Option<f64>) -> Result<(Vec<f32>, u32), 
     Ok((mono, spec.sample_rate))
 }
 
+/// 小さい声や語尾の音量差をならす軽量な動的ゲイン調整（`dynaudnorm` 相当）。
+///
+/// Haas-ja は「区間後半の小声・短い語尾が抜ける」癖があるため、150ms フレームごとに
+/// 発話区間だけ滑らかに持ち上げ、無音（背景ノイズ）は増幅しない。
+pub fn normalize_voice_dynamics(samples: &[f32], sample_rate: u32) -> Vec<f32> {
+    if samples.is_empty() || sample_rate == 0 {
+        return samples.to_vec();
+    }
+    let frame_len = ((sample_rate as usize) * 150 / 1000).max(160);
+    let n_frames = samples.len().div_ceil(frame_len);
+    let mut raw_gains = Vec::with_capacity(n_frames);
+
+    for f in 0..n_frames {
+        let start = f * frame_len;
+        let end = (start + frame_len).min(samples.len());
+        let chunk = &samples[start..end];
+        let mut peak = 0.0f32;
+        let mut sum_sq = 0.0f32;
+        for &s in chunk {
+            let a = s.abs();
+            if a > peak {
+                peak = a;
+            }
+            sum_sq += s * s;
+        }
+        let rms = (sum_sq / chunk.len() as f32).sqrt();
+        // 無音・背景ノイズのみのフレームは増幅しない
+        if peak < 0.008 && rms < 0.003 {
+            raw_gains.push(1.0f32);
+        } else {
+            let by_rms = if rms > 1e-5 { 0.14 / rms } else { 1.0 };
+            let by_peak = if peak > 1e-5 { 0.85 / peak } else { 1.0 };
+            raw_gains.push(by_rms.min(by_peak).clamp(1.0, 8.0));
+        }
+    }
+
+    // 前後 2 フレーム（計 5 フレーム）の移動平均でゲイン変化を滑らかにする
+    let mut smooth = vec![1.0f32; n_frames];
+    for (i, slot) in smooth.iter_mut().enumerate() {
+        let lo = i.saturating_sub(2);
+        let hi = (i + 2).min(n_frames - 1);
+        let sum: f32 = raw_gains[lo..=hi].iter().sum();
+        *slot = sum / ((hi - lo + 1) as f32);
+    }
+
+    let mut out = Vec::with_capacity(samples.len());
+    for (idx, &s) in samples.iter().enumerate() {
+        let f = (idx / frame_len).min(n_frames - 1);
+        let next_f = (f + 1).min(n_frames - 1);
+        let frac = (idx % frame_len) as f32 / frame_len as f32;
+        let g = smooth[f] + (smooth[next_f] - smooth[f]) * frac;
+        out.push((s * g).clamp(-0.98, 0.98));
+    }
+    out
+}
+
 /// モノラルの -1.0〜1.0 の並びを、16 ビットの WAV にする。
 pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     let spec = hound::WavSpec {
@@ -94,6 +150,19 @@ mod tests {
         let (back, sr) = decode_wav(&wav, None).unwrap();
         assert_eq!((back.len(), sr), (1600, 16000));
         assert!(s.iter().zip(&back).all(|(a, b)| (a - b).abs() < 1e-3));
+    }
+
+    #[test]
+    fn normalize_boosts_quiet_voice_without_boosting_silence() {
+        let mut samples = vec![0.0f32; 4800]; // 0.3s 無音
+        let quiet: Vec<f32> = (0..4800).map(|i| ((i as f32) * 0.1).sin() * 0.03).collect();
+        samples.extend_from_slice(&quiet);
+        let out = normalize_voice_dynamics(&samples, 16000);
+        assert_eq!(out.len(), samples.len());
+        let silence_peak = out[..2400].iter().fold(0.0f32, |a, &x| a.max(x.abs()));
+        let voice_peak = out[4800..].iter().fold(0.0f32, |a, &x| a.max(x.abs()));
+        assert!(silence_peak < 1e-5, "silence stayed silent");
+        assert!(voice_peak > 0.12, "quiet voice boosted: {voice_peak}");
     }
 
     #[test]
