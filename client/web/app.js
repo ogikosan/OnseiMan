@@ -426,6 +426,7 @@
     if (!h || !h.supported) { card.hidden = true; return; }
     card.hidden = false;
     hostLast = h;
+    $("#host-computer").textContent = h.computer ? `（${h.computer}）` : "";
     const job = h.job || {};
     const runningKind = h.running ? (h.running_engine === "haas" ? "gpu" : "cpu") : "";
     const kindNow = h.registered || runningKind;

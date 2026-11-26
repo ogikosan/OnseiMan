@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -239,6 +240,7 @@ class HostSetup:
         registered = self._registered_kind()
         return {
             "supported": True,
+            "computer": socket.gethostname(),            # 「このパソコン」がどれか（画面の題名に出す）
             "registered": registered,                    # ログインしたときに自動で動く版（"cpu" / "gpu" / ""）
             "running": health.get("status") == "ok",
             "running_engine": health.get("engine") or ("funasr" if health.get("status") == "ok" else ""),
