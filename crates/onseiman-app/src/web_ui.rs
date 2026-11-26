@@ -77,6 +77,7 @@ pub struct AppContext {
     pub history: Mutex<HistoryStore>,
     pub transcriber: Arc<HybridTranscriber>,
     pub pending_tab: Mutex<String>,
+    pub latest_update: Mutex<Option<Value>>,
 }
 
 impl AppContext {
@@ -102,6 +103,7 @@ impl AppContext {
             history: Mutex::new(history),
             transcriber,
             pending_tab: Mutex::new(String::new()),
+            latest_update: Mutex::new(None),
         }
     }
 
@@ -145,6 +147,7 @@ pub fn router(ctx: Arc<AppContext>) -> Router {
         .route("/api/learn_manual", post(post_learn_manual))
         .route("/api/dict-sync/now", post(post_dict_sync_now))
         .route("/api/update/check", post(post_update_check))
+        .route("/api/update/run", post(post_update_run))
         .route("/api/mic_test/start", post(post_ok_stub))
         .route("/", get(get_index))
         .route("/{*path}", get(get_static))
@@ -317,7 +320,7 @@ async fn get_state(State(ctx): State<Arc<AppContext>>) -> Response {
             "stats": stats,
             "candidates": [],
             "dismissed": [],
-            "update": Value::Null,
+            "update": ctx.latest_update.lock().ok().and_then(|g| g.clone()).unwrap_or(Value::Null),
             "version": env!("CARGO_PKG_VERSION"),
             "server_outdated": [],
         }),
@@ -1153,8 +1156,120 @@ async fn post_dict_sync_now() -> Response {
     )
 }
 
-async fn post_update_check() -> Response {
-    json_no_store(StatusCode::OK, json!({ "ok": true, "update": Value::Null }))
+fn parse_semver(s: &str) -> Vec<u32> {
+    s.trim()
+        .trim_start_matches(['v', 'V'])
+        .split('.')
+        .filter_map(|p| p.parse::<u32>().ok())
+        .collect()
+}
+
+fn check_github_release(is_dev: bool) -> Result<Option<Value>, String> {
+    let current = env!("CARGO_PKG_VERSION");
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(10))
+        .build();
+    let resp = agent
+        .get("https://api.github.com/repos/ogikosan/OnseiMan/releases/latest")
+        .set("User-Agent", &format!("OnseiMan/{current}"))
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| format!("更新の確認に失敗しました: {e}"))?;
+    let data: Value = resp
+        .into_json()
+        .map_err(|e| format!("更新情報の解析に失敗しました: {e}"))?;
+    let tag = data
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let latest = tag.trim_start_matches(['v', 'V']);
+    if latest.is_empty() || parse_semver(latest) <= parse_semver(current) {
+        return Ok(None);
+    }
+    let notes = data
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .chars()
+        .take(4000)
+        .collect::<String>();
+    Ok(Some(json!({
+        "current": current,
+        "version": latest,
+        "notes": notes,
+        "dev": is_dev,
+        "can_run": !is_dev && cfg!(windows),
+    })))
+}
+
+async fn post_update_check(State(ctx): State<Arc<AppContext>>) -> Response {
+    let is_dev = ctx.root_dir.join(".git").exists();
+    match tokio::task::spawn_blocking(move || check_github_release(is_dev)).await {
+        Ok(Ok(upd)) => {
+            if let Ok(mut g) = ctx.latest_update.lock() {
+                *g = upd.clone();
+            }
+            json_no_store(
+                StatusCode::OK,
+                json!({ "ok": true, "update": upd.unwrap_or(Value::Null) }),
+            )
+        }
+        Ok(Err(e)) => json_no_store(StatusCode::BAD_GATEWAY, json!({ "ok": false, "error": e })),
+        Err(e) => json_no_store(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "error": e.to_string() }),
+        ),
+    }
+}
+
+async fn post_update_run(State(ctx): State<Arc<AppContext>>) -> Response {
+    if ctx.root_dir.join(".git").exists() {
+        return json_no_store(
+            StatusCode::BAD_REQUEST,
+            json!({ "ok": false, "error": "開発フォルダでは自動更新できません" }),
+        );
+    }
+    #[cfg(windows)]
+    {
+        let root = ctx.root_dir.clone();
+        let script = format!(
+            "$root='{}'; $exe=Join-Path $root 'onseiman.exe'; \
+             $base='https://github.com/ogikosan/OnseiMan/releases/latest/download'; \
+             [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; \
+             Invoke-WebRequest -Uri \"$base/onseiman-windows-x64.exe\" -OutFile \"$exe.new\" -UseBasicParsing; \
+             Invoke-WebRequest -Uri \"$base/SHA256SUMS-windows-x64.txt\" -OutFile \"$exe.sha256\" -UseBasicParsing; \
+             $exp=(Select-String -Path \"$exe.sha256\" -Pattern '([0-9a-fA-F]{{64}})\\s+\\*?onseiman-windows-x64\\.exe').Matches[0].Groups[1].Value.ToLower(); \
+             $act=(Get-FileHash -LiteralPath \"$exe.new\" -Algorithm SHA256).Hash.ToLower(); \
+             Remove-Item \"$exe.sha256\" -Force -ErrorAction SilentlyContinue; \
+             if ($exp -and $exp -eq $act) {{ \
+               Stop-Process -Name onseiman -Force -ErrorAction SilentlyContinue; \
+               Start-Sleep -Milliseconds 600; \
+               Move-Item -LiteralPath \"$exe.new\" -Destination $exe -Force; \
+               Start-Process -FilePath $exe -WorkingDirectory $root; \
+             }} else {{ Remove-Item \"$exe.new\" -Force -ErrorAction SilentlyContinue }}",
+            root.display().to_string().replace('\'', "''")
+        );
+        let _ = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &script,
+            ])
+            .spawn();
+        json_no_store(StatusCode::OK, json!({ "ok": true }))
+    }
+    #[cfg(not(windows))]
+    {
+        json_no_store(
+            StatusCode::BAD_REQUEST,
+            json!({ "ok": false, "error": "自動更新は Windows のみ対応しています" }),
+        )
+    }
 }
 
 async fn post_ok_stub() -> Response {
