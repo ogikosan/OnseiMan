@@ -17,6 +17,14 @@ from shared.asr_engine import FunASRNanoEngine
 
 logger = logging.getLogger("onseiman.transcriber")
 
+
+def _as_float(v) -> Optional[float]:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if 1.0 <= f <= 120.0 else None
+
 _SPECIAL_TOKEN_RE = re.compile(r"(<\|[^|]+\|>|/sil\b)", re.IGNORECASE)
 
 
@@ -128,11 +136,20 @@ class HybridTranscriber:
                         "fingerprint": str(data.get("fingerprint") or "")[:64],
                         "name": str(data.get("name") or "")[:64],
                         "id": str(data.get("id") or "")[:64],
+                        # 聞き取りの仕組み（funasr = CPU 版、haas = GPU 版）と、一度に送ってよい長さ
+                        "engine": str(data.get("engine") or "funasr")[:16],
+                        "max_segment_sec": _as_float(data.get("max_segment_sec")),
                     }
                     return str(data.get("provider", "lan"))
         except Exception:
             pass
         return None
+
+    def preferred_server_info(self) -> dict:
+        """いま使っている認識役の情報（まだ分からなければ空）。"""
+        with self._state_lock:
+            pref = self._preferred
+        return dict(self.server_info.get(pref) or {}) if pref else {}
 
     def check_server_health(self) -> Optional[str]:
         """全サーバーを同時に確認し、生死を記録する。使うサーバーの URL（なければ None）を返す。"""

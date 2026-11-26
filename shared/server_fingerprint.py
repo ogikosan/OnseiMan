@@ -16,6 +16,7 @@ SERVER_FILES = (
     "server/requirements.txt",
     "shared/__init__.py",
     "shared/asr_engine.py",
+    "shared/haas_engine.py",
     "shared/audio.py",
     "shared/segmenter.py",
     "shared/dict_format.py",

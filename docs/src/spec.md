@@ -24,6 +24,25 @@
 - 使う順番: `preferred_server`（画面の「いつも使う」）→ 最後に成功したサーバー → ほかの登録順。
   失敗したサーバーは 60 秒後回し。初めて探したときは返事がいちばん速いものを「いつも使う」にする。
 
+## 認識役の 2 つの版（`server/app.py --engine`）
+
+| | CPU で聞き取る版（`funasr`、既定） | GPU で聞き取る版（`haas`） |
+|---|---|---|
+| 聞き取り | Fun-ASR Nano int8（sherpa-onnx） | Haas-ja-v1.0（NeMo, bf16。`shared/haas_engine.py`） |
+| 動く所 | Mac・Windows・CPU | Linux と NVIDIA の GPU（Windows では WSL2 の `onseiman-gpu`） |
+| 準備 | `server_windows.bat` / `server_mac.command` | `server_gpu.bat`（`tools/setup_gpu_server.ps1` → `server/wsl/setup_haas.sh`） |
+| 一度に送る長さ | 下の表のとおり（ヒントで短くなる） | 25 秒（`/health` の `max_segment_sec`） |
+| 1 回（4070 Ti 実測） | 0.3〜0.6 秒（Mac の CPU） | 0.04〜0.06 秒。GPU の記憶 約 1.9GB |
+
+- GPU 版は Linux の中で `127.0.0.1:8766` に立ち、Windows 側の中継 `server/relay.py`（`.venv_relay`、標準の部品だけ）が
+  `0.0.0.0:8765` で受けて渡す（WSL2 の中のポートはほかのパソコンから見えないため）。起動は
+  `server/start_server_gpu_hidden.vbs`（HKCU の Run `OnseiManServer`）。やめるのは `server_gpu_remove.bat`。
+- GPU 版の読み込みでは、読み込みの直後に `torch.cuda.empty_cache()` して一時的な記憶（約 1.9GB）を返す。
+  CUDA グラフ（速くする仕組み）は残す。聞き取りのたびに返すと CUDA グラフとぶつかって落ちる（実測）。
+- Haas は英字をすべて小文字で書くので、`fix_acronyms` でよく使う略語を大文字にする。優先語は `haas_asr.Vocabulary` に渡す。
+- 部品の版は固定（Haas-ASR のコミット、モデルのリビジョン、uv の版と SHA-256。`setup_haas.sh`）。
+- アプリは、使っている認識役が `engine: haas` なら区切りの上限をその `max_segment_sec` にする（`_max_segment_sec`）。
+
 ## 量の上限（重要）
 
 Fun-ASR Nano は一度に扱える量（音声 + 辞書のヒント + 出力）に上限があり、超えると文が欠けるか空になる。実測：

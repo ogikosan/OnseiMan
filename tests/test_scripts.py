@@ -56,6 +56,36 @@ class TestBatchFiles(unittest.TestCase):
         self.assertTrue((ROOT / "server" / "start_server.bat").exists())
         self.assertIn("--port 8765", text)
 
+    def test_gpu_server_launcher(self) -> None:
+        # GPU で聞き取る版を、窓を出さずに動かす仕組み（英数字だけ・CRLF）
+        raw = (ROOT / "server" / "start_server_gpu_hidden.vbs").read_bytes()
+        self.assertTrue(all(b < 127 for b in raw), "英数字以外の文字があります")
+        self.assertEqual(raw.count(b"\r\n"), raw.count(b"\n"), "改行が CRLF ではありません")
+        text = raw.decode("ascii")
+        self.assertIn("onseiman-gpu-ready.txt", text)  # 準備前は server_gpu.bat で準備から
+        self.assertIn("server_gpu.bat", text)
+        self.assertIn("server/wsl/run_haas.sh", text)
+        self.assertIn("relay.py", text)
+        self.assertTrue((ROOT / "server" / "wsl" / "run_haas.sh").exists())
+        setup = (ROOT / "tools" / "setup_gpu_server.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("onseiman-gpu-ready.txt", setup)
+        self.assertIn("server/wsl/setup_haas.sh", setup)
+        self.assertIn("-Target relay", setup)
+        # 中で使う道具は、版と確認用の値を固定する
+        sh = (ROOT / "server" / "wsl" / "setup_haas.sh").read_text(encoding="utf-8")
+        self.assertRegex(sh, r"UV_SHA256=[0-9a-f]{64}")
+        self.assertRegex(sh, r"HAAS_COMMIT=[0-9a-f]{40}")
+        self.assertRegex(sh, r"MODEL_REVISION=[0-9a-f]{40}")
+        # 認識役は Linux の中では 8766、外からは中継の 8765
+        self.assertIn("--port 8766", (ROOT / "server" / "wsl" / "run_haas.sh").read_text(encoding="utf-8"))
+
+    def test_update_keeps_gpu_server(self) -> None:
+        # 更新のときに、GPU で聞き取る版の Linux（約 10GB）を控えにコピーしたり、上書きしたりしない
+        text = (ROOT / "tools" / "update.ps1").read_text(encoding="utf-8-sig")
+        keep = re.search(r"\$Keep = @\(([^)]*)\)", text).group(1)
+        for name in ('"wsl"', '".venv_relay"', '"server_data"', '"config.json"'):
+            self.assertIn(name, keep)
+
     def test_ps1_files_have_bom_and_crlf(self) -> None:
         ps = _files("*.ps1")
         self.assertGreaterEqual(len(ps), 2)
@@ -104,7 +134,9 @@ class TestBatchFiles(unittest.TestCase):
 class TestMacFiles(unittest.TestCase):
     """Mac で動かすファイル（.command / .sh）。Mac は CRLF だと `bash\\r` を探して失敗する。"""
 
-    MAC_FILES = ["server_mac.command", "server_mac_remove.command", "server/setup_macos.sh", "server/start_server.sh"]
+    # Linux（Mac・WSL2）で動かすもの。改行は LF、git に実行の印
+    MAC_FILES = ["server_mac.command", "server_mac_remove.command", "server/setup_macos.sh", "server/start_server.sh",
+                 "server/wsl/setup_haas.sh", "server/wsl/run_haas.sh"]
 
     def test_mac_files_are_lf_with_shebang(self) -> None:
         for rel in self.MAC_FILES:
@@ -161,9 +193,14 @@ class TestPackages(unittest.TestCase):
         names = self._names("Windows")
         for need in ("install_client.bat", "start_client.bat", "update.bat", "server_windows.bat",
                      "client/main.py", "server/app.py", "server/start_server.bat", "tools/install.ps1",
+                     "server_gpu.bat", "server_gpu_remove.bat", "tools/setup_gpu_server.ps1",
+                     "tools/remove_gpu_server.ps1", "server/start_server_gpu_hidden.vbs", "server/relay.py",
+                     "server/wsl/setup_haas.sh", "server/wsl/run_haas.sh", "shared/haas_engine.py",
                      "はじめに.md", "AGENTS.md", "変更点.md", "LICENSE"):
             self.assertIn(need, names)
-        self.assertFalse([n for n in names if n.endswith((".command", ".sh"))])
+        # Mac 用は入れない。.sh は GPU で聞き取る版（WSL2 の中で動く）の分だけ
+        self.assertFalse([n for n in names if n.endswith(".command")
+                          or (n.endswith(".sh") and not n.startswith("server/wsl/"))])
 
     def test_mac_package_has_only_server(self) -> None:
         names = self._names("Mac")

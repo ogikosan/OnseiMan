@@ -3,7 +3,8 @@
 #   パソコン全体には何も入れない。管理者の権限もいらない。
 # - 用意には uv（https://github.com/astral-sh/uv）を使う。決まった版を、確認用の値（SHA-256）を確かめてから使う。
 # -Starting: start_client.bat / start_server.bat から、起動の前に呼ばれたとき（終わったら、そのまま起動する）
-param([ValidateSet("client", "server")][string]$Target = "client", [switch]$Starting)
+# -Target relay: GPU で聞き取る版の中継（server\relay.py）用の Python だけを用意する（部品は入れない）
+param([ValidateSet("client", "server", "relay")][string]$Target = "client", [switch]$Starting)
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -15,6 +16,9 @@ $PythonVersion = "3.11"
 if ($Target -eq "server") {
     $VenvName = ".venv_server"
     $Req = "server\requirements.txt"
+} elseif ($Target -eq "relay") {
+    $VenvName = ".venv_relay"
+    $Req = ""
 } else {
     $VenvName = ".venv"
     $Req = "client\requirements.txt"
@@ -93,6 +97,14 @@ if (-not (Test-Path $Py)) {
         & $exe @rest -m venv $Venv
         if ($LASTEXITCODE -ne 0) { throw "Python の環境を作れませんでした" }
     }
+}
+
+if ($Target -eq "relay") {
+    # 中継は Python の標準の部品だけで動く
+    & $Py -c "import asyncio"
+    if ($LASTEXITCODE -ne 0) { Write-Host "用意した Python が動きませんでした。"; exit 1 }
+    Set-Content -Path $Ready -Value "ok" -Encoding ASCII
+    exit 0
 }
 
 Write-Host "部品を入れています..."

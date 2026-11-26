@@ -1,4 +1,9 @@
-"""OnseiMan LAN 音声認識 API サーバー (Fun-ASR Nano Multilingual / sherpa-onnx)."""
+"""OnseiMan LAN 音声認識 API サーバー。
+
+聞き取りの仕組みは 2 つから選ぶ（--engine）:
+- funasr: CPU で聞き取る版（Fun-ASR Nano / sherpa-onnx）。Mac・Windows・ふつうの PC
+- haas:   GPU で聞き取る版（Haas-ja / NVIDIA の GPU と Linux。Windows では WSL2 の中。server_gpu.bat が用意する）
+"""
 from __future__ import annotations
 
 import argparse
@@ -49,7 +54,6 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from shared.asr_engine import FunASRNanoEngine
 from shared.audio import decode_wav_bytes
 from shared.dict_format import NAME_RE, clean_data
 from shared.segmenter import join_texts, split_on_pauses
@@ -63,7 +67,8 @@ logger = logging.getLogger("onseiman.server")
 
 # 説明用のページ（/docs など）は出さない
 app = FastAPI(title="OnseiMan ASR Server", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
-engine: Optional[FunASRNanoEngine] = None
+engine = None  # FunASRNanoEngine か HaasEngine（main で決める）
+ENGINE_KIND = "funasr"
 
 
 @app.get("/health")
@@ -72,8 +77,11 @@ def health() -> dict:
         return {"status": "initializing"}
     return {
         "status": "ok",
-        "model": engine.model_dir.name,
+        "model": engine.model_name if ENGINE_KIND == "haas" else engine.model_dir.name,
         "provider": engine.active_provider,
+        "engine": ENGINE_KIND,
+        # つなぐ側が、一度に送る長さを決めるのに使う
+        "max_segment_sec": segment_max_sec(""),
         # さがす側が「同じパソコンが 2 つの行き方で見つかった」と分かるようにする
         "id": SERVER_ID,
         "name": SERVER_NAME,
@@ -111,6 +119,10 @@ CONVERT_TIMEOUT_SEC = 15.0
 def segment_max_sec(hotwords: str) -> float:
     """一度に認識に渡す長さ。認識データは一度に扱える量に上限があり（約 30 秒を超えると結果が空になる）、
     優先語が多いほど短くなる。アプリ（client/main.py の _max_segment_sec）と同じ決め方。"""
+    if ENGINE_KIND == "haas":
+        from shared.haas_engine import MAX_SEGMENT_SEC
+
+        return MAX_SEGMENT_SEC  # 優先語の数で短くならない
     n = len([h for h in hotwords.split(",") if h.strip()])
     return max(6.0, min(18.0, 25.0 - 0.4 * n))
 
@@ -306,7 +318,7 @@ async def put_dict(name: str, request: Request) -> dict:
 
 
 def main() -> None:
-    global engine
+    global engine, ENGINE_KIND
 
     parser = argparse.ArgumentParser(description="OnseiMan LAN 音声認識サーバー")
     parser.add_argument("--host", default=os.environ.get("ONSEIMAN_HOST", "0.0.0.0"))
@@ -325,16 +337,30 @@ def main() -> None:
         help="推論プロバイダ (GPU PC では cuda、未対応時は自動で cpu にフォールバック)",
     )
     parser.add_argument("--threads", type=int, default=int(os.environ.get("ONSEIMAN_THREADS", "4")))
+    parser.add_argument(
+        "--engine",
+        default=os.environ.get("ONSEIMAN_ENGINE", "funasr"),
+        choices=["funasr", "haas"],
+        help="funasr = CPU で聞き取る版、haas = GPU で聞き取る版（NVIDIA の GPU と Linux が要る）",
+    )
     args = parser.parse_args()
 
-    engine = FunASRNanoEngine(
-        model_dir=args.model_dir,
-        provider=args.provider,
-        num_threads=args.threads,
-    )
+    ENGINE_KIND = args.engine
+    if ENGINE_KIND == "haas":
+        from shared.haas_engine import HaasEngine
+
+        engine = HaasEngine()
+    else:
+        from shared.asr_engine import FunASRNanoEngine
+
+        engine = FunASRNanoEngine(
+            model_dir=args.model_dir,
+            provider=args.provider,
+            num_threads=args.threads,
+        )
     engine.load()
 
-    logger.info("サーバー起動: http://%s:%d (provider=%s)", args.host, args.port, engine.active_provider)
+    logger.info("サーバー起動: http://%s:%d (engine=%s, provider=%s)", args.host, args.port, ENGINE_KIND, engine.active_provider)
     print()
     print("OnseiMan のサーバーが動いています。この窓は開いたままにしてください。")
     print("つなぐ側は、設定の「別のパソコン」→「サーバーをさがす」で自動で見つかります。")

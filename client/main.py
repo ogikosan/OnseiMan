@@ -427,6 +427,15 @@ class OnseiManApp:
         実測（Fun-ASR Nano）: 18 秒は優先語 20 語まで、15 秒は 28 語まで、12 秒は 36 語まで欠けない。
         → 「秒数 + 優先語の数 × 0.4 ≤ 25」を目安にする。
         """
+        # GPU で聞き取る版（Haas-ja）は、優先語が多くても長い話を聞き取れる。認識役が教えてくれる長さを使う
+        info = {}
+        try:
+            if self.config.recognition_place != "local":
+                info = self.transcriber.preferred_server_info()
+        except Exception:
+            info = {}
+        if info.get("engine") == "haas" and info.get("max_segment_sec"):
+            return max(6.0, float(info["max_segment_sec"]))
         try:
             n = len(self.dictionary.active_hotwords())
         except Exception:

@@ -325,6 +325,10 @@
                     <li><b>Windows のとき</b>：<code>server_windows.bat</code> をダブルクリック。
                       はじめては、そのパソコンに必要なものとデータ（約840MB）をダウンロードするので、数分〜10分かかります。「ファイアウォール」の確認が出たら「許可」。
                       <b>使うあいだは、出てきた黒い窓を閉じないでください。</b></li>
+                    <li><b>NVIDIA の GPU（RTX など）がある Windows のとき</b>：<code>server_windows.bat</code> のかわりに
+                      <code>server_gpu.bat</code> をダブルクリックすると、<b>GPU で聞き取る版</b>（聞き間違いがずっと少ない）になります。
+                      WSL2 が要ります。はじめては 10〜20分かかり、GPU の記憶を約 2GB、置き場所を約 10GB 使います。
+                      一度済めば、ログインするたびに窓を出さずに自動で動きます。やめるときは <code>server_gpu_remove.bat</code>。</li>
                     <li><b>Mac のとき</b>：<code>server_mac.command</code> をダブルクリック（Python は要りません）。
                       データのダウンロードを含めて 10分ほどかかります。「開けません」と出たら、右クリック→「開く」。
                       一度済めば、Mac を起動するたびに自動で動きます。やめるときは <code>server_mac_remove.command</code>。</li>

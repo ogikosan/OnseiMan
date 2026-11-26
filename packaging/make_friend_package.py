@@ -25,12 +25,16 @@ PACKAGES = {
     "Windows": {
         "dirs": ["client", "shared", "server", "tools"],
         "skip_suffix": {".sh"},
+        # GPU で聞き取る版は Windows の中の Linux（WSL2）で動くので、その分の .sh は入れる
+        "keep_prefix": ("server/wsl/",),
         "files": ["install_client.bat", "start_client.bat", "update.bat", "server_windows.bat",
+                  "server_gpu.bat", "server_gpu_remove.bat",
                   "packaging/friend/はじめに.md", "packaging/friend/AGENTS.md"],
     },
     "Mac": {
         "dirs": ["shared"],
         "skip_suffix": set(),
+        "keep_prefix": (),
         "files": ["client/version.py", "server/app.py", "server/requirements.txt", "server/setup_macos.sh", "server/start_server.sh",
                   "server_mac.command", "server_mac_remove.command", "packaging/mac/はじめに.md"],
     },
@@ -74,9 +78,10 @@ def collect(kind: str) -> list:
     files = []
     for d in spec["dirs"]:
         for p in sorted(x for x in (ROOT / d).rglob("*") if x in tracked):
-            if (p.is_file() and not (SKIP_PARTS & set(p.parts))
-                    and p.suffix not in SKIP_SUFFIX and p.suffix not in spec["skip_suffix"]):
-                files.append((p, p.relative_to(ROOT).as_posix()))
+            rel = p.relative_to(ROOT).as_posix()
+            skip = p.suffix in spec["skip_suffix"] and not rel.startswith(spec["keep_prefix"])
+            if p.is_file() and not (SKIP_PARTS & set(p.parts)) and p.suffix not in SKIP_SUFFIX and not skip:
+                files.append((p, rel))
     for rel in spec["files"] + COMMON_FILES:
         files.append((ROOT / rel, _arcname(rel)))
     return files
