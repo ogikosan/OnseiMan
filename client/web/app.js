@@ -1191,12 +1191,65 @@
   // ---- AI で整える ----
   let llmProviders = {};
   let llmKeySet = {};
+  let chatgptPollTimer = null;
+  async function refreshChatgptStatus() {
+    try {
+      const st = await api("/api/chatgpt/status");
+      const label = $("#chatgpt-status");
+      const btnIn = $("#btn-chatgpt-signin");
+      const btnOut = $("#btn-chatgpt-signout");
+      if (st.signing_in) {
+        label.textContent = "ブラウザでサインインを待っています…";
+        btnIn.disabled = true;
+        btnOut.hidden = true;
+      } else if (st.signed_in) {
+        label.textContent = st.email
+          ? `サインイン済み: ${st.email}${st.plan_usage ? "（プラン利用）" : ""}`
+          : "サインイン済み";
+        btnIn.disabled = false;
+        btnIn.textContent = "サインインし直す";
+        btnOut.hidden = false;
+        if (chatgptPollTimer) { clearInterval(chatgptPollTimer); chatgptPollTimer = null; }
+      } else {
+        label.textContent = st.error ? `エラー: ${st.error}` : "未サインイン";
+        btnIn.disabled = false;
+        btnIn.textContent = "ChatGPT でサインイン";
+        btnOut.hidden = true;
+        if (chatgptPollTimer && !st.signing_in) { clearInterval(chatgptPollTimer); chatgptPollTimer = null; }
+      }
+    } catch (_) {}
+  }
+  $("#btn-chatgpt-signin").addEventListener("click", async () => {
+    try {
+      await api("/api/chatgpt/signin", {});
+      toast("ブラウザで ChatGPT のサインインを完了してください");
+      refreshChatgptStatus();
+      if (chatgptPollTimer) clearInterval(chatgptPollTimer);
+      chatgptPollTimer = setInterval(refreshChatgptStatus, 1500);
+    } catch (e) { toast(e.message, "err"); }
+  });
+  $("#btn-chatgpt-signout").addEventListener("click", async () => {
+    try {
+      await api("/api/chatgpt/signout", {});
+      toast("ChatGPT からサインアウトしました");
+      refreshChatgptStatus();
+    } catch (e) { toast(e.message, "err"); }
+  });
+
   function renderLlmFields() {
     const p = $("#set-llm-provider").value;
     const info = llmProviders[p] || {};
     const own = p === "ollama";
+    const isChatgpt = p === "chatgpt";
     $("#llm-fields").hidden = !p;
+    $("#llm-chatgpt-row").hidden = !isChatgpt;
+    $("#llm-chatgpt-note").hidden = !isChatgpt;
+    $("#llm-key-row").hidden = isChatgpt;
+    $("#llm-key-note").hidden = isChatgpt;
     $("#llm-url-row").hidden = !own;
+    if (isChatgpt) {
+      refreshChatgptStatus();
+    }
     const has = !!llmKeySet[p];
     $("#set-llm-key").placeholder = has ? "保存してあります（変えるときだけ貼り付け）" : (own ? "いらなければ空のまま" : "ここに貼り付け");
     $("#btn-llm-key-clear").hidden = !has;
@@ -1207,7 +1260,7 @@
       const a = document.createElement("a");
       a.href = info.key_url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "ここ";
       note.append(a, " で作れます（使った分だけ料金がかかります）。キーは、このパソコンでしか読めない形で保存します");
-    } else {
+    } else if (own) {
       note.textContent = "Ollama か、OpenAI と同じ形の API（…/v1）のアドレスを入れます。キーは要るときだけ";
     }
     $("#set-llm-model").placeholder = info.model || (own ? "空なら、入っている最初のモデル" : "");

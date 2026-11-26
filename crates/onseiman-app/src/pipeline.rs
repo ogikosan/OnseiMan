@@ -20,6 +20,17 @@ pub fn format_utterance(
     dict: &CustomDictionary,
     force_llm: bool,
 ) -> FormatOutput {
+    format_utterance_with_root(raw, cfg, dict, force_llm, None)
+}
+
+/// 1 発話のテキストを設定と辞書に従って整形する（ChatGPT サインイン利用時は `root_dir` を渡す）。
+pub fn format_utterance_with_root(
+    raw: &str,
+    cfg: &ClientConfig,
+    dict: &CustomDictionary,
+    force_llm: bool,
+    root_dir: Option<&std::path::Path>,
+) -> FormatOutput {
     let mut text = raw.trim().to_string();
     if text.is_empty() {
         return FormatOutput {
@@ -54,31 +65,46 @@ pub fn format_utterance(
     let mut llm_error = None;
     let want_llm = (force_llm || cfg.llm_auto_refine) && !cfg.llm_provider.trim().is_empty();
     if want_llm && !text.trim().is_empty() {
-        let stored = cfg
-            .llm_api_keys
-            .get(&cfg.llm_provider)
-            .cloned()
-            .unwrap_or_default();
-        let api_key = secret_store::unprotect(&stored);
-        match LlmRefiner::new(
-            &cfg.llm_provider,
-            &cfg.llm_model,
-            &api_key,
-            &cfg.llm_base_url,
-            20.0,
-        ) {
-            Ok(refiner) => match refiner.refine_dictation(&text) {
-                Ok(res) if !res.text.trim().is_empty() => {
-                    text = res.text;
-                    used_llm = true;
+        if cfg.llm_provider == "chatgpt" {
+            if let Some(root) = root_dir {
+                match crate::chatgpt_auth::refine_dictation(root, &cfg.llm_model, &text) {
+                    Ok(res) if !res.text.trim().is_empty() => {
+                        text = res.text;
+                        used_llm = true;
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        llm_error = Some(e);
+                    }
                 }
-                Ok(_) => {}
+            }
+        } else {
+            let stored = cfg
+                .llm_api_keys
+                .get(&cfg.llm_provider)
+                .cloned()
+                .unwrap_or_default();
+            let api_key = secret_store::unprotect(&stored);
+            match LlmRefiner::new(
+                &cfg.llm_provider,
+                &cfg.llm_model,
+                &api_key,
+                &cfg.llm_base_url,
+                20.0,
+            ) {
+                Ok(refiner) => match refiner.refine_dictation(&text) {
+                    Ok(res) if !res.text.trim().is_empty() => {
+                        text = res.text;
+                        used_llm = true;
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        llm_error = Some(e);
+                    }
+                },
                 Err(e) => {
                     llm_error = Some(e);
                 }
-            },
-            Err(e) => {
-                llm_error = Some(e);
             }
         }
     }

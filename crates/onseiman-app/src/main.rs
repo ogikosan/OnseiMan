@@ -62,8 +62,9 @@ use onseiman_platform::watchdog::HookWatchdog;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 
+use onseiman_app::chatgpt_auth;
 use onseiman_app::live_session::{LiveTranscription, SegmentRecognition};
-use onseiman_app::pipeline::format_utterance;
+use onseiman_app::pipeline::format_utterance_with_root;
 use onseiman_app::web_ui::{
     open_browser, open_or_focus_browser, retranscribe_latest, router, sync_hotkey_from_config,
     AppContext,
@@ -460,6 +461,10 @@ fn start_hotkey_loop(
 
             match start_recording_ex(mic_name, cfg.keep_mic_open, Some(on_level)) {
                 Ok(handle) => {
+                    if cfg.llm_provider == "chatgpt" && (use_ai || cfg.llm_auto_refine) {
+                        let root_ref = ctx.root_dir.clone();
+                        thread::spawn(move || chatgpt_auth::refresh_if_needed(&root_ref));
+                    }
                     if show_ov {
                         ov.position_for(&overlay_place);
                         ov.set_state(OverlayState::Recording {
@@ -596,7 +601,13 @@ fn start_hotkey_loop(
                 let mut showed_done = false;
                 match rec_res {
                     Ok((raw_text, backend, elapsed_ms)) => {
-                        let formatted = format_utterance(&raw_text, &cfg, &dict, use_ai);
+                        let formatted = format_utterance_with_root(
+                            &raw_text,
+                            &cfg,
+                            &dict,
+                            use_ai,
+                            Some(&ctx_job.root_dir),
+                        );
                         if !formatted.text.is_empty() {
                             let pr = paste_text(
                                 &formatted.text,

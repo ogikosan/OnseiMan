@@ -60,8 +60,9 @@ fn write_json_obj(path: &FsPath, obj: &Map<String, Value>) -> Result<(), String>
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
+use crate::chatgpt_auth;
 use crate::discovery::find_servers;
-use crate::pipeline::format_utterance;
+use crate::pipeline::format_utterance_with_root;
 use crate::transcriber::HybridTranscriber;
 
 pub const DEFAULT_MIC_LABEL: &str = "既定のマイク";
@@ -130,6 +131,8 @@ pub struct AppContext {
     pub pending_tab: Mutex<String>,
     pub latest_update: Mutex<Option<Value>>,
     pub mic_test: Mutex<MicTestState>,
+    pub chatgpt_signing_in: Mutex<bool>,
+    pub chatgpt_error: Mutex<String>,
 }
 
 impl AppContext {
@@ -159,6 +162,8 @@ impl AppContext {
             pending_tab: Mutex::new(String::new()),
             latest_update: Mutex::new(None),
             mic_test: Mutex::new(MicTestState::default()),
+            chatgpt_signing_in: Mutex::new(false),
+            chatgpt_error: Mutex::new(String::new()),
         }
     }
 
@@ -210,6 +215,9 @@ pub fn router(ctx: Arc<AppContext>) -> Router {
         .route("/api/update/run", post(post_update_run))
         .route("/api/theme", post(post_theme))
         .route("/api/mic_test/start", post(post_mic_test_start))
+        .route("/api/chatgpt/status", get(get_chatgpt_status))
+        .route("/api/chatgpt/signin", post(post_chatgpt_signin))
+        .route("/api/chatgpt/signout", post(post_chatgpt_signout))
         .route("/", get(get_index))
         .route("/{*path}", get(get_static))
         .layer(DefaultBodyLimit::max(2_000_000))
@@ -1024,7 +1032,7 @@ async fn post_settings(State(ctx): State<Arc<AppContext>>, Json(body): Json<Valu
     if !llm_provider.is_empty()
         && !matches!(
             llm_provider.as_str(),
-            "openai" | "anthropic" | "gemini" | "ollama"
+            "chatgpt" | "openai" | "anthropic" | "gemini" | "ollama"
         )
     {
         return json_no_store(
@@ -1285,7 +1293,102 @@ fn refiner_from_body(ctx: &AppContext, body: &Value) -> Result<LlmRefiner, Strin
     LlmRefiner::new(&provider, model, &key, base_url, 20.0)
 }
 
+async fn get_chatgpt_status(State(ctx): State<Arc<AppContext>>) -> Response {
+    let st = chatgpt_auth::status(&ctx.root_dir);
+    let signing_in = *ctx.chatgpt_signing_in.lock().unwrap();
+    let error = ctx.chatgpt_error.lock().unwrap().clone();
+    json_no_store(
+        StatusCode::OK,
+        json!({
+            "signed_in": st.signed_in,
+            "email": st.email,
+            "plan_usage": st.plan_usage,
+            "signing_in": signing_in,
+            "error": error,
+        }),
+    )
+}
+
+async fn post_chatgpt_signin(State(ctx): State<Arc<AppContext>>) -> Response {
+    {
+        let mut flag = ctx.chatgpt_signing_in.lock().unwrap();
+        if *flag {
+            return json_no_store(StatusCode::OK, json!({ "ok": true }));
+        }
+        *flag = true;
+    }
+    if let Ok(mut err) = ctx.chatgpt_error.lock() {
+        err.clear();
+    }
+    let ctx_bg = Arc::clone(&ctx);
+    std::thread::spawn(move || {
+        let res = chatgpt_auth::sign_in(&ctx_bg.root_dir);
+        if let Err(e) = res {
+            if let Ok(mut err) = ctx_bg.chatgpt_error.lock() {
+                *err = e;
+            }
+        }
+        if let Ok(mut flag) = ctx_bg.chatgpt_signing_in.lock() {
+            *flag = false;
+        }
+    });
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
+}
+
+async fn post_chatgpt_signout(State(ctx): State<Arc<AppContext>>) -> Response {
+    let root = ctx.root_dir.clone();
+    match tokio::task::spawn_blocking(move || chatgpt_auth::sign_out(&root)).await {
+        Ok(Ok(())) => {
+            if let Ok(mut err) = ctx.chatgpt_error.lock() {
+                err.clear();
+            }
+            json_no_store(StatusCode::OK, json!({ "ok": true }))
+        }
+        Ok(Err(e)) => json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e })),
+        Err(e) => json_no_store(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "error": e.to_string() }),
+        ),
+    }
+}
+
 async fn post_llm_test(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>) -> Response {
+    let provider = body.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+    if provider == "chatgpt" {
+        let root = ctx.root_dir.clone();
+        let model = body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        return match tokio::task::spawn_blocking(move || {
+            chatgpt_auth::refine_dictation(&root, &model, TEST_TEXT)
+        })
+        .await
+        {
+            Ok(Ok(res)) if !res.text.is_empty() => json_no_store(
+                StatusCode::OK,
+                json!({
+                    "ok": true,
+                    "before": TEST_TEXT,
+                    "text": res.text,
+                    "model": res.model,
+                    "ms": res.elapsed_ms.round() as i64,
+                }),
+            ),
+            Ok(Ok(_)) => json_no_store(
+                StatusCode::BAD_REQUEST,
+                json!({ "ok": false, "error": "ChatGPT から返事がありませんでした" }),
+            ),
+            Ok(Err(e)) => {
+                json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e }))
+            }
+            Err(e) => json_no_store(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "ok": false, "error": e.to_string() }),
+            ),
+        };
+    }
     let refiner = match refiner_from_body(&ctx, &body) {
         Ok(r) => r,
         Err(e) => {
@@ -1312,6 +1415,22 @@ async fn post_llm_test(State(ctx): State<Arc<AppContext>>, Json(body): Json<Valu
 }
 
 async fn post_llm_models(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>) -> Response {
+    let provider = body.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+    if provider == "chatgpt" {
+        let root = ctx.root_dir.clone();
+        return match tokio::task::spawn_blocking(move || chatgpt_auth::list_models(&root)).await {
+            Ok(Ok(models)) => {
+                json_no_store(StatusCode::OK, json!({ "ok": true, "models": models }))
+            }
+            Ok(Err(e)) => {
+                json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e }))
+            }
+            Err(e) => json_no_store(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "ok": false, "error": e.to_string() }),
+            ),
+        };
+    }
     let refiner = match refiner_from_body(&ctx, &body) {
         Ok(r) => r,
         Err(e) => {
@@ -1345,7 +1464,7 @@ fn retranscribe_audio_file(ctx: &Arc<AppContext>, audio_name: &str) -> Result<St
     let res = ctx
         .transcriber
         .transcribe_wav(&cfg, &wav, &hotwords, &readings)?;
-    let formatted = format_utterance(&res.text, &cfg, &dict, false);
+    let formatted = format_utterance_with_root(&res.text, &cfg, &dict, false, Some(&ctx.root_dir));
     if !formatted.text.is_empty() {
         let _ = clipboard::set_text(&formatted.text);
         let dur_sec = (wav.len().saturating_sub(44) as f64) / (16_000.0 * 2.0);

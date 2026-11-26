@@ -471,13 +471,21 @@
                 <label class="lbl">頼む AI</label>
                 <select id="set-llm-provider" class="inp">
                   <option value="">使わない</option>
-                  <option value="openai">GPT（OpenAI）</option>
+                  <option value="chatgpt">ChatGPT（Plus / Pro サブスクでサインイン）</option>
+                  <option value="openai">GPT（OpenAI API キー）</option>
                   <option value="anthropic">Claude（Anthropic）</option>
                   <option value="gemini">Gemini（Google）</option>
                   <option value="ollama">自分で動かす AI（Ollama など）</option>
                 </select>
               </div>
               <div id="llm-fields" class="sub-fields" hidden>
+                <div class="form-row" id="llm-chatgpt-row" hidden>
+                  <label class="lbl">ChatGPT</label>
+                  <span id="chatgpt-status" class="muted" style="flex:1">未サインイン</span>
+                  <button type="button" class="btn primary sm" id="btn-chatgpt-signin" style="flex:none">ChatGPT でサインイン</button>
+                  <button type="button" class="btn sm" id="btn-chatgpt-signout" style="flex:none" hidden>サインアウト</button>
+                </div>
+                <p class="muted" id="llm-chatgpt-note" hidden>ブラウザで ChatGPT にサインインして Plus / Pro プランで利用します（API 課金不要）。トークンはこのパソコン専用に暗号化保存します。</p>
                 <div class="form-row" id="llm-key-row">
                   <label class="lbl">API キー</label>
                   <input type="password" id="set-llm-key" class="inp" autocomplete="off" spellcheck="false">
