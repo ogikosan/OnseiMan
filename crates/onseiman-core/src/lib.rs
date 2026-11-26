@@ -2,10 +2,14 @@
 
 pub mod acronyms;
 pub mod audio;
+pub mod config;
 pub mod dict_format;
+pub mod dict_sync;
 pub mod dictionary;
 pub mod fillers;
+pub mod history;
 pub mod kana;
+pub mod llm_refine;
 pub mod normalize;
 pub mod segmenter;
 pub mod voice_commands;

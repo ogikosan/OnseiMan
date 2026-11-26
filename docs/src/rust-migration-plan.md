@@ -135,5 +135,6 @@
   - `normalize.rs`（漢数字→数字・全角英数→半角・カタカナ略語 47 語・慣用表現保護）
   - `voice_commands.rs`（改行・記号コマンド・「今のなし」判定）
   - `dictionary.rs`（`CustomDictionary`：優先語 40 語上限・置き換え・定型文・読み抽出・文末「。」削り）
-- Python 版との突き合わせ: `tests/golden/stage2.json` の全ケースで Python 版と完全一致（`cargo test --workspace` 33 件通過、`clippy -D warnings` 注意なし）。
-- 段階 2 の残り: `config.rs`（`config.json` 読み書き）・`history.rs`（`history.jsonl` と使用量集計）・`dict_sync.rs`（三方向マージ）・`llm_refine.rs`（AI 整形）。
+- Python 版との突き合わせ: `tests/golden/stage2.json` の全ケースで Python 版と完全一致（`cargo test --workspace` 38 件通過、`clippy -D warnings` 注意なし）。
+- 段階 2（後半）も完了: `config.rs`（`config.json` 読み書き）・`history.rs`（`history.jsonl` と使用量集計）・`dict_sync.rs`（三方向マージ）・`llm_refine.rs`（OpenAI / Anthropic / Gemini / Ollama、リダイレクト禁止＋URL エンコード）。
+- 次: 段階 3（`onseiman-platform`：Windows / macOS 共通トレイト＋録音 `cpal`・キー監視・貼り付け・API キー保護・自動起動）。
