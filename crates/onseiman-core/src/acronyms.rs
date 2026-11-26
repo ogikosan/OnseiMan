@@ -2,10 +2,15 @@
 
 /// 大文字で書く略語。優先語に入れた言葉は、その書き方が優先される
 pub const ACRONYMS: &[&str] = &[
-    "AI", "API", "CPU", "GPU", "LLM", "PC", "OS", "USB", "SSD", "HDD", "URL", "PDF", "CSV", "SNS",
-    "SSH", "WSL", "CUDA", "VRAM", "RAM", "IT", "IP", "LAN", "DM", "QR", "UI", "UX", "PR", "CM",
-    "NG", "OK", "HP", "ID", "PIN", "FAQ", "HTML", "CSS", "JSON", "SQL", "AWS", "MCP", "DGX", "RTX",
-    "GB", "MB", "TB", "KB", "TV", "PS", "VR", "AR", "GPT",
+    "AI", "API", "CPU", "GPU", "NPU", "TPU", "LLM", "PC", "OS", "USB", "SSD", "HDD", "URL", "PDF",
+    "CSV", "SNS", "SSH", "WSL", "CUDA", "VRAM", "RAM", "IT", "IP", "LAN", "VPN", "DNS", "TCP",
+    "UDP", "HTTP", "HTTPS", "SSL", "TLS", "DM", "QR", "UI", "UX", "GUI", "CLI", "SDK", "IDE", "PR",
+    "CM", "NG", "OK", "HP", "ID", "PIN", "FAQ", "HTML", "CSS", "JSON", "YAML", "TOML", "XML",
+    "SQL", "DB", "ORM", "AWS", "GCP", "OSS", "MCP", "CI", "CD", "JWT", "SSO", "MFA", "RBAC",
+    "CORS", "CSRF", "XSS", "DGX", "RTX", "GB", "MB", "TB", "KB", "FPS", "HDR", "OLED", "HDMI",
+    "DVD", "BIOS", "UEFI", "SIMD", "WASM", "TV", "PS", "VR", "AR", "GPT", "RAG", "NLP", "ASR",
+    "TTS", "VAD", "SSE", "KPI", "KGI", "OKR", "ROI", "SLA", "SLO", "NDA", "MVP", "LGTM", "WIP",
+    "TBD", "ETA", "DX", "EC", "CRM", "ERP", "SCM", "PDCA", "B2B", "B2C",
 ];
 
 /// 小文字で出た略語を大文字にする（llm → LLM）。前後が英字のとき（apple など）は触らない。
