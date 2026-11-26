@@ -29,7 +29,7 @@ mod imp {
 
     const ICON_BYTES: &[u8] = include_bytes!("../assets/onseiman.ico");
 
-    unsafe fn load_embedded_icon() -> HICON {
+    pub(super) unsafe fn load_embedded_icon() -> HICON {
         // ICO ヘッダ (6 bytes) + ICONDIRENTRY (16 bytes * count) から 32px 以上（なければ最大）を選ぶ
         if ICON_BYTES.len() >= 22 {
             let count = u16::from_le_bytes([ICON_BYTES[4], ICON_BYTES[5]]) as usize;
@@ -69,9 +69,10 @@ mod imp {
                 }
             }
             if let Some((img_off, size, _)) = best {
+                let mut buf = ICON_BYTES[img_off..img_off + size].to_vec();
                 let h = CreateIconFromResourceEx(
-                    ICON_BYTES.as_ptr().add(img_off),
-                    size as u32,
+                    buf.as_mut_ptr(),
+                    buf.len() as u32,
                     1,
                     0x0003_0000,
                     32,
@@ -284,3 +285,18 @@ mod imp {
 }
 
 pub use imp::TrayIcon;
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::imp::load_embedded_icon;
+    use windows_sys::Win32::UI::WindowsAndMessaging::DestroyIcon;
+
+    #[test]
+    fn embedded_icon_loads() {
+        unsafe {
+            let h = load_embedded_icon();
+            assert!(!h.is_null(), "embedded onseiman.ico must load cleanly");
+            DestroyIcon(h);
+        }
+    }
+}
