@@ -147,7 +147,8 @@ svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width:
 /* ---- Main workspace ---- */
 .main {
   flex: 1; min-height: 0; padding: 12px;
-  display: flex; flex-direction: column; overflow: hidden;
+  /* clip: 外側の枠は、ブラウザーの自動のスクロールでも動かない（hidden だと動いて、戻せなくなる） */
+  display: flex; flex-direction: column; overflow: hidden; overflow: clip;
 }
 .view {
   flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px;
@@ -169,7 +170,9 @@ textarea.inp { resize: vertical; line-height: 1.55; }
 .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; }
 
 /* ---- Switch (68_Agent_board exact style) ---- */
-.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13.5px; }
+/* 見えないチェックボックスは、スイッチの中に置く（外に置くと、押したときにブラウザーがそれを見せようとして
+   画面の外側の枠ごと動かし、設定の画面が消えたように見えた） */
+.switch { position: relative; display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13.5px; }
 .switch input { position: absolute; opacity: 0; pointer-events: none; }
 .switch span.track {
   width: 38px; height: 22px; border-radius: 11px; flex: none;
