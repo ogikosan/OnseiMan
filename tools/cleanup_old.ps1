@@ -1,0 +1,87 @@
+﻿# 前の版の、もう使わないデータとファイルを消す（cleanup_old.bat から呼ばれる）。
+# 消すものと大きさを並べて、確かめてから消す。設定・辞書・履歴（config.json・dict.json・logs の履歴と録音）・
+# 預かった辞書（server_data）・いまの聞き取りの部品（tools\speech・models\haas-ja）には触らない。
+# -List: 並べるだけで、消さない
+param([switch]$List)
+
+$ErrorActionPreference = "Continue"
+$Root = Split-Path -Parent $PSScriptRoot
+$env:WSL_UTF8 = "1"
+
+# 1.2.27 でやめたもの
+$paths = @(
+    # これまでの聞き取り（Fun-ASR）
+    "models\sherpa-onnx-funasr-nano-int8-2025-12-30",
+    "models\sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2",
+    "models\sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2.part",
+    "download_model.py",
+    "shared\asr_engine.py",
+    "server\bench_providers.py",
+    # NVIDIA の GPU を使う版（WSL2）と、このパソコンを認識役にする仕組み
+    ".venv_relay",
+    "wsl",
+    "gpu_host_off",
+    "server_gpu.bat",
+    "server_gpu_remove.bat",
+    "server\relay.py",
+    "server\start_server_gpu_hidden.vbs",
+    "server\wsl",
+    "shared\haas_engine.py",
+    "client\host_setup.py",
+    "tools\setup_gpu_server.ps1",
+    "tools\remove_gpu_server.ps1",
+    "tools\admin_setup.ps1",
+    "tools\check_gpu.ps1",
+    "tools\stop_host_server.ps1",
+    "logs\host_setup.log",
+    "logs\gpu_host_auto.json",
+    "logs\install_admin.log"
+)
+
+function Get-SizeText([string]$p) {
+    $item = Get-Item -LiteralPath $p -Force
+    $bytes = if ($item.PSIsContainer) { (Get-ChildItem -LiteralPath $p -Recurse -Force -File | Measure-Object Length -Sum).Sum } else { $item.Length }
+    if ($bytes -ge 1GB) { return "{0:N1}GB" -f ($bytes / 1GB) }
+    if ($bytes -ge 1MB) { return "{0:N0}MB" -f ($bytes / 1MB) }
+    return "{0:N0}KB" -f [math]::Max(1, $bytes / 1KB)
+}
+
+$found = @($paths | ForEach-Object { Join-Path $Root $_ } | Where-Object { Test-Path -LiteralPath $_ })
+$distro = $false
+$names = (& wsl.exe -l -q 2>$null | Out-String) -split "`r?`n" | ForEach-Object { $_.Trim() }
+if ($names -contains "onseiman-gpu") { $distro = $true }
+$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$run = (Get-ItemProperty -Path $runKey -Name "OnseiManServer" -ErrorAction SilentlyContinue).OnseiManServer
+$runGpu = $run -and $run -like "*start_server_gpu_hidden.vbs*"
+
+if (-not $found -and -not $distro -and -not $runGpu) {
+    Write-Host "消すものはありません。"
+    exit 0
+}
+Write-Host "前の版の、もう使わないものです:"
+foreach ($p in $found) { Write-Host ("  " + $p.Substring($Root.Length + 1) + "（" + (Get-SizeText $p) + "）") }
+if ($distro) { Write-Host "  GPU を使う版の Linux（onseiman-gpu）" }
+if ($runGpu) { Write-Host "  ログインしたときに GPU を使う版を動かす登録" }
+Write-Host "設定・辞書・履歴と、いまの聞き取りの部品には触りません。"
+if ($List) { exit 0 }
+
+$ans = Read-Host "消してよいですか？ (y / n)"
+if ($ans -notin @("y", "Y", "yes")) { Write-Host "やめました。何も消していません。"; exit 0 }
+
+# 動いていたら止める（GPU を使う版の中継など）
+Get-CimInstance Win32_Process | Where-Object {
+    $_.CommandLine -and $_.Name -like "python*" -and $_.CommandLine -match 'relay\.py' -and
+    $_.CommandLine.IndexOf($Root, [StringComparison]::OrdinalIgnoreCase) -ge 0
+} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+if ($runGpu) { Remove-ItemProperty -Path $runKey -Name "OnseiManServer"; Write-Host "登録を外しました" }
+if ($distro) {
+    & wsl.exe --terminate onseiman-gpu *> $null
+    & wsl.exe --unregister onseiman-gpu *> $null
+    Write-Host "Linux（onseiman-gpu）を消しました"
+}
+foreach ($p in $found) {
+    Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $p) { Write-Host ("消せませんでした（使っているかもしれません）: " + $p) } else { Write-Host ("消しました: " + $p.Substring($Root.Length + 1)) }
+}
+Write-Host "おわりました。"
+exit 0

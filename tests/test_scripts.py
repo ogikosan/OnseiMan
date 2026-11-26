@@ -112,7 +112,8 @@ class TestMacFiles(unittest.TestCase):
     """Mac で動かすファイル（.command / .sh）。Mac は CRLF だと `bash\\r` を探して失敗する。"""
 
     # Mac で動かすもの。改行は LF、git に実行の印
-    MAC_FILES = ["server_mac.command", "server_mac_remove.command", "server/setup_macos.sh", "server/start_server.sh"]
+    MAC_FILES = ["server_mac.command", "server_mac_remove.command", "cleanup_old_mac.command", "server/setup_macos.sh",
+                 "server/start_server.sh"]
 
     def test_mac_files_are_lf_with_shebang(self) -> None:
         for rel in self.MAC_FILES:

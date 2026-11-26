@@ -26,13 +26,13 @@ PACKAGES = {
         "dirs": ["client", "shared", "server", "tools"],
         "skip_suffix": {".sh"},
         "files": ["install_client.bat", "start_client.bat", "update.bat", "server_windows.bat",
-                  "packaging/friend/はじめに.md", "packaging/friend/AGENTS.md"],
+                  "cleanup_old.bat", "packaging/friend/はじめに.md", "packaging/friend/AGENTS.md"],
     },
     "Mac": {
         "dirs": ["shared"],
         "skip_suffix": set(),
         "files": ["client/version.py", "server/app.py", "server/requirements.txt", "server/setup_macos.sh", "server/start_server.sh",
-                  "server_mac.command", "server_mac_remove.command", "packaging/mac/はじめに.md"],
+                  "server_mac.command", "server_mac_remove.command", "cleanup_old_mac.command", "packaging/mac/はじめに.md"],
     },
 }
 EXECUTABLE = {".command", ".sh"}  # Mac でダブルクリック・実行できるよう、実行してよい印を付ける
