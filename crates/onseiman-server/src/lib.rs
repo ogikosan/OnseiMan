@@ -170,8 +170,10 @@ async fn guard_host(State(st): State<Shared>, req: Request, next: Next) -> Respo
             .strip_prefix("http://")
             .or_else(|| origin.strip_prefix("https://"))
             .map(|s| s.split('/').next().unwrap_or(""));
+        let req_host = host.trim();
         match origin_host {
-            Some(oh) if !oh.is_empty() && host_allowed(oh, &st.cfg.server_name) => {}
+            Some(oh)
+                if !oh.is_empty() && !req_host.is_empty() && oh.eq_ignore_ascii_case(req_host) => {}
             _ => return fail(StatusCode::FORBIDDEN, "Forbidden origin"),
         }
     }

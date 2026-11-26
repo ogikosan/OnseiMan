@@ -790,6 +790,14 @@ fn embedded_web_asset(rel: &str) -> Option<(&'static [u8], &'static str)> {
 fn serve_static(web_dir: &FsPath, rel: &str) -> Response {
     let rel = rel.trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
+    if rel.contains('\\')
+        || rel.contains('\0')
+        || !FsPath::new(rel)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let cache = if rel.ends_with(".jpg") {
         "public, max-age=86400"
     } else {
@@ -1211,12 +1219,18 @@ async fn post_settings(State(ctx): State<Arc<AppContext>>, Json(body): Json<Valu
         cfg.dict_share_name = name;
     }
 
+    let prev_llm_url = cfg.llm_base_url.trim().trim_end_matches('/').to_string();
+    let next_llm_url = llm_url.trim().trim_end_matches('/');
+    let llm_url_changed = prev_llm_url != next_llm_url;
     cfg.llm_provider = llm_provider.clone();
     cfg.llm_auto_refine = body
         .get("llm_auto_refine")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     cfg.llm_base_url = llm_url;
+    if llm_url_changed {
+        cfg.llm_api_keys.remove("ollama");
+    }
     cfg.llm_model = body
         .get("llm_model")
         .and_then(|v| v.as_str())

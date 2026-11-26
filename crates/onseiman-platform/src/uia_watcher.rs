@@ -69,19 +69,32 @@ fn clean_uia_text(s: &str) -> String {
 }
 
 #[cfg(windows)]
-fn read_focused_text(uia: &windows::Win32::UI::Accessibility::IUIAutomation) -> Option<String> {
+fn read_focused_element_and_text(
+    uia: &windows::Win32::UI::Accessibility::IUIAutomation,
+) -> Option<(
+    windows::Win32::UI::Accessibility::IUIAutomationElement,
+    String,
+)> {
     use windows::Win32::UI::Accessibility::{
         IUIAutomationTextPattern, IUIAutomationValuePattern, UIA_TextPatternId, UIA_ValuePatternId,
     };
 
     unsafe {
         let elem = uia.GetFocusedElement().ok()?;
+        // SECURITY.md: パスワード欄は絶対に読まない（取得失敗時も安全側で拒否）
+        if elem
+            .CurrentIsPassword()
+            .map(|b| b.as_bool())
+            .unwrap_or(true)
+        {
+            return None;
+        }
         // 1. ValuePattern（1行入力欄・検索欄・チャット欄など）
         if let Ok(vp) = elem.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) {
             if let Ok(val) = vp.CurrentValue() {
                 let s = clean_uia_text(&val.to_string());
                 if !s.is_empty() {
-                    return Some(s);
+                    return Some((elem, s));
                 }
             }
         }
@@ -91,12 +104,12 @@ fn read_focused_text(uia: &windows::Win32::UI::Accessibility::IUIAutomation) -> 
                 if let Ok(txt) = range.GetText(16_384) {
                     let s = clean_uia_text(&txt.to_string());
                     if !s.is_empty() {
-                        return Some(s);
+                        return Some((elem, s));
                     }
                 }
             }
         }
-        Some(String::new())
+        Some((elem, String::new()))
     }
 }
 
@@ -145,7 +158,7 @@ where
             return;
         };
 
-        let Some(baseline) = read_focused_text(&uia) else {
+        let Some((baseline_elem, baseline)) = read_focused_element_and_text(&uia) else {
             if should_uninit {
                 CoUninitialize();
             }
@@ -179,9 +192,17 @@ where
             if target_hwnd != 0 && fg != 0 && fg != target_hwnd {
                 break;
             }
-            let Some(cur) = read_focused_text(&uia) else {
+            let Some((cur_elem, cur)) = read_focused_element_and_text(&uia) else {
                 break;
             };
+            // 同一ウィンドウ内でも別の入力欄（パスワード欄等）へフォーカス移動したら即終了
+            let same_elem = uia
+                .CompareElements(&baseline_elem, &cur_elem)
+                .map(|b| b.as_bool())
+                .unwrap_or(false);
+            if !same_elem {
+                break;
+            }
             // チャットで Enter 送信して空になった → 直前の編集状態を評価
             if cur.trim().is_empty() && best_edited.is_some() {
                 break;

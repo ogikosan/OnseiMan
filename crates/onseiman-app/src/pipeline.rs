@@ -74,6 +74,33 @@ fn build_llm_context_hint(dict: &CustomDictionary, target_app: Option<&str>) -> 
     parts.join("\n")
 }
 
+/// AI 仕上げ後のテキストから改行・制御文字（CR/LF/ESC/C0/C1/U+2028/U+2029）を除去し上限長へ収める。
+/// （ターミナル等への自動貼り付けで Enter やエスケープシーケンスが誤送信されるのを防ぐ）
+fn sanitize_llm_output(s: &str) -> String {
+    const MAX_LLM_CHARS: usize = 5000;
+    let mut out = String::with_capacity(s.len().min(MAX_LLM_CHARS * 4));
+    let mut prev_space = false;
+    let mut count = 0usize;
+    for c in s.chars() {
+        let code = c as u32;
+        if code <= 0x1F || (0x7F..=0x9F).contains(&code) || matches!(c, '\u{2028}' | '\u{2029}') {
+            if !prev_space && !out.is_empty() {
+                out.push(' ');
+                prev_space = true;
+                count += 1;
+            }
+        } else {
+            out.push(c);
+            prev_space = c == ' ';
+            count += 1;
+        }
+        if count >= MAX_LLM_CHARS {
+            break;
+        }
+    }
+    out.trim().to_string()
+}
+
 /// 1 発話のテキストを設定と辞書に従って整形する（ChatGPT サインイン利用時は `root_dir` を渡す）。
 pub fn format_utterance_with_root(
     raw: &str,
@@ -138,8 +165,11 @@ pub fn format_utterance_full(
                     &context_hint,
                 ) {
                     Ok(res) if !res.text.trim().is_empty() => {
-                        text = res.text;
-                        used_llm = true;
+                        let cleaned = sanitize_llm_output(&res.text);
+                        if !cleaned.is_empty() {
+                            text = cleaned;
+                            used_llm = true;
+                        }
                     }
                     Ok(_) => {}
                     Err(e) => {
@@ -163,8 +193,11 @@ pub fn format_utterance_full(
             ) {
                 Ok(refiner) => match refiner.refine_dictation_with_context(&text, &context_hint) {
                     Ok(res) if !res.text.trim().is_empty() => {
-                        text = res.text;
-                        used_llm = true;
+                        let cleaned = sanitize_llm_output(&res.text);
+                        if !cleaned.is_empty() {
+                            text = cleaned;
+                            used_llm = true;
+                        }
                     }
                     Ok(_) => {}
                     Err(e) => {

@@ -11,12 +11,43 @@ pub const MAX_ITEMS: usize = 5000;
 pub const MAX_WORD_CHARS: usize = 200;
 pub const MAX_TEXT_CHARS: usize = 10000;
 
-/// 預ける辞書の名前: 英数字と - _ で 1〜32 文字
+/// Windows の予約デバイス名（CON / AUX / PRN / NUL / COM1-9 / LPT1-9）は拒否する。
+fn is_windows_reserved_name(name: &str) -> bool {
+    let u = name.to_ascii_uppercase();
+    matches!(
+        u.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
+/// 預ける辞書の名前: 英数字と - _ で 1〜32 文字（Windows 予約デバイス名は不可）
 pub fn valid_name(name: &str) -> bool {
     (1..=32).contains(&name.len())
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        && !is_windows_reserved_name(name)
 }
 
 /// 文字でないものが入っていたときの文字への直し方（Python の `str()` に合わせる）
