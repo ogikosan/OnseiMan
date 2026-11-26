@@ -1,8 +1,25 @@
 #!/bin/bash
-# 前の版の、もう使わないデータとファイルを消す（ダブルクリックで実行）。消すものと大きさを並べて、確かめてから消す。
-# 預かった辞書（server_data）・ログ・いまの聞き取りの部品（tools/speech・models/haas-ja）には触らない。
-# Rust 版（onseiman-server / onseiman）が入っている場合は、不要になった旧 Python 環境（.venv_server・tools/python・tools/bin 等）も片付け対象に含める。
+# 前の版の、もう使わないデータとファイルを消す（ダブルクリックで実行）。
+# 通常のインストール先（.git がないフォルダ）では、Rust 版（onseiman-server）が未配置なら GitHub Releases から
+# SHA-256 検証つきで自動取得し、launchd 切り替え → 不要な旧 Python 環境削除まで一括で行う。
+# 預かった辞書（server_data）・ログ・聞き取り部品（tools/speech・models/haas-ja）には触らない。
 cd "$(dirname "$0")" || exit 1
+REPO="ogikosan/OnseiMan"
+IS_GIT=0
+[ -d ".git" ] && IS_GIT=1
+
+has_rust=0
+for bin in "onseiman-server" "onseiman-server-macos-arm64" "onseiman" "onseiman-macos-arm64"; do
+  if [ -x "$bin" ]; then
+    has_rust=1
+    break
+  fi
+done
+will_fetch=0
+if [ "$IS_GIT" -eq 0 ] && [ "$has_rust" -eq 0 ] && [ "$(uname -m)" = "arm64" ]; then
+  will_fetch=1
+fi
+
 old=(
   "models/sherpa-onnx-funasr-nano-int8-2025-12-30"
   "models/sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2"
@@ -11,14 +28,7 @@ old=(
   "shared/haas_engine.py"
   "server/bench_providers.py"
 )
-has_rust=0
-for bin in "onseiman-server" "onseiman-server-macos-arm64" "onseiman" "onseiman-macos-arm64"; do
-  if [ -x "$bin" ]; then
-    has_rust=1
-    break
-  fi
-done
-if [ "$has_rust" -eq 1 ]; then
+if [ "$has_rust" -eq 1 ] || [ "$will_fetch" -eq 1 ]; then
   old+=(
     ".venv_server"
     "tools/python"
@@ -26,33 +36,67 @@ if [ "$has_rust" -eq 1 ]; then
     "server/__pycache__"
     "shared/__pycache__"
   )
+  if [ "$IS_GIT" -eq 0 ]; then
+    old+=(
+      "crates"
+      "Cargo.toml"
+      "Cargo.lock"
+      ".github"
+      "tests"
+      "docs"
+      "packaging"
+    )
+  fi
 fi
+
 found=()
 for p in "${old[@]}"; do
   [ -e "$p" ] && found+=("$p")
 done
-if [ ${#found[@]} -eq 0 ]; then
+
+if [ ${#found[@]} -eq 0 ] && [ "$will_fetch" -eq 0 ]; then
   echo "消すものはありません。"
-  if [ "$has_rust" -eq 0 ] && [ -e ".venv_server" ]; then
-    echo "※ Rust 版（onseiman-server）へ切り替えたあとに再実行すると、旧 Python 環境（.venv_server・tools/python 等）も片付けられます。"
-  fi
 else
-  echo "前の版の、もう使わないものです:"
-  if [ "$has_rust" -eq 1 ]; then
-    echo "（Rust 版が入っているため、不要になった旧 Python 環境も対象に含めています）"
+  if [ "$will_fetch" -eq 1 ]; then
+    echo "Rust 版サーバー（onseiman-server）を取得して切り替え、不要な旧 Python 環境を整理します:"
+  else
+    echo "前の版の、もう使わないものです:"
   fi
   for p in "${found[@]}"; do
     echo "  $p（$(du -sh "$p" | cut -f1)）"
   done
-  echo "預かった辞書と、いまの聞き取りの部品（models/haas-ja・tools/speech）には触りません。"
-  read -r -p "消してよいですか？ (y / n) " ans
+  echo "預かった辞書（server_data）・ログ・聞き取り部品（models/haas-ja・tools/speech）には触りません。"
+  read -r -p "進めてよいですか？ (y / n) " ans
   if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
+    if [ "$will_fetch" -eq 1 ]; then
+      echo "Rust 版サーバーを GitHub Releases から取得しています..."
+      BASE_URL="https://github.com/$REPO/releases/latest/download"
+      if ! curl -fsSL -o onseiman-server.download "$BASE_URL/onseiman-server-macos-arm64" || \
+         ! curl -fsSL -o onseiman-server.sha256 "$BASE_URL/SHA256SUMS-macos-arm64.txt"; then
+        rm -f onseiman-server.download onseiman-server.sha256
+        echo "ダウンロードに失敗しました。旧環境はそのまま残して終了します。"
+        exit 1
+      fi
+      expected="$(awk '/onseiman-server-macos-arm64/{print $1; exit}' onseiman-server.sha256)"
+      actual="$(shasum -a 256 onseiman-server.download | awk '{print $1}')"
+      rm -f onseiman-server.sha256
+      if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+        rm -f onseiman-server.download
+        echo "SHA-256 の検証に失敗しました。旧環境はそのまま残して終了します。"
+        exit 1
+      fi
+      mv -f onseiman-server.download onseiman-server
+      chmod +x onseiman-server
+      xattr -d com.apple.quarantine onseiman-server 2>/dev/null || true
+      echo "Rust 版サーバーを配置しました（SHA-256 確認 OK）。launchd を切り替えます..."
+      bash server/setup_macos.sh || exit 1
+    fi
     for p in "${found[@]}"; do
       rm -rf "$p" && echo "消しました: $p"
     done
     echo "おわりました。"
   else
-    echo "やめました。何も消していません。"
+    echo "やめました。何も変更していません。"
   fi
 fi
 read -n 1 -s -r -p "何かキーを押すと閉じます"
