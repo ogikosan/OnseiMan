@@ -1,6 +1,7 @@
 ﻿# 前の版の、もう使わないデータとファイルを消す（cleanup_old.bat から呼ばれる）。
 # 消すものと大きさを並べて、確かめてから消す。設定・辞書・履歴（config.json・dict.json・logs の履歴と録音）・
-# 預かった辞書（server_data）・いまの聞き取りの部品（tools\speech・models\haas-ja）には触らない。
+# 預かった辞書（server_data）・管理画面（client\web）・いまの聞き取りの部品（tools\speech・models\haas-ja）には触らない。
+# Rust 版（onseiman.exe / onseiman-server.exe）が入っている場合は、不要になった旧 Python 環境（.venv・tools\python・tools\bin 等）も片付け対象に含める。
 # -List: 並べるだけで、消さない
 param([switch]$List)
 
@@ -38,6 +39,22 @@ $paths = @(
     "logs\install_admin.log"
 )
 
+# Rust 版（2.0.0〜）が入っている場合は、旧 Python 環境も不要になる
+$hasRustBin = (Test-Path -LiteralPath (Join-Path $Root "onseiman.exe")) -or
+              (Test-Path -LiteralPath (Join-Path $Root "onseiman-server.exe"))
+$pythonPaths = @(
+    ".venv",
+    ".venv_server",
+    "tools\python",
+    "tools\bin",
+    "client\__pycache__",
+    "shared\__pycache__",
+    "server\__pycache__"
+)
+if ($hasRustBin) {
+    $paths += $pythonPaths
+}
+
 function Get-SizeText([string]$p) {
     $item = Get-Item -LiteralPath $p -Force
     $bytes = if ($item.PSIsContainer) { (Get-ChildItem -LiteralPath $p -Recurse -Force -File | Measure-Object Length -Sum).Sum } else { $item.Length }
@@ -56,21 +73,28 @@ $runGpu = $run -and $run -like "*start_server_gpu_hidden.vbs*"
 
 if (-not $found -and -not $distro -and -not $runGpu) {
     Write-Host "消すものはありません。"
+    if (-not $hasRustBin -and (Test-Path -LiteralPath (Join-Path $Root ".venv"))) {
+        Write-Host "※ Rust 版（onseiman.exe）へ切り替えたあとに再実行すると、旧 Python 環境（.venv・tools\python 等）も片付けられます。"
+    }
     exit 0
 }
 Write-Host "前の版の、もう使わないものです:"
+if ($hasRustBin) {
+    Write-Host "（Rust 版が入っているため、不要になった旧 Python 環境も対象に含めています）"
+}
 foreach ($p in $found) { Write-Host ("  " + $p.Substring($Root.Length + 1) + "（" + (Get-SizeText $p) + "）") }
 if ($distro) { Write-Host "  GPU を使う版の Linux（onseiman-gpu）" }
 if ($runGpu) { Write-Host "  ログインしたときに GPU を使う版を動かす登録" }
-Write-Host "設定・辞書・履歴と、いまの聞き取りの部品には触りません。"
+Write-Host "設定・辞書・履歴と、いまの聞き取りの部品（models\haas-ja・tools\speech）には触りません。"
 if ($List) { exit 0 }
 
 $ans = Read-Host "消してよいですか？ (y / n)"
 if ($ans -notin @("y", "Y", "yes")) { Write-Host "やめました。何も消していません。"; exit 0 }
 
-# 動いていたら止める（GPU を使う版の中継など）
+# 動いていたら止める（GPU を使う版の中継・旧 Python 版）
 Get-CimInstance Win32_Process | Where-Object {
-    $_.CommandLine -and $_.Name -like "python*" -and $_.CommandLine -match 'relay\.py' -and
+    $_.CommandLine -and $_.Name -like "python*" -and
+    ($_.CommandLine -match 'relay\.py' -or ($hasRustBin -and $_.CommandLine -match 'client\\main\.py|server\\app\.py')) -and
     $_.CommandLine.IndexOf($Root, [StringComparison]::OrdinalIgnoreCase) -ge 0
 } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 if ($runGpu) { Remove-ItemProperty -Path $runKey -Name "OnseiManServer"; Write-Host "登録を外しました" }
