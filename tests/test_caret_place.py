@@ -35,6 +35,8 @@ class TestPlaceNear(unittest.TestCase):
         self.assertEqual(caret.place_near((300, 900, 1500, 960), 200, 40, "field"), (300, 850))
 
     def test_returns_something_on_real_desktop(self):
+        if caret._mouse() is None:
+            self.skipTest("画面ロック中または非対話セッションのためカーソル位置を取得できません")
         rect, how = caret.get_caret_rect()  # 何かしら（少なくともマウス位置）は取れる
         self.assertIsNotNone(rect)
         self.assertIn(how, ("caret", "msaa", "field", "mouse"))
