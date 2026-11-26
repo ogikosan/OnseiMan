@@ -1,11 +1,10 @@
-# OnseiMan の Rust 版（作りかけ。計画は docs/src/rust-migration-plan.md）。
-# Python 版（client/・shared/・server/）は、Rust 版が同じことをできると確かめるまでそのまま動かす。
+# OnseiMan Rust ワークスペース
 [workspace]
 resolver = "2"
 members = ["crates/onseiman-core", "crates/onseiman-speech", "crates/onseiman-server", "crates/onseiman-platform", "crates/onseiman-app"]
 
 [workspace.package]
-version = "2.0.1"
+version = "2.0.2"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/ogikosan/OnseiMan"
