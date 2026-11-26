@@ -7,10 +7,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-base64 = "0.22"
 cpal = "0.15"
 
 [target.'cfg(windows)'.dependencies]
+base64 = "0.22"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",

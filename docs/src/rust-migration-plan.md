@@ -40,7 +40,7 @@
 
 ## ビルドと配り方（OSS 前提）
 
-- **GitHub Actions（`.github/workflows/rust.yml`）で Windows（`windows-latest` / x64）と Mac（`macos-14` / Apple Silicon）の両方を自動でテスト・ビルドする。**
+- **GitHub Actions（`.github/workflows/rust.yml`）で Windows（`windows-latest` / x64）と Mac（`macos-15` / Apple Silicon）の両方を自動でテスト・ビルドする。**
   - 開発者の手元の Mac に依存せず、だれでも再現できる形で実行ファイルと `SHA256SUMS.txt` を作る。
   - 公開（タグ `vX.Y.Z`）のときに、Windows 版・Mac 版のバイナリを GitHub Releases へ並べる。
 
@@ -137,4 +137,20 @@
   - `dictionary.rs`（`CustomDictionary`：優先語 40 語上限・置き換え・定型文・読み抽出・文末「。」削り）
 - Python 版との突き合わせ: `tests/golden/stage2.json` の全ケースで Python 版と完全一致（`cargo test --workspace` 38 件通過、`clippy -D warnings` 注意なし）。
 - 段階 2（後半）も完了: `config.rs`（`config.json` 読み書き）・`history.rs`（`history.jsonl` と使用量集計）・`dict_sync.rs`（三方向マージ）・`llm_refine.rs`（OpenAI / Anthropic / Gemini / Ollama、リダイレクト禁止＋URL エンコード）。
-- 次: 段階 3（`onseiman-platform`：Windows / macOS 共通トレイト＋録音 `cpal`・キー監視・貼り付け・API キー保護・自動起動）。
+
+### 2026-11-26: 段階 3（`onseiman-platform`）と段階 4（`onseiman-app`）の土台を構築
+
+- `onseiman-platform`（Windows x64 / macOS arm64 共通クレート）:
+  - `binding.rs`（キー・マウスサイドボタン設定パーサー）
+  - `hotkey.rs`（Windows `WH_KEYBOARD_LL` / `WH_MOUSE_LL` グローバルフック＋Primary / Extra / AI / Cancel 対応）
+  - `recorder.rs`（`cpal` による Windows WASAPI / macOS CoreAudio 共通マイク録音＋16kHz 線形リサンプリング）
+  - `clipboard.rs`・`paste.rs`（Win32 `CF_UNICODETEXT`＋`SendInput` Ctrl+V／macOS `pbcopy`＋`osascript` Cmd+V）
+  - `secret_store.rs`（Windows DPAPI `dpapi:` 互換／macOS Keychain `keychain:`）
+  - `startup.rs`（Windows `HKCU\...\Run`／macOS `LaunchAgent` plist）
+- `onseiman-app`（Rust クライアント本体 `onseiman`）:
+  - `transcriber.rs`（LAN `onseiman-server` 優先＋ローカル `onseiman-speech` フォールバック）
+  - `pipeline.rs`（言いよどみ除去・辞書置換・正規化・定型文・音声コマンド・文末「。」削り・LLM 仕上げ）
+  - `web_ui.rs`（Axum ローカル Web UI サーバー：`client/web/` 配信＋Host/Origin/Sec-Fetch-Site/JSON 限定 POST/CSP 守り＋各種 `/api/*`）
+  - `main.rs`（ホットキー録音 → 認識 → 貼り付け → 履歴保存＋`--check` 診断モード）
+- CI（`.github/workflows/rust.yml`）: `windows-latest`（x64）と `macos-15`（arm64）の両方で `fmt` / `clippy -D warnings` / `test` / `onseiman-server` + `onseiman` リリースビルド＋`SHA256SUMS` 生成を自動化。
+- 残り（仕上げ）: macOS `CGEventTap` ホットキー実装・録音中カプセル／トレイアイコン・サーバー自動探索・`server_mac.command` 等の Rust バイナリ切り替え・リリース移行。

@@ -164,12 +164,11 @@ pub fn unprotect(_stored: &str) -> String {
     String::new()
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(windows)]
     fn dpapi_roundtrip() {
         let enc = protect("sk-test-secret-123").unwrap();
         assert!(enc.starts_with(DPAPI_PREFIX));

@@ -2,7 +2,7 @@
 # Python 版（client/・shared/・server/）は、Rust 版が同じことをできると確かめるまでそのまま動かす。
 [workspace]
 resolver = "2"
-members = ["crates/onseiman-core", "crates/onseiman-speech", "crates/onseiman-server", "crates/onseiman-platform"]
+members = ["crates/onseiman-core", "crates/onseiman-speech", "crates/onseiman-server", "crates/onseiman-platform", "crates/onseiman-app"]
 
 [workspace.package]
 version = "2.0.0"
