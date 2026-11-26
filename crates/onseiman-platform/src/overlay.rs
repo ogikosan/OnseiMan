@@ -1,7 +1,9 @@
 //! 録音中・認識中の非アクティブ・最前面カプセルオーバーレイ。
 //!
-//! Windows では `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` で
-//! 入力先ウィンドウのフォーカスを一切奪わずに画面下部中央へ表示する。
+//! 元の OnseiMan（`pill.py`）と同じデザイン：
+//! - 角が完全に丸いカプセル形状（`CreateRoundRectRgn` + `SetWindowRgn` で角の黒枠なし）
+//! - 左に青い丸＋声の大きさで広がる輪、右に Yu Gothic UI のなめらかな文字
+//! - `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` で入力先のフォーカスを一切奪わない
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OverlayState {
@@ -18,22 +20,25 @@ mod imp {
     use std::thread;
     use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows_sys::Win32::Graphics::Gdi::{
-        BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-        InvalidateRect, RoundRect, SelectObject, SetBkMode, SetTextColor, DT_CENTER, DT_SINGLELINE,
-        DT_VCENTER, PAINTSTRUCT, PS_SOLID, TRANSPARENT,
+        BeginPaint, CreateFontW, CreatePen, CreateRoundRectRgn, CreateSolidBrush, DeleteObject,
+        DrawTextW, Ellipse, EndPaint, FillRect, InvalidateRect, RoundRect, SelectObject, SetBkMode,
+        SetTextColor, SetWindowRgn, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET,
+        DEFAULT_PITCH, DT_LEFT, DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, FW_MEDIUM,
+        OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_NULL, PS_SOLID, TRANSPARENT,
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-        GetSystemMetrics, PostMessageW, RegisterClassW, SetLayeredWindowAttributes, ShowWindow,
-        TranslateMessage, LWA_ALPHA, MSG, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
-        WM_APP, WM_CLOSE, WM_DESTROY, WM_MOUSEACTIVATE, WM_PAINT, WNDCLASSW, WS_EX_LAYERED,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        GetSystemMetrics, PostMessageW, PostQuitMessage, RegisterClassW,
+        SetLayeredWindowAttributes, ShowWindow, TranslateMessage, LWA_ALPHA, MSG, SM_CXSCREEN,
+        SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY, WM_MOUSEACTIVATE,
+        WM_PAINT, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        WS_POPUP,
     };
 
     const WM_OVERLAY_UPDATE: u32 = WM_APP + 10;
     const MA_NOACTIVATE: isize = 3;
-    const PILL_W: i32 = 220;
+    const PILL_W: i32 = 200;
     const PILL_H: i32 = 42;
 
     static CURRENT: Mutex<OverlayState> = Mutex::new(OverlayState::Hidden);
@@ -71,65 +76,108 @@ mod imp {
                 let st = *CURRENT.lock().unwrap();
                 let mut ps: PAINTSTRUCT = std::mem::zeroed();
                 let hdc = BeginPaint(hwnd, &mut ps);
-                let mut rc = RECT {
+                let full = RECT {
                     left: 0,
                     top: 0,
                     right: PILL_W,
                     bottom: PILL_H,
                 };
-                let bg = CreateSolidBrush(rgb(24, 24, 30));
-                FillRect(hdc, &rc, bg);
+                // 元の pill.py ダークテーマ配色: body (30, 39, 60), edge (68, 82, 112), text (228, 233, 244)
+                let body_col = rgb(30, 39, 60);
+                let edge_col = rgb(72, 88, 122);
+                let text_col = rgb(228, 233, 244);
+
+                let bg = CreateSolidBrush(body_col);
+                FillRect(hdc, &full, bg);
                 DeleteObject(bg);
 
-                let (border_col, dot_col, label, level) = match st {
-                    OverlayState::Recording { ai: true, level } => {
-                        (rgb(168, 85, 247), rgb(192, 132, 252), "● AI 録音中…", level)
-                    }
-                    OverlayState::Recording { ai: false, level } => {
-                        (rgb(239, 68, 68), rgb(248, 113, 113), "● 録音中…", level)
-                    }
-                    OverlayState::Transcribing => {
-                        (rgb(59, 130, 246), rgb(96, 165, 250), "… 認識中", 0.0)
-                    }
-                    OverlayState::Hidden => (rgb(60, 60, 70), rgb(120, 120, 130), "", 0.0),
-                };
-
-                let pen = CreatePen(PS_SOLID, 2, border_col);
-                let fill = CreateSolidBrush(rgb(28, 30, 38));
+                let pen = CreatePen(PS_SOLID, 1, edge_col);
+                let fill = CreateSolidBrush(body_col);
                 let old_pen = SelectObject(hdc, pen);
                 let old_brush = SelectObject(hdc, fill);
-                RoundRect(hdc, 1, 1, PILL_W - 1, PILL_H - 1, 20, 20);
+                RoundRect(hdc, 0, 0, PILL_W, PILL_H, PILL_H, PILL_H);
                 SelectObject(hdc, old_pen);
                 SelectObject(hdc, old_brush);
                 DeleteObject(pen);
                 DeleteObject(fill);
 
-                // 音量バー（下部）
-                if level > 0.001 {
-                    let frac = (level * 12.0).clamp(0.05, 1.0);
-                    let bar_w = ((PILL_W - 32) as f32 * frac) as i32;
-                    let bar_rc = RECT {
-                        left: 16,
-                        top: PILL_H - 6,
-                        right: 16 + bar_w,
-                        bottom: PILL_H - 3,
-                    };
-                    let bar_brush = CreateSolidBrush(dot_col);
-                    FillRect(hdc, &bar_rc, bar_brush);
-                    DeleteObject(bar_brush);
-                }
+                let (circle_col, halo_col, label, level) = match st {
+                    OverlayState::Recording { ai: true, level } => (
+                        rgb(139, 92, 246),
+                        rgb(92, 68, 160),
+                        "AI 聞いています",
+                        level,
+                    ),
+                    OverlayState::Recording { ai: false, level } => {
+                        (rgb(59, 130, 246), rgb(47, 94, 178), "聞いています", level)
+                    }
+                    OverlayState::Transcribing => {
+                        (rgb(99, 102, 241), rgb(64, 72, 138), "文字にしています", 0.0)
+                    }
+                    OverlayState::Hidden => (rgb(100, 116, 139), body_col, "", 0.0),
+                };
 
+                // 左の丸（声の大きさで外側の輪が広がる）
+                let cx = 22;
+                let cy = PILL_H / 2;
+                let null_pen = CreatePen(PS_NULL, 0, 0);
+                let prev_p = SelectObject(hdc, null_pen);
+                if level > 0.02 {
+                    let extra = ((level * 7.0).clamp(1.0, 6.0)) as i32;
+                    let hr = 11 + extra;
+                    let hb = CreateSolidBrush(halo_col);
+                    let prev_b = SelectObject(hdc, hb);
+                    Ellipse(hdc, cx - hr, cy - hr, cx + hr, cy + hr);
+                    SelectObject(hdc, prev_b);
+                    DeleteObject(hb);
+                }
+                let r = 10;
+                let cb = CreateSolidBrush(circle_col);
+                let prev_b = SelectObject(hdc, cb);
+                Ellipse(hdc, cx - r, cy - r, cx + r, cy + r);
+                SelectObject(hdc, prev_b);
+                SelectObject(hdc, prev_p);
+                DeleteObject(cb);
+                DeleteObject(null_pen);
+
+                // Yu Gothic UI でなめらかに文字描画
+                let font_name = wide("Yu Gothic UI");
+                let font = CreateFontW(
+                    -15,
+                    0,
+                    0,
+                    0,
+                    FW_MEDIUM as i32,
+                    0,
+                    0,
+                    0,
+                    DEFAULT_CHARSET as u32,
+                    OUT_DEFAULT_PRECIS as u32,
+                    CLIP_DEFAULT_PRECIS as u32,
+                    CLEARTYPE_QUALITY as u32,
+                    (DEFAULT_PITCH | FF_DONTCARE) as u32,
+                    font_name.as_ptr(),
+                );
+                let old_font = SelectObject(hdc, font);
                 SetBkMode(hdc, TRANSPARENT as i32);
-                SetTextColor(hdc, rgb(244, 244, 248));
+                SetTextColor(hdc, text_col);
                 let mut text = wide(label);
-                rc.bottom -= 4;
+                let mut text_rc = RECT {
+                    left: 44,
+                    top: 0,
+                    right: PILL_W - 14,
+                    bottom: PILL_H,
+                };
                 DrawTextW(
                     hdc,
                     text.as_mut_ptr(),
                     (text.len() - 1) as i32,
-                    &mut rc,
-                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                    &mut text_rc,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
                 );
+                SelectObject(hdc, old_font);
+                DeleteObject(font);
+
                 EndPaint(hwnd, &ps);
                 return 0;
             }
@@ -138,7 +186,7 @@ mod imp {
                 return 0;
             }
             WM_DESTROY => {
-                windows_sys::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+                PostQuitMessage(0);
                 return 0;
             }
             _ => {}
@@ -175,7 +223,7 @@ mod imp {
                 let sx = GetSystemMetrics(SM_CXSCREEN);
                 let sy = GetSystemMetrics(SM_CYSCREEN);
                 let x = (sx - PILL_W) / 2;
-                let y = sy - PILL_H - 72;
+                let y = sy - PILL_H - 64;
 
                 let title = wide("OnseiMan");
                 let hwnd = CreateWindowExW(
@@ -195,7 +243,10 @@ mod imp {
                 if hwnd.is_null() {
                     return;
                 }
-                SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA);
+                // カプセル型に切り抜いて角の黒枠を完全になくす
+                let rgn = CreateRoundRectRgn(0, 0, PILL_W + 1, PILL_H + 1, PILL_H, PILL_H);
+                SetWindowRgn(hwnd, rgn, 1);
+                SetLayeredWindowAttributes(hwnd, 0, 240, LWA_ALPHA);
                 if let Ok(mut g) = hwnd_bg.lock() {
                     *g = hwnd as isize;
                 }

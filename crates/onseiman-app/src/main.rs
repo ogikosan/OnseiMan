@@ -1,14 +1,40 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 //! OnseiMan クライアント起動入口（Rust 版）。
 
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::Local;
+
+fn append_log(root: &Path, msg: &str) {
+    let dir = root.join("logs");
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("onseiman.log"))
+    {
+        let ts = Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = writeln!(f, "{ts} {msg}");
+    }
+}
+
+fn default_root() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if dir.join("config.json").is_file() || dir.join("client").join("web").is_dir() {
+                return dir.to_path_buf();
+            }
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
 use onseiman_core::audio::encode_wav;
 use onseiman_platform::audio_mute::AudioMuteGuard;
 use onseiman_platform::binding::parse_binding;
@@ -31,7 +57,7 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut root = default_root();
     let mut port: u16 = 18765;
     let mut open_ui = true;
     let mut check_only = false;
@@ -91,17 +117,30 @@ async fn main() {
         return;
     }
 
-    // Web UI サーバーを 127.0.0.1:<port>（使用中なら空きポート）で起動
+    // Web UI サーバーを 127.0.0.1:<port> で起動。すでに別プロセスが占有していれば二重起動を防ぐ
     let listener = match TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], args.port))).await {
         Ok(l) => l,
-        Err(_) => TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-            .await
-            .expect("127.0.0.1 の待機に失敗しました"),
+        Err(_) => {
+            // すでに OnseiMan が起動中ならその管理画面を開いて終了（二重起動によるフック競合を防ぐ）
+            let url = format!("http://127.0.0.1:{}", args.port);
+            if args.open_ui {
+                let profile = ctx.root_dir.join("logs").join("browser_profile");
+                open_browser(&url, Some(&profile));
+            }
+            return;
+        }
     };
     let actual_port = listener.local_addr().unwrap().port();
     ctx.set_port(actual_port);
     let url = format!("http://127.0.0.1:{actual_port}");
-    eprintln!("OnseiMan v{} 管理画面: {url}", env!("CARGO_PKG_VERSION"));
+    append_log(
+        &ctx.root_dir,
+        &format!(
+            "起動 v{} root={} url={url}",
+            env!("CARGO_PKG_VERSION"),
+            ctx.root_dir.display()
+        ),
+    );
 
     let shutdown = Arc::new(Notify::new());
 
@@ -331,9 +370,16 @@ fn start_hotkey_loop(ctx: Arc<AppContext>, overlay: Arc<RecordingOverlay>) -> Op
                                 cfg.clipboard_restore_delay_ms,
                                 target,
                             );
-                            eprintln!(
-                                "認識完了 [{}] {:.0}ms paste={}",
-                                res.backend, res.elapsed_ms, pr.reason
+                            append_log(
+                                &ctx_job.root_dir,
+                                &format!(
+                                    "認識完了 [{}] {:.0}ms ({:.2}s) paste={} chars={}",
+                                    res.backend,
+                                    res.elapsed_ms,
+                                    duration_sec,
+                                    pr.reason,
+                                    formatted.text.chars().count()
+                                ),
                             );
                             if let Ok(mut h) = ctx_job.history.lock() {
                                 h.record_transcription(
@@ -346,10 +392,15 @@ fn start_hotkey_loop(ctx: Arc<AppContext>, overlay: Arc<RecordingOverlay>) -> Op
                                     "",
                                 );
                             }
+                        } else {
+                            append_log(
+                                &ctx_job.root_dir,
+                                &format!("認識結果が空でした ({duration_sec:.2}s)"),
+                            );
                         }
                     }
                     Err(e) => {
-                        eprintln!("認識エラー: {e}");
+                        append_log(&ctx_job.root_dir, &format!("認識エラー: {e}"));
                         if let Ok(mut h) = ctx_job.history.lock() {
                             h.record_failure(&e, duration_sec, &audio_name, "");
                         }
