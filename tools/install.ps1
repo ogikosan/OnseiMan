@@ -144,6 +144,10 @@ if ($Target -eq "server") {
         Remove-Item -Path $Ready -Force -ErrorAction SilentlyContinue
         exit 1
     }
+    # 聞き間違いの少ない Haas-ja（speech.cpp、約 0.7GB）。用意できなければ、これまでの Fun-ASR で動く
+    Write-Host "聞き間違いの少ない Haas-ja（約0.7GB）を用意しています..."
+    & $Py (Join-Path $Root "shared\speechcpp_setup.py") $Root
+    if ($LASTEXITCODE -ne 0) { Write-Host "Haas-ja を用意できませんでした（これまでの Fun-ASR で動きます）" }
     Write-Host ""
     if ($Starting) { Write-Host "準備できました。サーバーを起動します。" } else { Write-Host "準備できました。server_windows.bat で起動します。" }
     Write-Host "Windows のファイアウォールの確認が出たら「許可」を選んでください。"

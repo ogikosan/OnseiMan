@@ -149,7 +149,7 @@ try {
     }
     $bkTools = Join-Path $bk "tools"
     New-Item -ItemType Directory -Path $bkTools -Force | Out-Null
-    foreach ($item in Get-ChildItem -Path (Join-Path $Root "tools") -Force | Where-Object { @("bin", "python") -notcontains $_.Name }) {
+    foreach ($item in Get-ChildItem -Path (Join-Path $Root "tools") -Force | Where-Object { @("bin", "python", "speech") -notcontains $_.Name }) {
         Copy-Item -Path $item.FullName -Destination $bkTools -Recurse -Force
     }
 

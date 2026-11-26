@@ -80,6 +80,9 @@ fi
 
 echo "=== [2/4] 認識用のデータ（約840MB）を用意します ==="
 "$PY" download_model.py
+# 聞き間違いの少ない Haas-ja（speech.cpp の Metal 版、約 0.7GB）。用意できれば、こちらで聞き取る（Apple の GPU で速い）
+echo "聞き間違いの少ない Haas-ja（約0.7GB）を用意しています..."
+"$PY" shared/speechcpp_setup.py "$BASE_DIR" || echo "Haas-ja を用意できませんでした（これまでの Fun-ASR で動きます）"
 
 if [ "${1:-}" != "--with-ai" ]; then
   echo "=== [3/4] AI 整形（Ollama, 約4.7GB）は入れません（入れるときは --with-ai を付けて実行） ==="

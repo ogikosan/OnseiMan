@@ -194,7 +194,35 @@ class HybridTranscriber:
         except Exception as exc:
             logger.warning("手元の認識エンジンを読み込めませんでした: %s", exc)
 
-    def _get_local_engine(self) -> FunASRNanoEngine:
+    def local_uses_haas(self) -> bool:
+        """このパソコンで聞き取るときに、speech.cpp の Haas-ja を使うか（部品が揃っているとき）。"""
+        from shared import speechcpp_setup
+
+        return (getattr(self.config, "local_engine", "haas") or "haas") == "haas" and speechcpp_setup.ready(self.root_dir)
+
+    def reset_local(self) -> None:
+        """手元の聞き取りを作り直す（Haas-ja の部品が揃ったとき・設定を変えたとき）。"""
+        with self._local_lock:
+            old, self._local_engine = self._local_engine, None
+        close = getattr(old, "close", None)
+        if close:
+            try:
+                close()
+            except Exception:
+                pass
+
+    def _get_local_engine(self):
+        if self._local_engine is None and self.local_uses_haas():
+            from shared.speechcpp_engine import SpeechCppEngine
+
+            try:
+                eng = SpeechCppEngine(self.root_dir, device=getattr(self.config, "local_device", "") or "",
+                                      threads=int(self.config.local_num_threads or 0))
+                eng.load()
+                self._local_engine = eng
+                return eng
+            except Exception as exc:
+                logger.warning("speech.cpp の Haas-ja を使えないので、Fun-ASR で聞き取ります: %s", exc)
         if self._local_engine is None:
             model_dir = Path(self.config.local_model_dir)
             if not model_dir.is_absolute():
@@ -266,9 +294,11 @@ class HybridTranscriber:
         if self.uses_servers() and not self.config.local_fallback:
             raise RuntimeError("LAN サーバーに接続できず、ローカルフォールバックも無効です。")
 
-        logger.info("手元 CPU (sherpa-onnx) へフォールバックして認識します...")
         with self._local_lock:
             engine = self._get_local_engine()
+        local_label = "Local-Haas" if type(engine).__name__ == "SpeechCppEngine" else "Local-CPU"
+        logger.info("このパソコンで聞き取ります (%s)", local_label)
+        with self._local_lock:
             text, elapsed_ms = engine.transcribe(
             samples=samples,
             sample_rate=sample_rate,
@@ -277,5 +307,5 @@ class HybridTranscriber:
             itn=self.config.itn,
         )
         text = clean_asr_text(text)
-        self.last_backend_status = "Local CPU"
-        return TranscriptionResult(text=text, backend="Local-CPU", elapsed_ms=elapsed_ms)
+        self.last_backend_status = "Local Haas" if local_label == "Local-Haas" else "Local CPU"
+        return TranscriptionResult(text=text, backend=local_label, elapsed_ms=elapsed_ms)

@@ -17,6 +17,8 @@ SERVER_FILES = (
     "shared/__init__.py",
     "shared/asr_engine.py",
     "shared/haas_engine.py",
+    "shared/speechcpp_engine.py",
+    "shared/speechcpp_setup.py",
     "shared/audio.py",
     "shared/segmenter.py",
     "shared/dict_format.py",

@@ -44,6 +44,8 @@ backup/
 # install が用意する道具と専用の Python
 tools/bin/
 tools/python/
+# speech.cpp（聞き取りの道具。起動したときに取ってくる）
+tools/speech/
 
 # インストーラーの署名の設定（Azure の情報）
 packaging/installer/signing.json

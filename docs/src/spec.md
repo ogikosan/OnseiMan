@@ -24,6 +24,21 @@
 - 使う順番: `preferred_server`（画面の「いつも使う」）→ 最後に成功したサーバー → ほかの登録順。
   失敗したサーバーは 60 秒後回し。初めて探したときは返事がいちばん速いものを「いつも使う」にする。
 
+## Haas-ja を speech.cpp で動かす（はじめの聞き取り。`shared/speechcpp_engine.py`・`shared/speechcpp_setup.py`）
+
+- speech.cpp（nyosegawa/speech.cpp、MIT）の `speech worker <gguf> --device cpu|gpu` を 1 つ起動し、JSON Lines（protocol 4）で
+  やりとりする。録音は 16bit の PCM を base64 にして 4 秒ずつ `chunk` で送り、`transcribe` で文を受け取る。`progress` は読み飛ばす。
+  優先語は `keywords`（1 行に 1 語）。断られたら優先語なしでやり直す。worker が落ちたら 1 回だけ起動し直す。
+- 部品は版を固定して確認の値で確かめる: speech.cpp 0.11.2（Windows は Vulkan 版、Mac は Metal 版。`tools/speech/`）、
+  Haas-616M-ja-v1.0-Q8_0.gguf（0.66GB、HF のリビジョン固定。`models/haas-ja/`）。
+- 実測（いつもの 14 本、129 秒分）: reo-minipc の CPU 6.7 秒（1 本 0.24〜1.1 秒）、内蔵 GPU（Vulkan）3.9 秒
+  （1 本だけ文の終わりが欠けたので Windows は CPU にする）、Mac M4 Pro の GPU（Metal）0.96 秒、CPU 3.0 秒。文は NeMo 版とほぼ同じ。
+- Haas は 1 回に 1 つの発話を渡す作り（長い録音だと文がまるごと抜けることがある）ので、区切りの上限は 15 秒。
+- アプリ: `local_engine`（haas / funasr、はじめは haas）。起動して 20 秒後に部品を裏で用意し、揃ったら手元の聞き取りを作り直す
+  （`_prepare_haas`）。揃うまでは Fun-ASR。履歴の backend は `Local-Haas`。
+- 認識役: `--engine auto`（はじめの値）は部品があれば speechcpp、なければ funasr。`/health` は `engine: haas`・`runtime: speechcpp`。
+  準備の手順（install.ps1 の server、setup_macos.sh）で部品も用意する。
+
 ## 認識役の 2 つの版（`server/app.py --engine`）
 
 | | CPU で聞き取る版（`funasr`、既定） | GPU で聞き取る版（`haas`） |

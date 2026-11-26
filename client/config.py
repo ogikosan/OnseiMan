@@ -82,6 +82,11 @@ class ClientConfig:
     # NVIDIA の GPU があるパソコンでは、ほかのパソコンの声も GPU で文字にできるよう、裏で自動で準備する。
     # 動画を作る AI などで GPU の記憶を使い切るパソコンでは false にする（画面には出さない）
     gpu_host_auto: bool = True
+    # このパソコンで聞き取るときの仕組み。haas = speech.cpp の Haas-ja（聞き間違いが少ない。部品は起動したときに裏で用意する）、
+    # funasr = これまでの Fun-ASR Nano。haas の部品がまだ無いときは funasr を使う
+    local_engine: str = "haas"
+    # speech.cpp を動かす場所（空ならおまかせ: Windows は CPU、Mac は GPU）
+    local_device: str = ""
     server_connect_timeout_sec: float = 1.5
     # 辞書をほかのパソコンと合わせる: ""（合わせない）/ "server"（認識役のパソコンに預ける）/ "folder"（同期フォルダに置く）
     dict_share: str = ""

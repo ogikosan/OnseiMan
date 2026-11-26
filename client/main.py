@@ -443,6 +443,13 @@ class OnseiManApp:
         if info.get("engine") == "haas" and info.get("max_segment_sec"):
             return max(6.0, float(info["max_segment_sec"]))
         try:
+            if self.config.recognition_place == "local" and self.transcriber.local_uses_haas():
+                from shared.speechcpp_engine import MAX_SEGMENT_SEC
+
+                return MAX_SEGMENT_SEC
+        except Exception:
+            pass
+        try:
             n = len(self.dictionary.active_hotwords())
         except Exception:
             n = 0
@@ -1183,7 +1190,7 @@ class OnseiManApp:
         label = self.friendly_backend(status)
         if status.startswith("LAN"):
             self._set_tray_state("#16a34a", f"待機中（{label}）")
-        elif status == "Local CPU":
+        elif status.startswith("Local"):
             self._set_tray_state("#ca8a04", f"待機中（{label}）")
         else:
             self._set_tray_state("#6b7280", f"待機中（{label}）")
@@ -1397,6 +1404,32 @@ class OnseiManApp:
 
     # ---- GitHub の新しい版（フォルダを置いて使う形） ----
     UPDATE_CHECK_SEC = 24 * 3600
+
+    def _prepare_haas(self) -> None:
+        """このパソコンで聞き取るときの Haas-ja（speech.cpp）の部品を、裏で用意する（はじめの 1 回。約 0.7GB）。
+
+        揃うまでは、これまでの Fun-ASR で聞き取る。揃ったら、次の聞き取りから Haas-ja に替わる。
+        """
+        from shared import speechcpp_setup
+
+        if (getattr(self.config, "local_engine", "haas") or "haas") != "haas" or speechcpp_setup.platform_key() is None:
+            return
+        if not speechcpp_setup.ready(ROOT_DIR):
+            if self._stop_event.wait(20):   # 起動の直後は、ほかの確かめと重ならないように少し待つ
+                return
+            logger.info("Haas-ja（speech.cpp）の部品を用意します")
+            try:
+                speechcpp_setup.ensure(ROOT_DIR, cancel=self._stop_event)
+            except Exception as exc:
+                logger.warning("Haas-ja の部品を用意できませんでした（Fun-ASR で聞き取ります）: %s", exc)
+                return
+            logger.info("Haas-ja の部品を用意しました")
+            self.transcriber.reset_local()
+            self.recorder.segment_kwargs = self._segment_kwargs()
+            if self.config.recognition_place == "local":
+                self.ui.show_status("✓ 聞き間違いの少ない Haas-ja で聞き取るようになりました", bg="#065f46", auto_hide_ms=4000)
+        if self.config.recognition_place == "local" or self.config.local_fallback:
+            self.transcriber.preload_local()
 
     GPU_HOST_RETRY_SEC = 24 * 3600
 
@@ -1743,6 +1776,7 @@ class OnseiManApp:
                 else:
                     threading.Thread(target=self._update_loop, name="update-check", daemon=True).start()
                     threading.Thread(target=self._auto_gpu_host, name="gpu-host", daemon=True).start()
+                threading.Thread(target=self._prepare_haas, name="haas-setup", daemon=True).start()
                 self._health_poll_loop()
 
             threading.Thread(target=_init_health, daemon=True).start()

@@ -1,8 +1,10 @@
 """OnseiMan LAN 音声認識 API サーバー。
 
 聞き取りの仕組みは 2 つから選ぶ（--engine）:
-- funasr: CPU で聞き取る版（Fun-ASR Nano / sherpa-onnx）。Mac・Windows・ふつうの PC
-- haas:   GPU で聞き取る版（Haas-ja / NVIDIA の GPU と Linux。Windows では WSL2 の中。server_gpu.bat が用意する）
+- auto:      speech.cpp と Haas-ja の部品があれば speechcpp、なければ funasr（はじめの値）
+- speechcpp: speech.cpp で Haas-ja（Python も CUDA も要らない。Mac は GPU、Windows は CPU。shared/speechcpp_setup.py が用意する）
+- funasr:    これまでの Fun-ASR Nano / sherpa-onnx
+- haas:      NVIDIA の GPU と Linux で NeMo の Haas-ja（Windows では WSL2 の中。server_gpu.bat が用意する）
 """
 from __future__ import annotations
 
@@ -77,9 +79,11 @@ def health() -> dict:
         return {"status": "initializing"}
     return {
         "status": "ok",
-        "model": engine.model_name if ENGINE_KIND == "haas" else engine.model_dir.name,
+        "model": engine.model_name if ENGINE_KIND in ("haas", "speechcpp") else engine.model_dir.name,
         "provider": engine.active_provider,
-        "engine": ENGINE_KIND,
+        # つなぐ側には聞き取りの AI の名前を返す（haas なら聞き間違いが少ないので先に選ばれる）
+        "engine": "haas" if ENGINE_KIND in ("haas", "speechcpp") else ENGINE_KIND,
+        "runtime": ENGINE_KIND,
         # つなぐ側が、一度に送る長さを決めるのに使う
         "max_segment_sec": segment_max_sec(""),
         # さがす側が「同じパソコンが 2 つの行き方で見つかった」と分かるようにする
@@ -123,6 +127,10 @@ def segment_max_sec(hotwords: str) -> float:
         from shared.haas_engine import MAX_SEGMENT_SEC
 
         return MAX_SEGMENT_SEC  # 優先語の数で短くならない
+    if ENGINE_KIND == "speechcpp":
+        from shared.speechcpp_engine import MAX_SEGMENT_SEC as SPEECHCPP_MAX
+
+        return SPEECHCPP_MAX  # 1 回に 1 つの発話（長い録音では文が抜けることがある）
     n = len([h for h in hotwords.split(",") if h.strip()])
     return max(6.0, min(18.0, 25.0 - 0.4 * n))
 
@@ -339,14 +347,24 @@ def main() -> None:
     parser.add_argument("--threads", type=int, default=int(os.environ.get("ONSEIMAN_THREADS", "4")))
     parser.add_argument(
         "--engine",
-        default=os.environ.get("ONSEIMAN_ENGINE", "funasr"),
-        choices=["funasr", "haas"],
-        help="funasr = CPU で聞き取る版、haas = GPU で聞き取る版（NVIDIA の GPU と Linux が要る）",
+        default=os.environ.get("ONSEIMAN_ENGINE", "auto"),
+        choices=["auto", "speechcpp", "funasr", "haas"],
+        help="auto = speech.cpp の Haas-ja があればそれ、なければ Fun-ASR",
     )
+    parser.add_argument("--device", default=os.environ.get("ONSEIMAN_DEVICE", ""),
+                        help="speechcpp を動かす場所（gpu / cpu。空ならおまかせ: Mac は GPU、Windows は CPU）")
     args = parser.parse_args()
 
     ENGINE_KIND = args.engine
-    if ENGINE_KIND == "haas":
+    if ENGINE_KIND == "auto":
+        from shared import speechcpp_setup
+
+        ENGINE_KIND = "speechcpp" if speechcpp_setup.ready(ROOT_DIR) else "funasr"
+    if ENGINE_KIND == "speechcpp":
+        from shared.speechcpp_engine import SpeechCppEngine
+
+        engine = SpeechCppEngine(ROOT_DIR, device=args.device, threads=args.threads)
+    elif ENGINE_KIND == "haas":
         from shared.haas_engine import HaasEngine
 
         engine = HaasEngine()
