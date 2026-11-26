@@ -413,6 +413,7 @@
   // ---- このパソコンを「声を文字にする役」にする（T3 Code の「共有とアクセス」のように、切り替えるだけ） ----
   let hostKindTouched = false;
   let hostLast = null;
+  let hostOpenedOnce = false;
   const ENGINE_LABEL = { haas: "GPU で聞き取る版", funasr: "CPU で聞き取る版" };
 
   function setHostText(sel, text, cls = "") {
@@ -431,13 +432,25 @@
     const runningKind = h.running ? (h.running_engine === "haas" ? "gpu" : "cpu") : "";
     const kindNow = h.registered || runningKind;
 
-    // 声を文字にする役
-    if (job.running) setHostText("#host-state", job.title || "準備しています…");
-    else if (h.running) setHostText("#host-state", `動いています（${ENGINE_LABEL[h.running_engine] || "CPU で聞き取る版"}・${h.running_version || "-"}）`
-      + (h.registered ? "。ログインしたときに、窓を出さずに自動で動きます" : ""), "ok");
-    else if (h.loading) setHostText("#host-state", "起動しています（読み込み中）…");
-    else if (h.registered) setHostText("#host-state", "ログインしたときに動く設定ですが、いまは止まっています。「始める」で起動し直せます", "warn");
-    else setHostText("#host-state", "使っていません");
+    // ほかのパソコンに使わせる
+    let summary;
+    if (job.running) { setHostText("#host-state", job.title || "準備しています…"); summary = "準備しています…"; }
+    else if (h.running) {
+      const label = ENGINE_LABEL[h.running_engine] || "CPU で聞き取る版";
+      setHostText("#host-state", `使わせています（${label}・${h.running_version || "-"}）`
+        + (h.registered ? "。ログインしたときに、窓を出さずに自動で動きます" : ""), "ok");
+      summary = `使わせています（${label}）`;
+    }
+    else if (h.loading) { setHostText("#host-state", "起動しています（読み込み中）…"); summary = "起動しています…"; }
+    else if (h.registered) {
+      setHostText("#host-state", "ログインしたときに動く設定ですが、いまは止まっています。「始める」で起動し直せます", "warn");
+      summary = "止まっています";
+    }
+    else { setHostText("#host-state", "使わせていません"); summary = "使わせていません"; }
+    $("#host-summary").textContent = `— ${summary}`;
+    // 使わせているときだけ、はじめから開いておく（自分で閉じたら、そのまま）
+    if (!hostOpenedOnce && (job.running || h.running || h.registered)) { $("#host-details").open = true; }
+    hostOpenedOnce = true;
 
     const sel = $("#host-kind");
     const gpuOpt = sel.querySelector('option[value="gpu"]');
@@ -516,7 +529,7 @@
     const msg = kind === "gpu"
       ? "GPU で聞き取る版を準備して、始めます。\nはじめては 10〜20 分かかり、置き場所を約 10GB 使います。\n途中で管理者の確認が出たら「はい」を押してください（ファイアウォールの許可と WSL2）。WSL2 が無ければ入れて、再起動のあとに続きをします。"
       : "CPU で聞き取る版を準備して、始めます。\nはじめては数分〜10 分かかります（認識用のデータ 約 840MB）。\n途中で管理者の確認が出たら「はい」を押してください（ファイアウォールの許可）。";
-    if (!(await askConfirm("このパソコンを、声を文字にする役にします", msg, "始める", "やめる"))) return;
+    if (!(await askConfirm("このパソコンで、ほかのパソコンの声も文字にします", msg, "始める", "やめる"))) return;
     try {
       renderHost(await api("/api/host/start", { kind }));
       hostKindTouched = false;
@@ -525,7 +538,7 @@
 
   $("#btn-host-stop").addEventListener("click", async () => {
     const h = hostLast || {};
-    if (!(await askConfirm("声を文字にする役をやめます", "止めて、ログインしたときに自動で動く登録を外します。設定・辞書・預かった辞書はそのまま残ります。", "やめる", "キャンセル"))) return;
+    if (!(await askConfirm("ほかのパソコンに使わせるのをやめます", "止めて、ログインしたときに自動で動く登録を外します。このパソコンで使っている OnseiMan・設定・辞書・預かった辞書は、そのまま使えます。", "やめる", "キャンセル"))) return;
     let removeGpu = false;
     if (h.gpu_ready) {
       removeGpu = await askConfirm("GPU で聞き取る版の Linux も消しますか？",
