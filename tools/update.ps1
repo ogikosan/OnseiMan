@@ -36,12 +36,40 @@ function Get-LocalVersion {
 
 # このフォルダから動いている OnseiMan だけ（ほかの場所に置いた OnseiMan は関係ない）
 function Get-RunningOnseiMan {
+    $rootPrefix = $Root.TrimEnd("\") + "\"
     Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' or Name='python.exe'" |
         Where-Object {
             $_.CommandLine -match 'client[\\/]main\.py' -and (
-                ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($Root, [StringComparison]::OrdinalIgnoreCase)) -or
-                ($_.CommandLine.IndexOf($Root, [StringComparison]::OrdinalIgnoreCase) -ge 0))
+                ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) -or
+                ($_.CommandLine.IndexOf($rootPrefix, [StringComparison]::OrdinalIgnoreCase) -ge 0))
         }
+}
+
+# 展開先フォルダの外へ抜けるファイル名（Zip Slip）を弾いてから展開する
+function Expand-ZipSafe([string]$ZipPath, [string]$DestDir) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $destFull = [System.IO.Path]::GetFullPath($DestDir).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    $zf = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        foreach ($entry in $zf.Entries) {
+            $rel = $entry.FullName -replace '/', '\'
+            $target = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($destFull, $rel))
+            if (-not $target.StartsWith($destFull, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "ダウンロードした zip の中身が正しくありません"
+            }
+            if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) {
+                New-Item -ItemType Directory -Path $target -Force | Out-Null
+            } else {
+                $parent = Split-Path -Parent $target
+                if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+                    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+                }
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+            }
+        }
+    } finally {
+        $zf.Dispose()
+    }
 }
 
 if ($WaitPid -gt 0) {
@@ -135,7 +163,7 @@ try {
     Write-Host "ダウンロードしています..."
     $zip = Join-Path $tmp "src.zip"
     Invoke-WebRequest -UseBasicParsing "https://github.com/$Repo/archive/refs/heads/$Branch.zip" -OutFile $zip
-    Expand-Archive -Path $zip -DestinationPath $tmp
+    Expand-ZipSafe -ZipPath $zip -DestDir $tmp
     $src = Get-ChildItem -Path $tmp -Directory | Where-Object { $_.Name -like "OnseiMan-*" } | Select-Object -First 1
     if (-not $src -or -not (Test-Path (Join-Path $src.FullName "client\main.py"))) { throw "ダウンロードした中身が正しくありません" }
 

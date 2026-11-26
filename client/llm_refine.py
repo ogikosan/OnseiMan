@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import requests
 
@@ -65,7 +66,8 @@ def _http_error(resp: requests.Response) -> RuntimeError:
     except Exception:
         detail = (resp.text or "")[:200]
     if code in (401, 403) or (code == 400 and "api key" in detail.lower()):
-        msg = "API キーが正しくありません（作り直したキーを入れてください）"
+        # 会社の返事にはキーの一部が入ることがあるので、画面とログには出さない
+        return RuntimeError("API キーが正しくありません（作り直したキーを入れてください）")
     elif code == 404:
         msg = "モデル名が見つかりません（「モデルを読み込む」で選び直してください）"
     elif code == 429:
@@ -100,16 +102,22 @@ class LLMRefiner:
 
     # ---- 呼び出し ----
     def _post(self, url: str, payload: dict, headers: dict) -> dict:
-        resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout_sec)
-        if resp.status_code >= 400:
+        resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout_sec,
+                             allow_redirects=self._follow_redirects())
+        if resp.status_code >= 300:
             raise _http_error(resp)
         return resp.json()
 
     def _get(self, url: str, headers: dict, params: dict | None = None) -> dict:
-        resp = requests.get(url, headers=headers, params=params, timeout=min(self.timeout_sec, 10.0))
-        if resp.status_code >= 400:
+        resp = requests.get(url, headers=headers, params=params, timeout=min(self.timeout_sec, 10.0),
+                            allow_redirects=self._follow_redirects())
+        if resp.status_code >= 300:
             raise _http_error(resp)
         return resp.json()
+
+    def _follow_redirects(self) -> bool:
+        """会社の API は、ほかの場所へ回されても付いていかない（API キーを付けたまま、よその場所に送らないように）。"""
+        return self.provider not in CLOUD
 
     def _openai_headers(self) -> dict:
         h = {"Content-Type": "application/json"}
@@ -155,7 +163,7 @@ class LLMRefiner:
             }, self._anthropic_headers())
             text = "".join(b.get("text", "") for b in data.get("content") or [] if b.get("type") == "text")
         elif self.provider == "gemini":
-            data = self._post(f"{GEMINI_URL}/models/{model}:generateContent", {
+            data = self._post(f"{GEMINI_URL}/models/{quote(model, safe='')}:generateContent", {
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": user_content}]}],
             }, self._gemini_headers())

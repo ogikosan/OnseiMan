@@ -132,6 +132,7 @@ class ClientConfig:
         valid_fields = {f for f in cls.__dataclass_fields__}
         filtered = {k: v for k, v in data.items() if k in valid_fields}
         # 1.2.28 までの AI の設定（アドレスだけ）は、自分で動かす AI として引き継ぐ
+        migrated_key = False
         if "llm_provider" not in data and str(data.get("llm_base_url") or "").strip():
             filtered["llm_provider"] = "ollama"
             old_key = str(data.get("llm_api_key") or "").strip()
@@ -139,7 +140,15 @@ class ClientConfig:
                 from client.secret_store import protect
 
                 filtered["llm_api_keys"] = {"ollama": protect(old_key)}
-        return cls(**filtered)
+                migrated_key = True
+        cfg = cls(**filtered)
+        if migrated_key:
+            # 平文の旧キーが config.json に残らないよう、その場で鍵をかけた形に書き直す
+            try:
+                cfg.save(path)
+            except OSError:
+                pass
+        return cfg
 
     def llm_key(self, provider: str = "") -> str:
         from client.secret_store import unprotect

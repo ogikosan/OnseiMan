@@ -135,6 +135,13 @@
   画面の HTML に直接スクリプトを書かない（`theme.js`・`app.js` に置く）。`innerHTML` に入れる値は `esc()` か数値にする。
 - 認識サーバー（`server/app.py`）: 認証なし（信頼できるネットワーク前提）。RIFF/WAVE と M4A（先頭 4〜8 バイトが `ftyp`）以外は 400、30MB・300 秒超は 413。M4A は afconvert（無ければ ffmpeg、どちらも無ければ 415）で 16kHz モノラル WAV にする（15 秒・30MB で打ち切り）。18 秒（優先語が多いほど短く）を超える音声は、話の切れ目で区切って認識し、つないで返す。
   `/docs` などは出さない。認識した文はログに書かない。
+  入口の `RequestGuard`（ASGI）: Host が IP・localhost・自分の名前以外は 403（DNS リバインディング）。送信は流れてきた量を数え、
+  長さを言わない送り方（chunked）でも 30MB を超えたところで 413 にして受け取りをやめる。WAV は上限の長さまでしか開かない
+  （縮めてある WAV の対策。`decode_wav_bytes(max_sec=)`）。聞き取りは同時に 4 件まで、預かる辞書は 50 個まで（超えたら 429）。
+- アプリ側: 認識役の返事は `clean_asr_text` で制御文字（改行・タブ・Esc）を消し、5000 文字までにしてから入力する。
+  手直しを見る仕組み（`client/uia_watcher.py`）はパスワード欄を読まない。会社の AI の API は、回されても付いていかない
+  （`allow_redirects=False`）。API キーが違うときの会社の返事は、画面とログに出さない。
+- zip の展開（`shared/speechcpp_setup.py`・`tools/update.ps1` の `Expand-ZipSafe`）は、展開先の外へ出る名前を断る。
 - 認識データ: `MODEL_SHA256`（配布元の値）と一致したものだけ展開。展開は `filter="data"`。
 - 履歴の録音・再試行: 名前は `logs/audio/` 直下の `.wav` だけ。
 - 公開リポジトリなので、コミット前に `packaging/private-patterns.txt` の言葉が混ざっていないか調べる。

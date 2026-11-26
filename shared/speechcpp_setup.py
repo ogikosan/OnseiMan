@@ -124,12 +124,13 @@ def ensure(root: Path, progress: Optional[Progress] = None, cancel: Optional[thr
             _download(_BASE + name, z, sha, "聞き取りの道具（speech.cpp）", progress, cancel)
             d = tool_dir(root)
             d.mkdir(parents=True, exist_ok=True)
+            base = d.resolve()
             with zipfile.ZipFile(z) as zf:
                 for info in zf.infolist():
-                    target = (d / info.filename).resolve()
-                    if not str(target).startswith(str(d.resolve())):
+                    target = (base / info.filename).resolve()
+                    if not target.is_relative_to(base):
                         raise RuntimeError("zip の中身が正しくありません")
-                zf.extractall(d)
+                zf.extractall(base)
             if os.name != "nt":
                 # zip から出したファイルは実行してよい印が消えるので付け直す
                 for p in d.rglob("*"):

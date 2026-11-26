@@ -84,6 +84,12 @@ if ! "$PY" shared/speechcpp_setup.py "$BASE_DIR"; then
   exit 1
 fi
 
+xml_esc() {
+  printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+}
+BASE_DIR_XML="$(xml_esc "$BASE_DIR")"
+PY_XML="$(xml_esc "$PY")"
+
 if [ "${1:-}" != "--with-ai" ]; then
   echo "=== [3/4] AI 整形（Ollama, 約4.7GB）は入れません（入れるときは --with-ai を付けて実行） ==="
 else
@@ -98,6 +104,7 @@ else
   if command -v ollama >/dev/null 2>&1; then
     # 同じネットワークから使えるよう OLLAMA_HOST=0.0.0.0 で起動
     OLLAMA_BIN="$(command -v ollama)"
+    OLLAMA_BIN_XML="$(xml_esc "$OLLAMA_BIN")"
     mkdir -p "$HOME/Library/LaunchAgents" "$BASE_DIR/logs"
     cat > "$HOME/Library/LaunchAgents/com.onseiman.ollama.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -107,7 +114,7 @@ else
   <key>Label</key><string>com.onseiman.ollama</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${OLLAMA_BIN}</string>
+    <string>${OLLAMA_BIN_XML}</string>
     <string>serve</string>
   </array>
   <key>EnvironmentVariables</key>
@@ -117,8 +124,8 @@ else
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>${BASE_DIR}/logs/ollama.log</string>
-  <key>StandardErrorPath</key><string>${BASE_DIR}/logs/ollama.log</string>
+  <key>StandardOutPath</key><string>${BASE_DIR_XML}/logs/ollama.log</string>
+  <key>StandardErrorPath</key><string>${BASE_DIR_XML}/logs/ollama.log</string>
 </dict>
 </plist>
 EOF
@@ -139,19 +146,19 @@ cat > "$HOME/Library/LaunchAgents/com.onseiman.asr.plist" <<EOF
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.onseiman.asr</string>
-  <key>WorkingDirectory</key><string>${BASE_DIR}</string>
+  <key>WorkingDirectory</key><string>${BASE_DIR_XML}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${PY}</string>
-    <string>${BASE_DIR}/server/app.py</string>
+    <string>${PY_XML}</string>
+    <string>${BASE_DIR_XML}/server/app.py</string>
     <string>--host</string><string>0.0.0.0</string>
     <string>--port</string><string>${PORT}</string>
     <string>--threads</string><string>${THREADS}</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>${BASE_DIR}/logs/server.log</string>
-  <key>StandardErrorPath</key><string>${BASE_DIR}/logs/server.log</string>
+  <key>StandardOutPath</key><string>${BASE_DIR_XML}/logs/server.log</string>
+  <key>StandardErrorPath</key><string>${BASE_DIR_XML}/logs/server.log</string>
 </dict>
 </plist>
 EOF

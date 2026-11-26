@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import ipaddress
 import socket
 import uuid
 import io
@@ -32,7 +34,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from shared import speechcpp_setup
-from shared.audio import decode_wav_bytes
+from shared.audio import AudioTooLong, decode_wav_bytes
 from shared.dict_format import NAME_RE, clean_data
 from shared.segmenter import join_texts, split_on_pauses
 from shared.server_fingerprint import fingerprint, read_version
@@ -92,6 +94,25 @@ MAX_AUDIO_BYTES = 30 * 1024 * 1024
 MAX_HOTWORDS_CHARS = 4000
 MAX_AUDIO_SEC = 300.0  # OnseiMan は区切って送る（iPhone のショートカットなどからは長いものも来る）
 CONVERT_TIMEOUT_SEC = 15.0
+MAX_CONCURRENT_TRANSCRIBE = 4
+_transcribe_sem: Optional[asyncio.Semaphore] = None
+
+
+def _get_transcribe_sem() -> asyncio.Semaphore:
+    global _transcribe_sem
+    if _transcribe_sem is None:
+        _transcribe_sem = asyncio.Semaphore(MAX_CONCURRENT_TRANSCRIBE)
+    return _transcribe_sem
+
+
+async def _read_limited_body(request: Request, limit: int) -> bytes:
+    """チャンク送信（Content-Length 無し）でも上限を超えた瞬間に読み込みを止めて 413 を返す。"""
+    chunks = bytearray()
+    async for chunk in request.stream():
+        if len(chunks) + len(chunk) > limit:
+            raise HTTPException(status_code=413, detail="Request too large")
+        chunks.extend(chunk)
+    return bytes(chunks)
 
 
 def parse_readings(raw: str) -> dict:
@@ -162,18 +183,93 @@ def convert_m4a(raw: bytes) -> bytes:
             return f.read()
 
 
-@app.middleware("http")
-async def _limit_body(request, call_next):
-    """受け取る前に大きさを見て、大きすぎる送信は読み込まずに断る。"""
-    from fastapi.responses import JSONResponse
+def host_allowed(host: str) -> bool:
+    """Host が、IP アドレス・localhost・このパソコンの名前のときだけ受け付ける。
 
+    ブラウザで開いたよそのサイトが、自分の名前をこのパソコンの IP に向け直して（DNS リバインディング）
+    預かった辞書を読み書きするのを防ぐ。OnseiMan のアプリと iPhone のショートカットは IP アドレスでつなぐ。
+    """
+    h = (host or "").strip().lower()
+    if not h:
+        return True   # ブラウザは必ず Host を付ける。付けないのは自作の道具だけ
+    if h.startswith("["):
+        name = h[1:].split("]")[0]
+    else:
+        name = h.rsplit(":", 1)[0] if h.count(":") == 1 else h
     try:
-        size = int(request.headers.get("content-length") or 0)
+        ipaddress.ip_address(name)
+        return True
     except ValueError:
-        size = 0
-    if size > MAX_AUDIO_BYTES + 64 * 1024:
-        return JSONResponse({"detail": "Request too large"}, status_code=413)
-    return await call_next(request)
+        pass
+    return name == "localhost" or name.split(".")[0] == SERVER_NAME.split(".")[0].lower()
+
+
+class _TooLarge(Exception):
+    pass
+
+
+class RequestGuard:
+    """届いた要求を、中の処理に渡す前に確かめる。
+
+    - Host がおかしいものは断る（host_allowed）
+    - 大きすぎる送信は断る。長さを言わない送り方（chunked）でも、流れてきた量を数えて、上限を超えたところで止める
+      （数えないと、ファイルの受け取りがディスクに書き続けてしまう）
+    """
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    @staticmethod
+    async def _reply(send, status: int, detail: str) -> None:
+        body = json.dumps({"detail": detail}).encode("utf-8")
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode()),
+                                (b"connection", b"close")]})
+        await send({"type": "http.response.body", "body": body})
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.inner(scope, receive, send)
+            return
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or []}
+        if not host_allowed(headers.get("host", "")):
+            await self._reply(send, 403, "Forbidden host")
+            return
+        limit = MAX_AUDIO_BYTES + 64 * 1024
+        try:
+            size = int(headers.get("content-length") or 0)
+        except ValueError:
+            size = 0
+        if size > limit:
+            await self._reply(send, 413, "Request too large")
+            return
+        state = {"total": 0, "over": False, "started": False}
+
+        async def counted_receive():
+            msg = await receive()
+            if msg["type"] == "http.request":
+                state["total"] += len(msg.get("body") or b"")
+                if state["total"] > limit:
+                    state["over"] = True
+                    raise _TooLarge()
+            return msg
+
+        async def guarded_send(msg) -> None:
+            if state["over"]:
+                return   # 413 はここで返すので、中の処理が作った返事は捨てる
+            if msg["type"] == "http.response.start":
+                state["started"] = True
+            await send(msg)
+
+        try:
+            await self.inner(scope, counted_receive, guarded_send)
+        except _TooLarge:
+            pass
+        if state["over"] and not state["started"]:
+            await self._reply(send, 413, "Request too large")
+
+
+app.add_middleware(RequestGuard)
 
 
 @app.post("/transcribe")
@@ -188,64 +284,71 @@ async def transcribe(
     if engine is None:
         raise HTTPException(status_code=503, detail="ASR engine is not initialized")
 
-    # 大きすぎる送信は断る（16kHz・16bit なら 30MB で約 15 分。OnseiMan は区切って送るので十分）
-    raw_bytes = await audio.read(MAX_AUDIO_BYTES + 1)
-    if not raw_bytes:
-        raise HTTPException(status_code=400, detail="Empty audio file")
-    if len(raw_bytes) > MAX_AUDIO_BYTES:
-        raise HTTPException(status_code=413, detail="Audio too large")
-    if len(hotwords) > MAX_HOTWORDS_CHARS:
-        hotwords = hotwords[:MAX_HOTWORDS_CHARS]
-    readings = parse_readings(keywords)
+    async with _get_transcribe_sem():
+        # 大きすぎる送信は断る（16kHz・16bit なら 30MB で約 15 分。OnseiMan は区切って送るので十分）
+        raw_bytes = await audio.read(MAX_AUDIO_BYTES + 1)
+        if not raw_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio file")
+        if len(raw_bytes) > MAX_AUDIO_BYTES:
+            raise HTTPException(status_code=413, detail="Audio too large")
+        if len(hotwords) > MAX_HOTWORDS_CHARS:
+            hotwords = hotwords[:MAX_HOTWORDS_CHARS]
+        readings = parse_readings(keywords)
 
-    # WAV と M4A だけを受け付ける（ほかの形式の読み取り処理に、外からのデータを渡さない）
-    if is_m4a(raw_bytes):
-        raw_bytes = await run_in_threadpool(convert_m4a, raw_bytes)
-    if len(raw_bytes) < 44 or raw_bytes[:4] != b"RIFF" or raw_bytes[8:12] != b"WAVE":
-        raise HTTPException(status_code=400, detail="Only WAV or M4A audio is accepted")
-    try:
-        samples, sr = decode_wav_bytes(raw_bytes)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid WAV audio") from None
-    if not (8000 <= sr <= 48000):
-        raise HTTPException(status_code=400, detail="Unsupported sample rate")
-    if samples.size / float(sr) > MAX_AUDIO_SEC:
-        raise HTTPException(status_code=413, detail="Audio too long")
+        # WAV と M4A だけを受け付ける（ほかの形式の読み取り処理に、外からのデータを渡さない）
+        if is_m4a(raw_bytes):
+            raw_bytes = await run_in_threadpool(convert_m4a, raw_bytes)
+        if len(raw_bytes) < 44 or raw_bytes[:4] != b"RIFF" or raw_bytes[8:12] != b"WAVE":
+            raise HTTPException(status_code=400, detail="Only WAV or M4A audio is accepted")
+        try:
+            # 小さく縮めた WAV が、開くと何 GB にもなることがある。上限の長さまでしか開かない
+            samples, sr = decode_wav_bytes(raw_bytes, max_sec=MAX_AUDIO_SEC)
+        except AudioTooLong:
+            raise HTTPException(status_code=413, detail="Audio too long") from None
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid WAV audio") from None
+        if not (8000 <= sr <= 48000):
+            raise HTTPException(status_code=400, detail="Unsupported sample rate")
+        if samples.size / float(sr) > MAX_AUDIO_SEC:
+            raise HTTPException(status_code=413, detail="Audio too long")
 
-    if samples.size == 0:
-        return {"text": "", "elapsed_ms": 0.0, "provider": engine.active_provider}
+        if samples.size == 0:
+            return {"text": "", "elapsed_ms": 0.0, "provider": engine.active_provider}
 
-    # OnseiMan のアプリは区切って送る。iPhone のショートカットなどから長い音声が来たら、ここで話の切れ目で区切る
-    max_sec = MAX_SEGMENT_SEC
-    if samples.size / float(sr) > max_sec:
-        parts = split_on_pauses(samples, sr, max_segment_sec=max_sec, min_segment_sec=min(4.0, max_sec * 0.5))
-    else:
-        parts = [samples]
-    texts, elapsed_ms = [], 0.0
-    for part in parts:
-        t, ms = engine.transcribe(samples=part, sample_rate=sr, hotwords=hotwords, readings=readings)
-        texts.append(t)
-        elapsed_ms += ms
-    text = join_texts(texts)
-    # 話した内容はログに残さない（文字数だけ）
-    logger.info(
-        "認識完了 (%.0f ms, provider=%s, %.2fs audio, %d文字)",
-        elapsed_ms,
-        engine.active_provider,
-        len(samples) / max(sr, 1),
-        len(text),
-    )
-    return {
-        "text": text,
-        "elapsed_ms": round(elapsed_ms, 1),
-        "provider": engine.active_provider,
-    }
+        # OnseiMan のアプリは区切って送る。iPhone のショートカットなどから長い音声が来たら、ここで話の切れ目で区切る
+        max_sec = MAX_SEGMENT_SEC
+        if samples.size / float(sr) > max_sec:
+            parts = split_on_pauses(samples, sr, max_segment_sec=max_sec, min_segment_sec=min(4.0, max_sec * 0.5))
+        else:
+            parts = [samples]
+        texts, elapsed_ms = [], 0.0
+        for part in parts:
+            t, ms = await run_in_threadpool(
+                engine.transcribe, samples=part, sample_rate=sr, hotwords=hotwords, readings=readings
+            )
+            texts.append(t)
+            elapsed_ms += ms
+        text = join_texts(texts)
+        # 話した内容はログに残さない（文字数だけ）
+        logger.info(
+            "認識完了 (%.0f ms, provider=%s, %.2fs audio, %d文字)",
+            elapsed_ms,
+            engine.active_provider,
+            len(samples) / max(sr, 1),
+            len(text),
+        )
+        return {
+            "text": text,
+            "elapsed_ms": round(elapsed_ms, 1),
+            "provider": engine.active_provider,
+        }
 
 
 # ---- 辞書を預かる（各パソコンの OnseiMan が、ここを通して辞書を合わせる） ----
 # 預かった辞書は server_data/dicts/<名前>.json。利用者のデータなので、更新しても消さない。
 DICT_DIR = Path(os.environ.get("ONSEIMAN_DATA_DIR") or (ROOT_DIR / "server_data")) / "dicts"
 MAX_DICT_BYTES = 2 * 1024 * 1024
+MAX_DICT_FILES = 50
 _dict_lock = threading.Lock()
 
 
@@ -276,9 +379,7 @@ def get_dict(name: str) -> dict:
 @app.put("/dict/{name}")
 async def put_dict(name: str, request: Request) -> dict:
     path = _dict_path(name)
-    raw = await request.body()
-    if len(raw) > MAX_DICT_BYTES:
-        raise HTTPException(status_code=413, detail="Dictionary too large")
+    raw = await _read_limited_body(request, MAX_DICT_BYTES)
     try:
         body = json.loads(raw)
         version = int(body["version"])
@@ -289,6 +390,8 @@ async def put_dict(name: str, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="Invalid dictionary") from None
     data = clean_data(data)
     with _dict_lock:
+        if not path.exists() and DICT_DIR.exists() and len(list(DICT_DIR.glob("*.json"))) >= MAX_DICT_FILES:
+            raise HTTPException(status_code=429, detail="Too many dictionaries")
         cur = _read_dict(path)
         if cur["version"] != version:
             # 読んだあとに、ほかのパソコンが書き換えた。読み直して合わせ直してもらう

@@ -40,7 +40,7 @@ class _ServerCase(unittest.TestCase):
         p = mock.patch.object(srv, "engine", self.engine)
         p.start()
         self.addCleanup(p.stop)
-        self.c = TestClient(srv.app)
+        self.c = TestClient(srv.app, base_url="http://127.0.0.1:8765")
 
     def _post(self, data: bytes, **form):
         return self.c.post("/transcribe", files={"audio": ("a.wav", data, "audio/wav")}, data=form)
@@ -98,6 +98,73 @@ class TestServerGuard(_ServerCase):
         r = self._post(b"RIFF" + b"\0" * 4 + b"WAVE" + b"\0" * 60)
         self.assertEqual(r.status_code, 400)
         self.assertNotIn("Traceback", r.text)
+
+    def test_chunked_upload_is_stopped_at_the_limit(self) -> None:
+        """長さを言わない送り方（chunked）でも、上限を超えたところで受け取りをやめる（ディスクに書き続けない）。"""
+        seen = {"n": 0}
+
+        def gen():
+            yield (b'--b\r\nContent-Disposition: form-data; name="audio"; filename="a.wav"\r\n'
+                   b"Content-Type: audio/wav\r\n\r\n")
+            for _ in range(400):
+                seen["n"] += 1
+                yield b"\x00" * 4096
+            yield b"\r\n--b--\r\n"
+
+        with mock.patch.object(srv, "MAX_AUDIO_BYTES", 1000):
+            r = self.c.post("/transcribe", content=gen(),
+                            headers={"Content-Type": "multipart/form-data; boundary=b"})
+        self.assertEqual(r.status_code, 413)
+        self.engine.transcribe.assert_not_called()
+
+    def test_only_ip_or_own_name_is_accepted_as_host(self) -> None:
+        """よそのサイトの名前（DNS リバインディング）で来た要求は断る。IP・localhost・自分の名前は通す。"""
+        self.assertEqual(self.c.get("/health", headers={"Host": "evil.example.com:8765"}).status_code, 403)
+        self.assertEqual(self.c.get("/dict/shared", headers={"Host": "evil.example.com"}).status_code, 403)
+        own = srv.SERVER_NAME.split(".")[0]
+        for host in ("192.168.1.50:8765", "100.64.0.1:8765", "[fe80::1]:8765", "localhost:8765",
+                     own, f"{own.upper()}.local:8765", f"{own}.tail1234.ts.net:8765"):
+            self.assertEqual(self.c.get("/health", headers={"Host": host}).status_code, 200, host)
+
+    def test_compressed_wav_is_not_fully_expanded(self) -> None:
+        """縮めてある WAV（小さくても開くと長い）は、上限の長さまでしか開かずに断る。"""
+        try:
+            import numpy as np
+            import soundfile as sf
+        except Exception:
+            self.skipTest("soundfile がありません")
+        buf = io.BytesIO()
+        sf.write(buf, np.zeros(8000 * 60, dtype="float32"), 8000, format="WAV", subtype="GSM610")
+        raw = buf.getvalue()
+        self.assertLess(len(raw), 8000 * 60)   # 16bit のままなら 96 万バイト。その 1/8 以下
+        from shared.audio import AudioTooLong, decode_wav_bytes
+
+        with self.assertRaises(AudioTooLong):
+            decode_wav_bytes(raw, max_sec=5.0)
+        self.assertEqual(len(decode_wav_bytes(raw, max_sec=120.0)[0]), 8000 * 60)
+        with mock.patch.object(srv, "MAX_AUDIO_SEC", 5.0):
+            self.assertEqual(self._post(raw).status_code, 413)
+        self.engine.transcribe.assert_not_called()
+
+    def test_dict_chunked_oversize_and_file_count_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(srv, "DICT_DIR", Path(tmp)), \
+                 mock.patch.object(srv, "MAX_DICT_BYTES", 100), \
+                 mock.patch.object(srv, "MAX_DICT_FILES", 2):
+                # Content-Length を付けないチャンク送信でも上限超過で 413 になること
+                def gen():
+                    yield b'{"version":0,"data":{"hotwords":["'
+                    yield b"a" * 120
+                    yield b'"]}}'
+
+                r_big = self.c.put("/dict/oversize", content=gen())
+                self.assertEqual(r_big.status_code, 413)
+
+                # 辞書ファイル数の上限を超えたら 429 になること（既存辞書の更新は通る）
+                self.assertEqual(self.c.put("/dict/d1", json={"version": 0, "data": {"hotwords": ["a"]}}).status_code, 200)
+                self.assertEqual(self.c.put("/dict/d2", json={"version": 0, "data": {"hotwords": ["b"]}}).status_code, 200)
+                self.assertEqual(self.c.put("/dict/d3", json={"version": 0, "data": {"hotwords": ["c"]}}).status_code, 429)
+                self.assertEqual(self.c.put("/dict/d1", json={"version": 1, "data": {"hotwords": ["a2"]}}).status_code, 200)
 
 
 # M4A のふりをした先頭（中身は、すり替えた変換役が決める）

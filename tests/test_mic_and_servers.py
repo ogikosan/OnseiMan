@@ -16,12 +16,12 @@ class TestAutoChoice(unittest.TestCase):
         from client.discovery import merge_same_machines
 
         found = [
-            {"url": "http://100.99.44.124:8765", "via": "Tailscale", "ready": True, "ms": 20, "engine": "", "id": "a"},
-            {"url": "http://100.83.113.30:8765", "via": "Tailscale", "ready": True, "ms": 60, "engine": "haas", "id": "b"},
-            {"url": "http://100.79.230.25:8765", "via": "Tailscale", "ready": False, "ms": 5, "engine": "haas", "id": "c"},
+            {"url": "http://100.64.0.1:8765", "via": "Tailscale", "ready": True, "ms": 20, "engine": "", "id": "a"},
+            {"url": "http://100.64.0.2:8765", "via": "Tailscale", "ready": True, "ms": 60, "engine": "haas", "id": "b"},
+            {"url": "http://100.64.0.3:8765", "via": "Tailscale", "ready": False, "ms": 5, "engine": "haas", "id": "c"},
         ]
         got = merge_same_machines(found, [])
-        self.assertEqual(got[0]["url"], "http://100.83.113.30:8765")
+        self.assertEqual(got[0]["url"], "http://100.64.0.2:8765")
         self.assertFalse(got[-1]["ready"])   # 準備中は後ろ
 
     def test_settings_screen_has_no_host_card(self) -> None:

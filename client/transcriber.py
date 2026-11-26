@@ -28,14 +28,22 @@ def _as_float(v) -> Optional[float]:
     return f if 1.0 <= f <= 120.0 else None
 
 _SPECIAL_TOKEN_RE = re.compile(r"(<\|[^|]+\|>|/sil\b)", re.IGNORECASE)
+# 改行・タブ・Esc などの制御文字と、行や段落の区切り（聞き取りの結果には出てこない）
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
+# 1 回の聞き取りで返ってくる文の上限（区切りは長くても 15 秒ほどなので、十分に大きい）
+MAX_ASR_CHARS = 5000
 
 
 def clean_asr_text(text: str) -> str:
-    """聞き取りの道具が付けることのある印（/sil や <|...|>）を消す。"""
+    """聞き取りの道具が付けることのある印（/sil や <|...|>）を消す。
+
+    制御文字も消す。聞き取った文はそのままカーソルの場所に入れるので、認識役（別のパソコン）の返事に
+    改行などが混ざっていると、入力先で Enter を押したのと同じことになる（命令の実行・送信）。
+    """
     if not text:
         return ""
-    cleaned = _SPECIAL_TOKEN_RE.sub("", text).strip()
-    return cleaned
+    cleaned = _CONTROL_RE.sub(" ", str(text)[:MAX_ASR_CHARS])
+    return _SPECIAL_TOKEN_RE.sub("", cleaned).strip()
 
 
 @dataclass

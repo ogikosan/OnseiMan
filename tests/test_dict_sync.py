@@ -246,7 +246,7 @@ class TestServerDict(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
         self.addCleanup(self.tmp.cleanup)
-        self.c = TestClient(srv.app)
+        self.c = TestClient(srv.app, base_url="http://127.0.0.1:8765")
 
     def test_store_and_conflict(self) -> None:
         r = self.c.get("/dict/shared").json()

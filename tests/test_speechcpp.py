@@ -121,7 +121,7 @@ class TestServerAuto(unittest.TestCase):
 
         eng = mock.MagicMock(active_provider="speech.cpp-gpu", model_name="Haas-ja-v1.0")
         with mock.patch.object(srv, "engine", eng):
-            h = TestClient(srv.app).get("/health").json()
+            h = TestClient(srv.app, base_url="http://127.0.0.1:8765").get("/health").json()
         self.assertEqual(h["engine"], "haas")      # つなぐ側に先に選ばれる
         self.assertEqual(h["model"], "Haas-ja-v1.0")
         self.assertEqual(h["max_segment_sec"], 15.0)

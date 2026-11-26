@@ -58,6 +58,19 @@ def read_focused_control_text() -> Tuple[Optional[str], str]:
         if ctrl is None:
             return None, "no_focused_control"
 
+        # パスワード欄・保護された入力欄は絶対に読まない（パスワード欄かどうかを確かめられないときも読まない）
+        try:
+            if ctrl.IsPassword:
+                return None, "password_field"
+        except Exception:
+            return None, "password_check_failed"
+        try:
+            lp_chk = ctrl.GetLegacyIAccessiblePattern()
+            if lp_chk is not None and (int(getattr(lp_chk, "State", 0) or 0) & 0x20000000):
+                return None, "password_field"
+        except Exception:
+            pass
+
         info = f"{getattr(ctrl, 'ControlTypeName', '?')}/{getattr(ctrl, 'ClassName', '')}"
 
         # 1. TextPattern (メモ帳、リッチエディット、Chromium / Electron の多く)

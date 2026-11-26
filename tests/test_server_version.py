@@ -161,7 +161,7 @@ class TestHealth(unittest.TestCase):
         engine = mock.MagicMock(active_provider="cpu")
         engine.model_dir.name = "m"
         with mock.patch.object(srv, "engine", engine):
-            h = TestClient(srv.app).get("/health").json()
+            h = TestClient(srv.app, base_url="http://127.0.0.1:8765").get("/health").json()
         self.assertEqual(h["version"], read_version(ROOT))
         self.assertEqual(h["fingerprint"], fingerprint(ROOT))
 
