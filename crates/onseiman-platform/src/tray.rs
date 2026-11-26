@@ -266,8 +266,8 @@ mod imp {
                     *g = hwnd as isize;
                 }
 
-                // 元の OnseiMan 待機アイコン（青 #2563eb＋白マイク）
-                let custom_icon = create_mic_icon(0x25, 0x63, 0xeb);
+                // 元の OnseiMan 待機アイコン（緑 #16a34a＋白マイク）
+                let custom_icon = create_mic_icon(0x16, 0xa3, 0x4a);
                 let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
                 nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
                 nid.hWnd = hwnd;
