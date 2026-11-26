@@ -43,16 +43,6 @@ REWRITE_SYSTEM_PROMPT = (
     "前置き・解説・引用符・余計なマークダウン囲みは一切付けず、書き換え後のテキストだけを出力してください。"
 )
 
-SELF_CORRECTION_SYSTEM_PROMPT = (
-    "あなたは音声入力の言い直しを整理するエディターです。"
-    "話者が途中で「いやいやそうじゃなくて」「じゃなくて」「違う」「訂正」「あ、〇〇だった」などで言い直した場合、"
-    "取り消された古い内容と言い直しフレーズを消し、最新の意図だけを自然な日本語1文にまとめてください。\n"
-    "入力: 明日の3時に、いやいやそうじゃなくて4時に集合で。\n出力: 明日の4時に集合で。\n"
-    "入力: 明日の3時に会議しよう。あ、明後日だった。\n出力: 明後日の3時に会議しよう。\n"
-    "入力: 5090で動かして、あ、じゃなくてミニPCの方で動かして。\n出力: ミニPCの方で動かして。\n"
-    "ルール: 前置きや説明は絶対に書かず、整理後の本文のみを出力すること。"
-)
-
 # 「試す」ボタンで整えてもらう文
 TEST_TEXT = "えーと、明日の会議は、あ、じゃなくて明後日の3時からでお願いします"
 
@@ -224,6 +214,3 @@ class LLMRefiner:
     def rewrite_selection(self, selected_text: str, instruction: str) -> LLMResult:
         prompt = f"【元のテキスト】\n{selected_text}\n\n【指示】\n{instruction}"
         return self._chat(REWRITE_SYSTEM_PROMPT, prompt)
-
-    def resolve_self_correction(self, spoken_text: str) -> LLMResult:
-        return self._chat(SELF_CORRECTION_SYSTEM_PROMPT, spoken_text)

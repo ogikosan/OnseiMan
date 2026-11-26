@@ -526,7 +526,8 @@
   function friendlyBackend(b) {
     b = b || "";
     let label = b.startsWith("LAN") ? "サーバー" : b.startsWith("Local") ? "このPC" : b.split(/[+×]/)[0];
-    if (b.includes("+AI")) label += "＋AI整形";
+    if (b.includes("整えずに")) label += "（AI を待たずに入力）";
+    else if (b.includes("+AI")) label += "＋AI整形";
     else if (b.includes("整理")) label += "＋言い直し整理";
     return label;
   }
@@ -1148,7 +1149,6 @@
     $$('input[name="rec_indicator"]').forEach((r) => { r.checked = r.value === (s.recording_indicator || "pill"); });
     $$('input[name="overlay_place"]').forEach((r) => { r.checked = r.value === (s.overlay_place || "bottom"); });
     $("#set-overlay-pin").disabled = !s.overlay_pinned;
-    $("#set-self-corr").checked = !!s.auto_refine_self_correction;
     $("#set-app-rules").checked = !!s.app_specific_rules;
     $("#set-learn-edits").checked = !!s.learn_from_edits;
     $("#set-auto-learn").value = s.auto_learn_after_count;
@@ -1319,7 +1319,6 @@
         mute_other_audio: $("#set-mute-other").checked,
         recording_indicator: ($('input[name="rec_indicator"]:checked') || {}).value || "pill",
         overlay_place: ($('input[name="overlay_place"]:checked') || {}).value || "bottom",
-        auto_refine_self_correction: $("#set-self-corr").checked,
         app_specific_rules: $("#set-app-rules").checked,
         learn_from_edits: $("#set-learn-edits").checked,
         auto_learn_after_count: parseInt($("#set-auto-learn").value || "2", 10),

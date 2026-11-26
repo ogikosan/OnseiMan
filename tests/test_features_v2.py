@@ -298,6 +298,7 @@ class TestUndoFlow(unittest.TestCase):
 
     def test_spoken_undo_does_not_paste(self) -> None:
         app = self._app()
+        app.config.undo_voice_command = True   # はじめはオフ。オンにしたときの動き
         app._busy_lock = threading.Lock()
         app._processing = False
         app._tray = None

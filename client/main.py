@@ -63,7 +63,6 @@ from shared.dictionary import CustomDictionary
 from shared.dict_sync import DEFAULT_NAME, NAME_RE, DictSync, FolderStore, ServerStore
 from shared.fillers import DEFAULT_FILLERS
 from shared.segmenter import join_texts, split_on_pauses
-from shared.self_correction import has_self_correction, is_over_truncated, rule_based_self_correction
 from shared.voice_commands import apply_voice_commands, is_undo_command
 
 logger = logging.getLogger("onseiman.client")
@@ -952,28 +951,6 @@ class OnseiManApp:
                         except Exception as exc:
                             logger.warning("AI で整えられなかったため、整える前の文を入れます: %s", exc)
                             self.ui.show_status(f"⚠ AI で整えられませんでした（整える前の文を入れます）: {exc}", bg="#92400e", auto_hide_ms=3500)
-                    elif self.config.auto_refine_self_correction and has_self_correction(final_text):
-                        # 言い直し表現が含まれるときだけ整理（AI が設定されていれば AI で、なければルールで）
-                        refined_done = False
-                        if self.config.llm_provider:
-                            self.ui.show_status("✦ 言い直しを整理しています...", bg="#0f766e")
-                            try:
-                                refiner = self._make_refiner(timeout_sec=min(self.config.llm_timeout_sec, 6.0))
-                                llm_res = refiner.resolve_self_correction(final_text)
-                                if llm_res.text and not is_over_truncated(final_text, llm_res.text):
-                                    final_text = llm_res.text
-                                    backend_label = f"{asr_backend}+LLM整理"
-                                    total_ms += llm_res.elapsed_ms
-                                    refined_done = True
-                                elif llm_res.text:
-                                    logger.info("言い直し LLM 結果が削りすぎのためルールへ切替: %r -> %r", final_text, llm_res.text)
-                            except Exception as exc:
-                                logger.debug("言い直し LLM 整理をスキップし軽量ルールへフォールバック: %s", exc)
-                        if not refined_done:
-                            ruled = rule_based_self_correction(final_text)
-                            if ruled and ruled != final_text and not is_over_truncated(final_text, ruled):
-                                final_text = ruled
-                                backend_label = f"{asr_backend}+言い直し整理"
 
                     if self.config.strip_trailing_period and snippet is None:
                         final_text = strip_chat_trailing_period(final_text)

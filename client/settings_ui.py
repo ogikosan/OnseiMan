@@ -480,7 +480,6 @@ class SettingsEditor:
         self.remove_fillers = tk.BooleanVar(value=bool(cfg.remove_fillers))
         self.normalize_text = tk.BooleanVar(value=bool(cfg.normalize_text))
         self.voice_commands = tk.BooleanVar(value=bool(cfg.voice_commands))
-        self.auto_refine_self_correction = tk.BooleanVar(value=bool(cfg.auto_refine_self_correction))
         self.strip_trailing_period = tk.BooleanVar(value=bool(cfg.strip_trailing_period))
         self.app_specific_rules = tk.BooleanVar(value=bool(cfg.app_specific_rules))
         self.learn_from_edits = tk.BooleanVar(value=bool(cfg.learn_from_edits))
@@ -492,7 +491,6 @@ class SettingsEditor:
             (self.remove_fillers, "「えーと」「うん」などの言いよどみを取り除く"),
             (self.normalize_text, "数字や略語を読みやすく（五千九十→5090、ピーディーエフ→PDF）"),
             (self.voice_commands, "「かいぎょう」「改行」を実際の改行にする（改行コード等はそのまま）"),
-            (self.auto_refine_self_correction, "言い直し（「いやそうじゃなくて」等）を整理して最新の内容だけ残す"),
             (self.strip_trailing_period, "文末の「。」を自動でつけない（全アプリで削る）"),
             (self.app_specific_rules, "チャットアプリ（Discord / Slack / LINE 等）で文末の「。」を自動削除"),
             (self.learn_from_edits, "貼り付け後に手で直した言葉を感知して「学習候補」に出す（半自動）"),
@@ -592,7 +590,6 @@ class SettingsEditor:
             self.remove_fillers.get(),
             self.normalize_text.get(),
             self.voice_commands.get(),
-            self.auto_refine_self_correction.get(),
             self.strip_trailing_period.get(),
             self.app_specific_rules.get(),
             self.learn_from_edits.get(),
@@ -642,7 +639,6 @@ class SettingsEditor:
         cfg.remove_fillers = bool(self.remove_fillers.get())
         cfg.normalize_text = bool(self.normalize_text.get())
         cfg.voice_commands = bool(self.voice_commands.get())
-        cfg.auto_refine_self_correction = bool(self.auto_refine_self_correction.get())
         cfg.strip_trailing_period = bool(self.strip_trailing_period.get())
         cfg.app_specific_rules = bool(self.app_specific_rules.get())
         cfg.learn_from_edits = bool(self.learn_from_edits.get())

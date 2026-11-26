@@ -165,7 +165,6 @@ class TestModulesImport(unittest.TestCase):
             "shared.kana",
             "shared.voice_commands",
             "shared.correction_learner",
-            "shared.self_correction",
         ):
             importlib.import_module(name)
 
@@ -748,44 +747,6 @@ class TestNewFeatures(unittest.TestCase):
             self.assertEqual(c2.count, 2)
             st.remove("山駄さん", "山田さん", ignore_future=True)
             self.assertIsNone(st.record("山駄さん", "山田さん"))
-
-    def test_self_correction_detection_and_rule_fallback(self) -> None:
-        from shared.self_correction import has_self_correction, is_over_truncated, rule_based_self_correction
-
-        self.assertTrue(has_self_correction("今すぐデプロイして。いやいやそうじゃなくて、先にテストして。"))
-        self.assertTrue(has_self_correction("明日の3時に、じゃなくて4時に集合で。"))
-        self.assertTrue(has_self_correction("5090で回して、あ、違う、4070tiで回して。"))
-        self.assertTrue(has_self_correction("うんちして、いやいやそうじゃなくてちんこして"))
-        # 普通の文章や、後ろに新しい言い直し内容がない文末は反応しない
-        self.assertFalse(has_self_correction("今日はいい天気ですね。"))
-        self.assertFalse(has_self_correction("それは違うと思います。"))
-        self.assertFalse(has_self_correction("いやらしい表現は避けてください。"))
-        self.assertFalse(has_self_correction("いいのかな？どんな感じなのかな？いや、やっぱりそうじゃないのかな。"))
-        self.assertFalse(has_self_correction("やっぱりそういう時ってどうなるのかな。いや、やっぱりそうじゃなくて。"))
-        # 削りすぎ安全ガード
-        self.assertTrue(is_over_truncated("いいのかな？どんな感じなのかな？いや、やっぱりそうじゃないのかな。", "いいのかな？"))
-        self.assertFalse(is_over_truncated("5090で回して、あ、じゃなくてミニPCの方で動かして。", "ミニPCの方で動かして。"))
-
-        self.assertEqual(
-            rule_based_self_correction("今すぐデプロイして。いやいやそうじゃなくて、先にテストして。"),
-            "先にテストして。",
-        )
-        self.assertEqual(
-            rule_based_self_correction("お疲れ様です。今すぐデプロイして。いやいやそうじゃなくて、先にテストして。"),
-            "お疲れ様です。先にテストして。",
-        )
-        self.assertEqual(
-            rule_based_self_correction("5090で回して、いやそうじゃなくて4070tiで回して。"),
-            "4070tiで回して。",
-        )
-        self.assertEqual(
-            rule_based_self_correction("うんちして、いやいやそうじゃなくてちんこして"),
-            "ちんこして",
-        )
-        self.assertEqual(
-            rule_based_self_correction("やっぱりそういう時ってどうなるのかな。うんちして、いやいやそうじゃなくてちんこして"),
-            "やっぱりそういう時ってどうなるのかな。ちんこして",
-        )
 
     def test_web_ui_server_endpoints(self) -> None:
         import requests

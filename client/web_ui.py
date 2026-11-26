@@ -728,7 +728,6 @@ class WebUIServer:
             "mute_other_audio": bool(cfg.mute_other_audio),
             "overlay_place": cfg.overlay_place,
             "live_segmentation": bool(cfg.live_segmentation),
-            "auto_refine_self_correction": bool(cfg.auto_refine_self_correction),
             "strip_trailing_period": bool(cfg.strip_trailing_period),
             "app_specific_rules": bool(cfg.app_specific_rules),
             "learn_from_edits": bool(cfg.learn_from_edits),
@@ -828,9 +827,9 @@ class WebUIServer:
         mic = str(body.get("microphone", DEFAULT_MIC_LABEL))
         cfg.microphone = None if mic == DEFAULT_MIC_LABEL else mic
         cfg.remove_fillers = bool(body.get("remove_fillers", True))
-        cfg.normalize_text = bool(body.get("normalize_text", True))
+        cfg.normalize_text = bool(body.get("normalize_text", False))
         cfg.voice_commands = bool(body.get("voice_commands", True))
-        cfg.undo_voice_command = bool(body.get("undo_voice_command", True))
+        cfg.undo_voice_command = bool(body.get("undo_voice_command", False))
         cfg.keep_mic_open = bool(body.get("keep_mic_open", True))
         cfg.mute_other_audio = bool(body.get("mute_other_audio", True))
         cfg.recording_indicator = "text" if body.get("recording_indicator") == "text" else "pill"
@@ -838,7 +837,6 @@ class WebUIServer:
         if not body.get("overlay_pinned", True):
             cfg.overlay_position = None  # 固定をやめてカーソルの近くに戻す
         cfg.live_segmentation = bool(body.get("live_segmentation", False))
-        cfg.auto_refine_self_correction = bool(body.get("auto_refine_self_correction", True))
         cfg.strip_trailing_period = bool(body.get("strip_trailing_period", True))
         cfg.app_specific_rules = bool(body.get("app_specific_rules", True))
         cfg.learn_from_edits = bool(body.get("learn_from_edits", True))

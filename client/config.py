@@ -24,12 +24,13 @@ class ClientConfig:
     silence_rms_threshold: float = 0.012
     # 「うん、」「えーと」などの言いよどみを取り除く（対象語は dict.json の fillers）
     remove_fillers: bool = True
-    # 漢数字を数字に（五千九十→5090）、カタカナ略語を英字に（ピーディーエフ→PDF）などの標準の変換
-    normalize_text: bool = True
+    # 漢数字を数字に（五千九十→5090）、カタカナ略語を英字に（ピーディーエフ→PDF）などの標準の変換。
+    # 「一人」「一つ」のような言葉まで変えてしまうので、はじめはオフ
+    normalize_text: bool = False
     # 音声コマンド: 「改行」→改行、「かぎかっこ」「かっこ開き/閉じ」「はてなマーク」「びっくりマーク」→記号
     voice_commands: bool = True
-    # 「今のなし」「取り消し」とだけ言うと、直前に入力した文を取り消す
-    undo_voice_command: bool = True
+    # 「今のなし」「取り消し」とだけ言うと、直前に入力した文を取り消す。言葉だけで決めるので、はじめはオフ
+    undo_voice_command: bool = False
     # 録音していない間もマイクを開いたままにし、キーを押す直前の声も録る（言い出しが欠けない・開始が速い）
     keep_mic_open: bool = True
     preroll_sec: float = 0.4
@@ -39,8 +40,6 @@ class ClientConfig:
     segment_pause_sec: float = 0.6
     segment_min_sec: float = 8.0
     segment_max_sec: float = 18.0
-    # 言い直し（「いやいやそうじゃなくて」「訂正」等）を検知して最新の意図だけ残す
-    auto_refine_self_correction: bool = True
     # 文末の「。」をすべてのアプリで自動的に削る（「。。」「？」「！」は残す）
     strip_trailing_period: bool = True
     # チャット系アプリ（Discord / Slack / LINE 等）で文末の「。」を自動削除する
