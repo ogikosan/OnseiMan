@@ -12,5 +12,5 @@ serde_json = { workspace = true }
 base64 = "0.22"
 sha2 = "0.10"
 ureq = "2"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 tempfile = "3"
