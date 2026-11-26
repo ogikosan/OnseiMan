@@ -26,31 +26,37 @@
 
 ## 全体の形
 
-1 つの Cargo ワークスペースに、役割ごとの箱（crate）を置く。
+1 つの Cargo ワークスペースに、役割ごとの箱（crate）を置く。Mac と Windows の両方を OSS として配る前提で、OS 固有の仕組みは `onseiman-platform` に閉じ込める。
 
 | 箱 | 中身 | いまの Python |
 |---|---|---|
 | `onseiman-core` | 設定・辞書・文の整え方・区切り・辞書の同期・履歴・AI で整える・更新の確認。OS に寄らない（区切り・辞書の形・WAV は済み） | `shared/*`・`client/config.py`・`logger.py`・`llm_refine.py`・`github_update.py`（約 2,500 行） |
-| `onseiman-speech` | speech.cpp を動かす。はじめは、いまと同じ「worker を 1 つ起動して JSON Lines でやりとり」（落ちても本体が巻き込まれない）。`speech.dll` を直接呼ぶ形は、必要が出てから | `shared/speechcpp_engine.py`・`speechcpp_setup.py`（約 370 行） |
-| `onseiman-server` | 認識役（Mac・Windows）。受け口はいまと同じ | `server/app.py`（約 360 行） |
-| `onseiman-win` | Windows の仕組みを直接呼ぶところ: キーの横取り・録音・貼り付け・カーソルの場所・ほかの音を消す・手直しの監視・自動起動・API キーの鍵 | `client/input_hook.py`・`recorder.py`・`paste.py`・`caret.py`・`audio_mute.py`・`uia_watcher.py`・`startup.py`・`secret_store.py`（約 2,700 行） |
-| `onseiman-app` | アプリ本体: 流れのまとめ役・トレイ・カプセル表示・画面 | `client/main.py`・`pill.py`・`web_ui.py`・`web/*`（約 3,500 行 + 画面の JS 約 1,300 行） |
+| `onseiman-speech` | speech.cpp を動かす（Mac は Metal、Windows は CPU）。はじめは、いまと同じ「worker を 1 つ起動して JSON Lines でやりとり」（落ちても本体が巻き込まれない） | `shared/speechcpp_engine.py`・`speechcpp_setup.py`（約 370 行） |
+| `onseiman-server` | 認識役（Mac・Windows 共通）。受け口はいまと同じ | `server/app.py`（約 360 行） |
+| `onseiman-platform` | OS ごとの仕組みを共通の口で包む（`windows` / `macos`）。キーの横取り（Win32 Hook / macOS CGEventTap）・録音（`cpal`）・貼り付け・カーソルの場所・ほかの音を消す・手直しの監視・自動起動（Run / LaunchAgent）・API キーの鍵（DPAPI / Keychain） | `client/input_hook.py`・`recorder.py`・`paste.py`・`caret.py`・`audio_mute.py`・`uia_watcher.py`・`startup.py`・`secret_store.py`（約 2,700 行） |
+| `onseiman-app` | アプリ本体（Mac・Windows 共通）: 流れのまとめ役・トレイ／メニューバー・カプセル表示・画面（いまの HTML を出す） | `client/main.py`・`pill.py`・`web_ui.py`・`web/*`（約 3,500 行 + 画面の JS 約 1,300 行） |
 
 消すもの: `client/ui.py`・`settings_ui.py`・`theme.py`（使っていない古い Tk の窓、約 1,900 行）、`tools/install.ps1`・uv・専用の Python。
+
+## ビルドと配り方（OSS 前提）
+
+- **GitHub Actions（`.github/workflows/rust.yml`）で Windows（`windows-latest` / x64）と Mac（`macos-14` / Apple Silicon）の両方を自動でテスト・ビルドする。**
+  - 開発者の手元の Mac に依存せず、だれでも再現できる形で実行ファイルと `SHA256SUMS.txt` を作る。
+  - 公開（タグ `vX.Y.Z`）のときに、Windows 版・Mac 版のバイナリを GitHub Releases へ並べる。
 
 ## 進める順番
 
 小さく出して、そのつど実機で確かめる。Python 版は、Rust 版が同じことをできると確かめるまで動かし続ける。
 
-### 1. 認識役を Rust にする（Windows で確かめ済み。Mac への入れ替えが残り）
+### 1. 認識役を Rust にする（Windows で確かめ済み。GitHub Actions で Mac 版も自動ビルド）
 
 いちばん小さく、効果がすぐ出る（Mac の準備が「Python を入れて 10 分」から「置いて起動」になる）。
 
 - `onseiman-speech` と `onseiman-server` を作る。守り（1.2.33 の RequestGuard・上限・Host の確認）もそのまま移す
 - `tests/test_server_guard.py`・`test_dict_sync.py` の認識役の部分を、Rust 版に向けてそのまま流す（受け口が同じなので使い回せる）
-- Mac（Apple のチップ）と Windows 用に作って、Mac の認識役を入れ替える。前の版は残す
+- GitHub Actions で Mac（Apple Silicon）と Windows の実行ファイルを自動ビルドし、Mac の `server_mac.command`・`launchd` も Rust 版の実行ファイルを使う形に直す
 
-終わりの条件: いまのアプリ（Python 版）から Rust の認識役を使って、聞き取り・辞書の同期・iPhone のショートカットが前と同じに動く。
+終わりの条件: いまのアプリ（Python 版）から Mac / Windows の Rust 版認識役を使って、聞き取り・辞書の同期・iPhone のショートカットが前と同じに動く。
 
 ### 2. 中身の部品（`onseiman-core`）
 
@@ -59,20 +65,21 @@
 
 終わりの条件: 書き出した組がすべて一致。
 
-### 3. Windows の土台（`onseiman-win`）と、画面なしのアプリ
+### 3. OS の土台（`onseiman-platform`）と、画面なしのアプリ（Windows → Mac）
 
-- キーの横取り → 録音 → 聞き取り → 貼り付け、までを画面なしで通す（トレイのアイコンだけ）
-- いちばん手間がかかるのはここ。実機でないと確かめられないもの（管理者の窓への貼り付け・ゲーム中・マウスのボタン・マイクの切り替え）が多い
+- まず共通トレイトを切り、Windows 側（キーの横取り → 録音 → 聞き取り → 貼り付け）を通して 1 日ふつうに使えることを確認する
+- 同じトレイトに合わせて macOS 側（`CGEventTap`・`cpal`・クリップボード＋Cmd+V・`LaunchAgent`・Keychain・アクセシビリティ権限の案内）を実装する
 
-終わりの条件: 画面なしの Rust 版で、1 日ふつうに使える。
+終わりの条件: Windows・Mac それぞれで、キーを押して話し、カーソルの場所へ文字が入る。
 
-### 4. 画面
+### 4. 画面（共通 HTML ＋ カプセル表示）
 
-- カプセル表示（Windows の仕組みで直接描く）→ いまの HTML を Rust の本体から出す（履歴 → 辞書 → 設定 → 使い方）
+- 設定・辞書・履歴・使い方は、いまの HTML（`client/web/`）を Rust の本体から 127.0.0.1 で出す（Mac / Windows 共通）
+- カプセル表示とトレイ／メニューバーを Windows・Mac それぞれで実装する
 
 ### 5. 配り方と切り替え
 
-- インストーラーは exe を置くだけにする。更新は、公開した exe を取ってきて、確認用の値（SHA-256）と署名を確かめてから入れ替える
+- GitHub Releases から Windows 版・Mac 版を `SHA256SUMS.txt` つきで配る
 - Python 版（1.2.x）を使っている人の「今すぐ更新」から Rust 版に移れる橋渡しの版を 1 つ出す。設定・辞書・履歴はそのまま
 - しばらくは Python 版に戻せるようにしておく（`backup`）
 - 版の番号は 2.0.0 から
@@ -83,17 +90,16 @@
 
 | 段階 | 大きさ | 主な危険 |
 |---|---|---|
-| 1. 認識役 | 小 | Mac 用に作る手順（Mac の上で作るか、GitHub の自動の仕組みで作るか） |
-| 2. 中身の部品 | 中 | 文の整え方の細かい違い |
-| 3. Windows の土台 | 大 | 実機でしか出ない不具合 |
-| 4. 画面 | 中 | カプセル表示がフォーカスを奪わないこと・画面の守りの移し替え |
-| 5. 配り方と切り替え | 中 | 使っている人の移行でデータを壊さない |
+| 1. 認識役（Mac・Windows） | 小 | GitHub Actions での Mac ビルド・`server_mac.command` 切り替え |
+| 2. 中身の部品（共通） | 中 | 文の整え方の細かい違い |
+| 3. OS の土台（Windows / Mac） | 大 | 実機でしか出ない不具合（管理者の窓・権限・IME・マイク切替） |
+| 4. 画面（共通 HTML ＋ カプセル） | 中 | カプセル表示がフォーカスを奪わないこと・画面の守りの移し替え |
+| 5. 配り方と切り替え | 中 | 使っている人の移行でデータを壊さない・macOS の署名／公証 |
 
 ## やらないこと
 
 - いちどに全部を書き直して入れ替えること（どこで壊れたか分からなくなる）
 - 予備の聞き取りや、Python 版と Rust 版を行き来する複雑な仕組み（戻す手段は `backup` だけ）
-- Mac 用のアプリ（いまは認識役だけ。Rust にすると作りやすくはなるが、今回の範囲の外）
 
 ## 作るための道具
 
@@ -119,5 +125,4 @@
 - Python 版と違うところ（わざと）:
   - 縮めてある WAV（ADPCM など）は受け付けない。読むのは PCM と小数の WAV だけ（OnseiMan のアプリと、M4A から直したものはこの形）
   - `/health` の `fingerprint` は `rust-<版>`。版が Python 版のアプリより新しいので、「認識役が古い」の知らせは出ない
-- 残り: Mac 用に作って、Mac の認識役を入れ替える（Mac に Rust を入れるか、GitHub の自動の仕組みで作るかを決める）。
-  起動の登録（launchd）と `server_mac.command` を、Rust の実行ファイルを使う形に直す。
+- 残り: GitHub Actions（`.github/workflows/rust.yml`）で Windows x64・macOS arm64 の自動テスト＆ビルドを回し、Mac の認識役（`server_mac.command`・`launchd`）を Rust バイナリ版へ切り替える。並行して段階 2（`onseiman-core`）を進める。
