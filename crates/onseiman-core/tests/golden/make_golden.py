@@ -16,9 +16,15 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT))
 
+from client.app_context import strip_chat_trailing_period  # noqa: E402
 from shared.acronyms import fix_acronyms  # noqa: E402
 from shared.dict_format import clean_data  # noqa: E402
+from shared.dictionary import CustomDictionary  # noqa: E402
+from shared.fillers import FillerRemover  # noqa: E402
+from shared.kana import is_kana_only, kana_variants, to_hiragana, to_katakana  # noqa: E402
+from shared.normalize import TextNormalizer  # noqa: E402
 from shared.segmenter import join_texts, split_on_pauses  # noqa: E402
+from shared.voice_commands import apply_voice_commands, is_undo_command  # noqa: E402
 
 OUT = Path(__file__).resolve().parent
 
@@ -78,6 +84,125 @@ def main() -> None:
         "clean_data_with_default_fillers": [[d, clean_data(d, ["えーと", "あのー"])] for d in dicts[:3]],
     }
     (OUT / "text.json").write_text(json.dumps(other, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
+
+    # 段階 2: かな・言いよどみ・標準の変換・音声コマンド・辞書・文末「。」
+    filler_cases = [
+        "えーと、明日は晴れです。",
+        "うん、そういえば、うん。",
+        "えーとそういえば、あのー今日は、まあ、いい天気ですね。",
+        "あの人はまあまあ元気です。",
+        "えーーっと、うん、うん、うん。",
+        "えーと、うん。",
+        "なんか、それって面白いね。",
+        "こんにちは。",
+        "",
+    ]
+    fr = FillerRemover()
+
+    norm_cases = [
+        "五千九十円です",
+        "二十歳になりました",
+        "五万三千円かかる",
+        "一億二千万人のデータ",
+        "三点五パーセント増えた",
+        "四点八と4点八と四点8と5点5",
+        "二〇二六年の予定です",
+        "バージョン五を使う",
+        "五を押してください",
+        "一人で行く。一つください。五つある。一緒に行こう。一番好き。二三日かかる。",
+        "八百屋で万が一に備えて千葉の百貨店へ。十分です。十分かかります。十分間。",
+        "十時に百円持って千円札で払う",
+        "ＡＢＣ１２３％とエーアイとピーディーエフとアイデアとコンフィーユーアイ",
+        "ギットハブでパイソンとジャバスクリプトとチャットジーピーティー",
+    ]
+    tn = TextNormalizer()
+    tn_off = TextNormalizer(disabled_terms=["エーアイ", "ピーディーエフ"])
+
+    vc_cases = [
+        "こんにちは。改行、次の行です。",
+        "1番目かいぎょう2番目",
+        "テスト カイギョウ テスト2",
+        "改行",
+        "改行コードを変えて",
+        "改行文字を入れる",
+        "自動改行をオン",
+        "ここで改行する",
+        "改行なし",
+        "かぎかっここんにちはかぎかっことじ",
+        "かっこ開き補足かっこ閉じ",
+        "本当にはてなマーク",
+        "すごいびっくりマーク",
+        "はてなマークを付ける",
+    ]
+    undo_cases = [
+        "今のなし",
+        "いまのはなし。",
+        "今のを取り消して",
+        "取り消し",
+        "今の話ではない",
+        "普通の文です",
+    ]
+    period_cases = [
+        "了解です。",
+        "行1。\n行2。",
+        "本当に？",
+        "なるほど。。",
+        "テスト！",
+        "末尾に空白。  ",
+    ]
+
+    import tempfile
+
+    dict_obj = {
+        "hotwords": ["ComfyUI", "Supabase", "あ", "ひらがなだけ"],
+        "replacements": {
+            "コンフィー": "Comfy",
+            "コンフィーUI": "ComfyUI",
+            "すーぱーべーす": "Supabase",
+            "あい": "AI",
+            "やまださん": "山田さん",
+        },
+        "snippets": {
+            "メールアドレス": "test@example.com",
+            "いつもの挨拶": "お世話になっております。\nよろしくお願いします。",
+        },
+        "builtin_off": ["エーアイ"],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        dp = Path(tmp) / "dict.json"
+        dp.write_text(json.dumps(dict_obj, ensure_ascii=False), encoding="utf-8")
+        dic = CustomDictionary(dp)
+        rep_inputs = [
+            "コンフィーUIとコンフィーを使う",
+            "スーパーベースを使う",
+            "アイデアとアイの話",
+            "やまださんとヤマダさん",
+        ]
+        snip_inputs = [
+            "メールアドレス",
+            "メールアドレス。",
+            "めーるあどれす",
+            "メールアドレスを教えて",
+            "いつもの挨拶。",
+        ]
+        stage2 = {
+            "kana": [[s, to_katakana(s), to_hiragana(s), is_kana_only(s), kana_variants(s)]
+                     for s in ["すーぱーべーす", "スーパーベース", "ComfyUI", "あいうえお"]],
+            "fillers": [[s, fr.remove(s)] for s in filler_cases],
+            "normalize": [[s, tn.normalize(s)] for s in norm_cases],
+            "normalize_disabled": [[s, tn_off.normalize(s)] for s in ["エーアイとピーディーエフとジーピーユー"]],
+            "voice_commands": [[s, apply_voice_commands(s)] for s in vc_cases],
+            "undo_command": [[s, is_undo_command(s)] for s in undo_cases],
+            "strip_trailing_period": [[s, strip_chat_trailing_period(s)] for s in period_cases],
+            "dictionary": {
+                "data": dict_obj,
+                "active_hotwords": dic.active_hotwords(),
+                "replacements": [[s, dic.apply_replacements(s)] for s in rep_inputs],
+                "snippets": [[s, list(dic.apply_snippets(s))] for s in snip_inputs],
+                "normalize": [[s, dic.normalize(s)] for s in ["エーアイとピーディーエフ"]],
+            },
+        }
+    (OUT / "stage2.json").write_text(json.dumps(stage2, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
     print("書き出しました:", OUT)
 
 

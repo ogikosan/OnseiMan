@@ -3,7 +3,12 @@
 
 use onseiman_core::acronyms::fix_acronyms;
 use onseiman_core::dict_format::clean_data;
+use onseiman_core::dictionary::{strip_trailing_period, CustomDictionary};
+use onseiman_core::fillers::FillerRemover;
+use onseiman_core::kana::{is_kana_only, kana_variants, to_hiragana, to_katakana};
+use onseiman_core::normalize::TextNormalizer;
 use onseiman_core::segmenter::{join_texts, split_on_pauses, SegmentOptions};
+use onseiman_core::voice_commands::{apply_voice_commands, is_undo_command};
 use serde_json::Value;
 
 fn load(name: &str) -> Value {
@@ -97,6 +102,114 @@ fn text_helpers_match_python() {
             pair[1],
             "{}",
             pair[0]
+        );
+    }
+}
+
+#[test]
+fn stage2_text_and_dictionary_match_python() {
+    let g = load("stage2.json");
+
+    for row in g["kana"].as_array().unwrap() {
+        let s = row[0].as_str().unwrap();
+        assert_eq!(to_katakana(s), row[1].as_str().unwrap(), "to_katakana({s})");
+        assert_eq!(to_hiragana(s), row[2].as_str().unwrap(), "to_hiragana({s})");
+        assert_eq!(
+            is_kana_only(s),
+            row[3].as_bool().unwrap(),
+            "is_kana_only({s})"
+        );
+        let want_v: Vec<String> = row[4]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(kana_variants(s), want_v, "kana_variants({s})");
+    }
+
+    let fr = FillerRemover::default();
+    for pair in g["fillers"].as_array().unwrap() {
+        let inp = pair[0].as_str().unwrap();
+        assert_eq!(fr.remove(inp), pair[1].as_str().unwrap(), "filler({inp})");
+    }
+
+    let tn = TextNormalizer::default();
+    for pair in g["normalize"].as_array().unwrap() {
+        let inp = pair[0].as_str().unwrap();
+        assert_eq!(tn.normalize(inp), pair[1].as_str().unwrap(), "norm({inp})");
+    }
+
+    let tn_off = TextNormalizer::new(["エーアイ", "ピーディーエフ"]);
+    for pair in g["normalize_disabled"].as_array().unwrap() {
+        let inp = pair[0].as_str().unwrap();
+        assert_eq!(
+            tn_off.normalize(inp),
+            pair[1].as_str().unwrap(),
+            "norm_off({inp})"
+        );
+    }
+
+    for pair in g["voice_commands"].as_array().unwrap() {
+        let inp = pair[0].as_str().unwrap();
+        assert_eq!(
+            apply_voice_commands(inp),
+            pair[1].as_str().unwrap(),
+            "vc({inp})"
+        );
+    }
+
+    for pair in g["undo_command"].as_array().unwrap() {
+        let inp = pair[0].as_str().unwrap();
+        assert_eq!(
+            is_undo_command(inp),
+            pair[1].as_bool().unwrap(),
+            "undo({inp})"
+        );
+    }
+
+    for pair in g["strip_trailing_period"].as_array().unwrap() {
+        let inp = pair[0].as_str().unwrap();
+        assert_eq!(
+            strip_trailing_period(inp),
+            pair[1].as_str().unwrap(),
+            "period({inp})"
+        );
+    }
+
+    let d = &g["dictionary"];
+    let dic = CustomDictionary::from_value(&d["data"]);
+    let want_hw: Vec<String> = d["active_hotwords"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(dic.active_hotwords(), want_hw);
+    for pair in d["replacements"].as_array().unwrap() {
+        let inp = pair[0].as_str().unwrap();
+        assert_eq!(
+            dic.apply_replacements(inp),
+            pair[1].as_str().unwrap(),
+            "rep({inp})"
+        );
+    }
+    for pair in d["snippets"].as_array().unwrap() {
+        let inp = pair[0].as_str().unwrap();
+        let want_txt = pair[1][0].as_str().unwrap();
+        let want_ok = pair[1][1].as_bool().unwrap();
+        assert_eq!(
+            dic.apply_snippets(inp),
+            (want_txt.to_string(), want_ok),
+            "snip({inp})"
+        );
+    }
+    for pair in d["normalize"].as_array().unwrap() {
+        let inp = pair[0].as_str().unwrap();
+        assert_eq!(
+            dic.normalize(inp),
+            pair[1].as_str().unwrap(),
+            "dic_norm({inp})"
         );
     }
 }

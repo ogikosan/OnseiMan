@@ -125,4 +125,15 @@
 - Python 版と違うところ（わざと）:
   - 縮めてある WAV（ADPCM など）は受け付けない。読むのは PCM と小数の WAV だけ（OnseiMan のアプリと、M4A から直したものはこの形）
   - `/health` の `fingerprint` は `rust-<版>`。版が Python 版のアプリより新しいので、「認識役が古い」の知らせは出ない
-- 残り: GitHub Actions（`.github/workflows/rust.yml`）で Windows x64・macOS arm64 の自動テスト＆ビルドを回し、Mac の認識役（`server_mac.command`・`launchd`）を Rust バイナリ版へ切り替える。並行して段階 2（`onseiman-core`）を進める。
+- 残り: GitHub Actions（`.github/workflows/rust.yml`）で Windows x64・macOS arm64 の自動テスト＆ビルドを回し、Mac の認識役（`server_mac.command`・`launchd`）を Rust バイナリ版へ切り替える。
+
+### 2026-11-26: 段階 2（`onseiman-core` の文の整え方・辞書）を移植して Python 版と突き合わせた
+
+- できたもの（すべて追加ライブラリなし・純 Rust）:
+  - `kana.rs`（かな相互変換・カタカナ語境界）
+  - `fillers.rs`（言いよどみ除去・句読点整理）
+  - `normalize.rs`（漢数字→数字・全角英数→半角・カタカナ略語 47 語・慣用表現保護）
+  - `voice_commands.rs`（改行・記号コマンド・「今のなし」判定）
+  - `dictionary.rs`（`CustomDictionary`：優先語 40 語上限・置き換え・定型文・読み抽出・文末「。」削り）
+- Python 版との突き合わせ: `tests/golden/stage2.json` の全ケースで Python 版と完全一致（`cargo test --workspace` 33 件通過、`clippy -D warnings` 注意なし）。
+- 段階 2 の残り: `config.rs`（`config.json` 読み書き）・`history.rs`（`history.jsonl` と使用量集計）・`dict_sync.rs`（三方向マージ）・`llm_refine.rs`（AI 整形）。
