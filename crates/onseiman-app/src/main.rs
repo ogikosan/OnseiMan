@@ -53,7 +53,9 @@ use onseiman_platform::hotkey::{
 };
 use onseiman_platform::overlay::{OverlayState, RecordingOverlay};
 use onseiman_platform::paste::{capture_paste_target, paste_text};
-use onseiman_platform::recorder::{list_input_devices, start_recording, RecordingHandle};
+use onseiman_platform::recorder::{
+    list_input_devices, start_recording_ex, warm_mic, RecordingHandle,
+};
 use onseiman_platform::tray::{TrayEvent, TrayIcon};
 use onseiman_platform::uia_watcher::EditCorrectionWatcher;
 use onseiman_platform::watchdog::HookWatchdog;
@@ -265,12 +267,22 @@ async fn main() {
     // 非アクティブ・最前面カプセルオーバーレイ
     let overlay = Arc::new(RecordingOverlay::start());
 
-    // バックグラウンドでサーバーの生死確認＋トレイ色を状態に合わせる
+    // バックグラウンドでサーバーの生死確認＋トレイ色を状態に合わせる＋マイク待機（keep_mic_open）
     {
         let ctx_health = ctx.clone();
         let tray_health = Arc::clone(&tray);
         thread::spawn(move || {
             let cfg = ctx_health.config.lock().unwrap().clone();
+            if cfg.keep_mic_open {
+                let mic = cfg.microphone.as_ref().and_then(|v| v.as_str());
+                match warm_mic(mic) {
+                    Ok(()) => append_log(
+                        &ctx_health.root_dir,
+                        "マイクを待機状態で開きました（押す直前 0.4 秒の声も録れます）",
+                    ),
+                    Err(e) => append_log(&ctx_health.root_dir, &format!("マイク待機失敗: {e}")),
+                }
+            }
             let _ = ctx_health.transcriber.check_server_health(&cfg);
             restore_idle_tray(&ctx_health, &tray_health);
         });
@@ -446,7 +458,7 @@ fn start_hotkey_loop(
                 }
             });
 
-            match start_recording(mic_name, Some(on_level)) {
+            match start_recording_ex(mic_name, cfg.keep_mic_open, Some(on_level)) {
                 Ok(handle) => {
                     if show_ov {
                         ov.position_for(&overlay_place);
