@@ -1,6 +1,6 @@
 """speech.cpp（MIT）と Haas-ja-v1.0（Apache-2.0）の GGUF を、OnseiMan のフォルダの中に用意する。
 
-- speech.cpp: Python も CUDA も WSL2 も要らない、1 つの実行ファイルで動く聞き取りの道具。
+- speech.cpp: Python も CUDA も要らない、1 つの実行ファイルで動く聞き取りの道具。
   Windows は Vulkan 版（CPU でも動く）、Mac は Metal 版。置き場所は tools/speech/。
 - Haas-ja-v1.0 の Q8_0（0.66GB）: models/haas-ja/。CPU でも 1 回 1 秒以内。
 - どちらも決まった版に固定し、ダウンロードしたあと確認用の値（SHA-256）を確かめる。
@@ -82,22 +82,29 @@ def _sha256(path: Path) -> str:
 
 def _download(url: str, dest: Path, sha256: str, label: str, progress: Optional[Progress],
               cancel: Optional[threading.Event]) -> None:
+    """取ってきて、確認の値が合えば dest に置く。途中で止まったものは、次は続きから取る。"""
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
-    req = urllib.request.Request(url, headers={"User-Agent": "OnseiMan"})
-    with urllib.request.urlopen(req, timeout=60) as r, open(part, "wb") as f:
-        total = int(r.headers.get("Content-Length") or 0)
-        done = 0
-        while True:
-            if cancel is not None and cancel.is_set():
-                raise RuntimeError("やめました")
-            block = r.read(1 << 20)
-            if not block:
-                break
-            f.write(block)
-            done += len(block)
-            if progress:
-                progress(label, done, total)
+    have = part.stat().st_size if part.exists() else 0
+    headers = {"User-Agent": "OnseiMan"}
+    if have:
+        headers["Range"] = f"bytes={have}-"
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as r:
+        if have and r.status != 206:
+            have = 0   # 続きから取れない場所だった。はじめから
+        total = have + int(r.headers.get("Content-Length") or 0)
+        done = have
+        with open(part, "ab" if have else "wb") as f:
+            while True:
+                if cancel is not None and cancel.is_set():
+                    raise RuntimeError("やめました")
+                block = r.read(1 << 20)
+                if not block:
+                    break
+                f.write(block)
+                done += len(block)
+                if progress:
+                    progress(label, done, total)
     if _sha256(part) != sha256:
         part.unlink(missing_ok=True)
         raise RuntimeError(f"{label}: ダウンロードしたものが正しいものと一致しませんでした")

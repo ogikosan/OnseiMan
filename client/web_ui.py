@@ -388,9 +388,6 @@ class WebUIServer:
                     elif path == "/api/mic_test":
                         fn_mt = getattr(owner, "get_mic_test_fn", None)
                         self._send_json(fn_mt() if fn_mt else {"state": "idle"})
-                    elif path == "/api/host":
-                        host = getattr(owner, "host_setup", None)
-                        self._send_json(host.status() if host else {"supported": False})
                     elif path.startswith("/api/audio/"):
                         self._serve_audio(path[len("/api/audio/") :])
                     else:
@@ -464,23 +461,6 @@ class WebUIServer:
                         if fn_chk:
                             fn_chk()
                         self._send_json({"ok": True, "update": fn_upd() if fn_upd else None})
-                    elif path.startswith("/api/host/"):
-                        # このパソコンを「声を文字にする役」にする（設定画面の操作）
-                        host = getattr(owner, "host_setup", None)
-                        if host is None:
-                            raise ValueError("このパソコンでは使えません")
-                        action = path[len("/api/host/"):]
-                        if action == "start":
-                            host.start_server(str(body.get("kind", "")))
-                        elif action == "stop":
-                            host.stop_server(remove_gpu=bool(body.get("remove_gpu")))
-                        elif action == "firewall":
-                            host.allow_network()
-                        elif action == "tailscale":
-                            host.tailscale_action(str(body.get("action", "")))
-                        else:
-                            raise ValueError("できない操作です")
-                        self._send_json({"ok": True, **host.status()})
                     elif path == "/api/mic_test/start":
                         fn_start = getattr(owner, "on_mic_test_start", None)
                         if not fn_start:

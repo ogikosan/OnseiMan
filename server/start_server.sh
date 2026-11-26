@@ -7,4 +7,4 @@ if [ ! -x "$PYTHON_BIN" ]; then
   PYTHON_BIN="python3"
 fi
 
-exec "$PYTHON_BIN" server/app.py --host 0.0.0.0 --port 8765 --provider cpu
+exec "$PYTHON_BIN" server/app.py --host 0.0.0.0 --port 8765

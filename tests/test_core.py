@@ -797,13 +797,15 @@ class TestHotwordBudget(unittest.TestCase):
             self.assertEqual(len(words), CustomDictionary.MAX_HOTWORDS)
             self.assertEqual(words[-1], "最新")  # 新しく登録したものが残る
             app = OnseiManApp.__new__(OnseiManApp)
-            app.config = ClientConfig()
+            app.config = ClientConfig(recognition_place="local")
             app.dictionary = d
-            # 実測の目安: 秒数 + 優先語の数 × 0.4 ≤ 25
-            self.assertAlmostEqual(app._max_segment_sec(), 25 - 0.4 * 40)
-            app.dictionary = _mock.MagicMock()
-            app.dictionary.active_hotwords.return_value = ["a"] * 5
-            self.assertEqual(app._max_segment_sec(), 18.0)
+            # Haas-ja は 1 回に 1 つの発話（15 秒まで）。優先語の数では短くならない
+            self.assertEqual(app._max_segment_sec(), 15.0)
+            # 認識役がもっと短い長さを言えば、それに合わせる
+            app.config = ClientConfig(recognition_place="server", server_urls=["http://a:1"])
+            app.transcriber = _mock.MagicMock()
+            app.transcriber.preferred_server_info.return_value = {"max_segment_sec": 10.0}
+            self.assertEqual(app._max_segment_sec(), 10.0)
 
 
 if __name__ == "__main__":

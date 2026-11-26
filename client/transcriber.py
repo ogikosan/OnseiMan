@@ -14,7 +14,8 @@ import requests
 
 from client.config import ClientConfig
 from client.recorder import samples_to_wav_bytes
-from shared.asr_engine import FunASRNanoEngine
+from shared import speechcpp_setup
+from shared.speechcpp_engine import SpeechCppEngine
 
 logger = logging.getLogger("onseiman.transcriber")
 
@@ -30,7 +31,7 @@ _SPECIAL_TOKEN_RE = re.compile(r"(<\|[^|]+\|>|/sil\b)", re.IGNORECASE)
 
 
 def clean_asr_text(text: str) -> str:
-    """Strip Fun-ASR special tokens such as /sil or <|...|>."""
+    """聞き取りの道具が付けることのある印（/sil や <|...|>）を消す。"""
     if not text:
         return ""
     cleaned = _SPECIAL_TOKEN_RE.sub("", text).strip()
@@ -45,7 +46,7 @@ class TranscriptionResult:
 
 
 class HybridTranscriber:
-    """Sends audio to LAN GPU server(s) first, with automatic fallback to local CPU sherpa-onnx.
+    """声を文字にする。「別のパソコン」なら認識役に送り、「このパソコン」なら手元の Haas-ja（speech.cpp）で聞き取る。
 
     速さのための工夫:
     - 最後に成功したサーバーを先に使う。失敗したサーバーは DOWN_RETRY_SEC の間は後回しにし、
@@ -58,7 +59,7 @@ class HybridTranscriber:
     def __init__(self, config: ClientConfig, root_dir: Path) -> None:
         self.config = config
         self.root_dir = root_dir
-        self._local_engine: Optional[FunASRNanoEngine] = None
+        self._local_engine: Optional[SpeechCppEngine] = None
         self._local_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._preferred: str = ""
@@ -137,8 +138,8 @@ class HybridTranscriber:
                         "fingerprint": str(data.get("fingerprint") or "")[:64],
                         "name": str(data.get("name") or "")[:64],
                         "id": str(data.get("id") or "")[:64],
-                        # 聞き取りの仕組み（funasr = CPU 版、haas = GPU 版）と、一度に送ってよい長さ
-                        "engine": str(data.get("engine") or "funasr")[:16],
+                        # 聞き取りの AI の名前と、一度に送ってよい長さ
+                        "engine": str(data.get("engine") or "")[:16],
                         "max_segment_sec": _as_float(data.get("max_segment_sec")),
                     }
                     return str(data.get("provider", "lan"))
@@ -182,7 +183,7 @@ class HybridTranscriber:
             self.last_backend_status = f"LAN ({results[chosen]})"
             return chosen
         if self.config.local_fallback or not self.uses_servers():
-            self.last_backend_status = "Local CPU"
+            self.last_backend_status = "Local"
         else:
             self.last_backend_status = "未接続"
         return None
@@ -195,47 +196,23 @@ class HybridTranscriber:
         except Exception as exc:
             logger.warning("手元の認識エンジンを読み込めませんでした: %s", exc)
 
-    def local_uses_haas(self) -> bool:
-        """このパソコンで聞き取るときに、speech.cpp の Haas-ja を使うか（部品が揃っているとき）。"""
-        from shared import speechcpp_setup
-
-        return (getattr(self.config, "local_engine", "haas") or "haas") == "haas" and speechcpp_setup.ready(self.root_dir)
+    def local_ready(self) -> bool:
+        """このパソコンで聞き取る部品（speech.cpp と Haas-ja）が揃っているか。"""
+        return speechcpp_setup.ready(self.root_dir)
 
     def reset_local(self) -> None:
-        """手元の聞き取りを作り直す（Haas-ja の部品が揃ったとき・設定を変えたとき）。"""
+        """手元の聞き取りを作り直す（設定を変えたとき）。"""
         with self._local_lock:
             old, self._local_engine = self._local_engine, None
-        close = getattr(old, "close", None)
-        if close:
-            try:
-                close()
-            except Exception:
-                pass
+        if old is not None:
+            old.close()
 
-    def _get_local_engine(self):
-        if self._local_engine is None and self.local_uses_haas():
-            from shared.speechcpp_engine import SpeechCppEngine
-
-            try:
-                eng = SpeechCppEngine(self.root_dir, device=getattr(self.config, "local_device", "") or "",
-                                      threads=int(self.config.local_num_threads or 0))
-                eng.load()
-                self._local_engine = eng
-                return eng
-            except Exception as exc:
-                logger.warning("speech.cpp の Haas-ja を使えないので、Fun-ASR で聞き取ります: %s", exc)
+    def _get_local_engine(self) -> SpeechCppEngine:
         if self._local_engine is None:
-            model_dir = Path(self.config.local_model_dir)
-            if not model_dir.is_absolute():
-                model_dir = self.root_dir / model_dir
-            self._local_engine = FunASRNanoEngine(
-                model_dir=model_dir,
-                provider="cpu",
-                num_threads=self.config.local_num_threads,
-                language=self.config.language,
-                itn=self.config.itn,
-            )
-            self._local_engine.load()
+            eng = SpeechCppEngine(self.root_dir, device=getattr(self.config, "local_device", "") or "",
+                                  threads=int(self.config.local_num_threads or 0))
+            eng.load()
+            self._local_engine = eng
         return self._local_engine
 
     def _post(self, url: str, wav_bytes: bytes, hotwords_csv: str, readings: Optional[dict] = None) -> requests.Response:
@@ -294,24 +271,13 @@ class HybridTranscriber:
                 self._tls.session = None
                 logger.warning("LAN サーバー %s への送信に失敗（%.0f 秒は後回し）: %s", base, self.DOWN_RETRY_SEC, exc)
 
-        # 2. Fallback to local CPU sherpa-onnx（「このパソコン」の設定なら最初からここ）
+        # 2. このパソコンで聞き取る（「このパソコン」の設定なら最初からここ。「別のパソコン」なら、つながらないときだけ）
         if self.uses_servers() and not self.config.local_fallback:
-            raise RuntimeError("LAN サーバーに接続できず、ローカルフォールバックも無効です。")
+            raise RuntimeError("認識役のパソコンにつながりません（「つながらないときは、このパソコンで認識する」は切です）")
 
         with self._local_lock:
             engine = self._get_local_engine()
-        local_label = "Local-Haas" if type(engine).__name__ == "SpeechCppEngine" else "Local-CPU"
-        logger.info("このパソコンで聞き取ります (%s)", local_label)
-        extra = {"readings": readings} if (readings and local_label == "Local-Haas") else {}
-        with self._local_lock:
-            text, elapsed_ms = engine.transcribe(
-            samples=samples,
-            sample_rate=sample_rate,
-            hotwords=hotwords_csv,
-            language=self.config.language,
-            itn=self.config.itn,
-            **extra,
-        )
-        text = clean_asr_text(text)
-        self.last_backend_status = "Local Haas" if local_label == "Local-Haas" else "Local CPU"
-        return TranscriptionResult(text=text, backend=local_label, elapsed_ms=elapsed_ms)
+            text, elapsed_ms = engine.transcribe(samples=samples, sample_rate=sample_rate, hotwords=hotwords_csv,
+                                                 readings=readings)
+        self.last_backend_status = "Local"
+        return TranscriptionResult(text=clean_asr_text(text), backend="Local-Haas", elapsed_ms=elapsed_ms)

@@ -9,8 +9,7 @@ $ErrorActionPreference = "Stop"
 $Repo = "ogikosan/OnseiMan"
 $Branch = "main"
 $Root = Split-Path -Parent $PSScriptRoot
-# wsl: GPU で聞き取る版の Linux（約 10GB。動いている間は読めない）。.venv_relay: その中継の Python
-$Keep = @("config.json", "dict.json", "logs", "models", ".venv", ".venv_server", ".venv_relay", "wsl", "backup", "build_dist", "server_data", "browser_profile")
+$Keep = @("config.json", "dict.json", "logs", "models", ".venv", ".venv_server", "backup", "build_dist", "server_data", "browser_profile")
 
 function Finish([int]$code) {
     if ($Restart) {

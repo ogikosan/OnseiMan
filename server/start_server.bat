@@ -6,7 +6,7 @@ if exist ".venv_server\onseiman-ready.txt" goto run
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\tools\install.ps1" -Target server -Starting
 if errorlevel 1 goto failed
 :run
-if exist ".venv_server\Scripts\python.exe" ".venv_server\Scripts\python.exe" server\app.py --host 0.0.0.0 --port 8765 --provider cpu
+if exist ".venv_server\Scripts\python.exe" ".venv_server\Scripts\python.exe" server\app.py --host 0.0.0.0 --port 8765
 pause
 exit /b 0
 :failed

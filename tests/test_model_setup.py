@@ -1,30 +1,21 @@
-"""初回のモデルダウンロード（続きから再開・壊れたファイル・中身の確認）のテスト。"""
+"""聞き取りの部品（speech.cpp と Haas-ja）を取ってくる手順のテスト（続きから再開・中身の確認・zip の中身）。"""
 from __future__ import annotations
 
+import hashlib
 import http.server
 import io
 import sys
-import tarfile
 import tempfile
 import threading
 import unittest
+import zipfile
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from client.model_setup import MODEL_NAME, REQUIRED_FILES, download_and_extract, model_ready  # noqa: E402
-
-
-def _make_archive() -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:bz2") as tar:
-        for name in REQUIRED_FILES + ("README.md",):
-            data = (name * 2000).encode()
-            info = tarfile.TarInfo(f"{MODEL_NAME}/{name}")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return buf.getvalue()
+from shared import speechcpp_setup as s  # noqa: E402
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -37,92 +28,79 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         data = self.payload
         if rng:
             start = int(rng.split("=")[1].split("-")[0])
-            if start >= len(data):
-                self.send_response(416)
-                self.end_headers()
-                return
+            body = data[start:]
             self.send_response(206)
-            data = data[start:]
+            self.send_header("Content-Range", f"bytes {start}-{len(data) - 1}/{len(data)}")
         else:
+            body = data
             self.send_response(200)
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(data)
+        self.wfile.write(body)
 
     def log_message(self, *a):
         pass
 
 
-class TestModelDownload(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        _Handler.payload = _make_archive()
-        cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
-        cls.url = f"http://127.0.0.1:{cls.srv.server_port}/m.tar.bz2"
+class TestDownload(unittest.TestCase):
+    def setUp(self) -> None:
+        _Handler.payload = bytes(range(256)) * 4000
+        _Handler.ranges_seen = []
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}/f"
+        self.sha = hashlib.sha256(_Handler.payload).hexdigest()
+        self.tmp = Path(tempfile.mkdtemp())
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.srv.shutdown()
+    def tearDown(self) -> None:
+        self.srv.shutdown()
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def _run(self, root: Path) -> Path:
-        import hashlib
+    def test_resumes_from_partial_file(self) -> None:
+        dest = self.tmp / "m.gguf"
+        part = dest.with_name(dest.name + ".part")
+        part.write_bytes(_Handler.payload[:100000])   # 前回ここで止まった
+        s._download(self.url, dest, self.sha, "テスト", None, None)
+        self.assertEqual(dest.read_bytes(), _Handler.payload)
+        self.assertEqual(_Handler.ranges_seen, ["bytes=100000-"])
+        self.assertFalse(part.exists())
 
-        return download_and_extract(root, lambda d, t: None, lambda p: None, threading.Event(), url=self.url,
-                                    expected_sha256=hashlib.sha256(_Handler.payload).hexdigest())
+    def test_wrong_file_is_rejected(self) -> None:
+        dest = self.tmp / "m.gguf"
+        with self.assertRaises(RuntimeError):
+            s._download(self.url, dest, "0" * 64, "テスト", None, None)
+        self.assertFalse(dest.exists())
+        self.assertFalse(dest.with_name(dest.name + ".part").exists())
 
-    def test_fresh_download(self):
+    def test_progress_and_cancel(self) -> None:
+        seen = []
+        s._download(self.url, self.tmp / "a", self.sha, "テスト", lambda lab, d, t: seen.append((d, t)), None)
+        self.assertEqual(seen[-1], (len(_Handler.payload), len(_Handler.payload)))
+        stop = threading.Event()
+        stop.set()
+        with self.assertRaises(RuntimeError):
+            s._download(self.url, self.tmp / "b", self.sha, "テスト", None, stop)
+
+
+class TestZipEscape(unittest.TestCase):
+    def test_zip_cannot_write_outside_the_folder(self) -> None:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("../evil.txt", "x")
+        data = buf.getvalue()
         with tempfile.TemporaryDirectory() as d:
-            out = self._run(Path(d))
-            self.assertTrue(model_ready(out))
-            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), [MODEL_NAME])  # 作業ファイルが残らない
-
-    def test_resume_from_partial(self):
-        with tempfile.TemporaryDirectory() as d:
-            part = Path(d) / f"{MODEL_NAME}.tar.bz2.part"
-            half = len(_Handler.payload) // 2
-            part.write_bytes(_Handler.payload[:half])
-            _Handler.ranges_seen.clear()
-            out = self._run(Path(d))
-            self.assertTrue(model_ready(out))
-            self.assertEqual(_Handler.ranges_seen, [f"bytes={half}-"])
-
-    def test_already_complete_partial(self):
-        with tempfile.TemporaryDirectory() as d:
-            (Path(d) / f"{MODEL_NAME}.tar.bz2.part").write_bytes(_Handler.payload)
-            self.assertTrue(model_ready(self._run(Path(d))))
-
-    def test_broken_archive_is_removed_for_retry(self):
-        with tempfile.TemporaryDirectory() as d:
-            (Path(d) / f"{MODEL_NAME}.tar.bz2").write_bytes(b"not a tar")
-            with self.assertRaises(IOError):
-                self._run(Path(d))
-            self.assertFalse((Path(d) / f"{MODEL_NAME}.tar.bz2").exists())
-            self.assertTrue(model_ready(self._run(Path(d))))  # 次は最初からダウンロードして成功
-
-    def test_wrong_content_is_rejected(self):
-        """配布元の確認用の値と違うもの（すり替え・破損）は、展開せずに捨てる。"""
-        with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(IOError):
-                download_and_extract(Path(d), lambda a, b: None, lambda p: None, threading.Event(), url=self.url,
-                                     expected_sha256="0" * 64)
-            self.assertFalse((Path(d) / MODEL_NAME).exists())
-            self.assertFalse((Path(d) / f"{MODEL_NAME}.tar.bz2").exists())
-
-    def test_real_model_hash_is_pinned(self):
-        from client import model_setup
-        import download_model
-
-        self.assertRegex(model_setup.MODEL_SHA256, r"^[0-9a-f]{64}$")
-        self.assertEqual(model_setup.MODEL_SHA256, download_model.MODEL_SHA256)
-
-    def test_cancel(self):
-        with tempfile.TemporaryDirectory() as d:
-            ev = threading.Event()
-            ev.set()
-            with self.assertRaises(InterruptedError):
-                download_and_extract(Path(d), lambda a, b: None, lambda p: None, ev, url=self.url, expected_sha256=None)
-            self.assertFalse((Path(d) / MODEL_NAME).exists())
+            src = Path(d) / "src"
+            src.mkdir()
+            (src / "speech.zip").write_bytes(data)
+            root = Path(d) / "root"
+            with mock.patch.object(s, "platform_key", return_value="windows"), \
+                    mock.patch.dict(s.TOOLS, {"windows": ("speech.zip", hashlib.sha256(data).hexdigest())}), \
+                    mock.patch.object(s, "_BASE", src.as_uri() + "/"):
+                with self.assertRaises(RuntimeError):
+                    s.ensure(root)
+            self.assertFalse((Path(d) / "root" / "tools" / "evil.txt").exists())
+            self.assertFalse((s.tool_dir(root).parent / "evil.txt").exists())
 
 
 if __name__ == "__main__":

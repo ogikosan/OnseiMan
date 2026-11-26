@@ -3,8 +3,7 @@
 #   パソコン全体には何も入れない。管理者の権限もいらない。
 # - 用意には uv（https://github.com/astral-sh/uv）を使う。決まった版を、確認用の値（SHA-256）を確かめてから使う。
 # -Starting: start_client.bat / start_server.bat から、起動の前に呼ばれたとき（終わったら、そのまま起動する）
-# -Target relay: GPU で聞き取る版の中継（server\relay.py）用の Python だけを用意する（部品は入れない）
-param([ValidateSet("client", "server", "relay")][string]$Target = "client", [switch]$Starting)
+param([ValidateSet("client", "server")][string]$Target = "client", [switch]$Starting)
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -16,9 +15,6 @@ $PythonVersion = "3.11"
 if ($Target -eq "server") {
     $VenvName = ".venv_server"
     $Req = "server\requirements.txt"
-} elseif ($Target -eq "relay") {
-    $VenvName = ".venv_relay"
-    $Req = ""
 } else {
     $VenvName = ".venv"
     $Req = "client\requirements.txt"
@@ -99,22 +95,12 @@ if (-not (Test-Path $Py)) {
     }
 }
 
-if ($Target -eq "relay") {
-    # 中継は Python の標準の部品だけで動く
-    & $Py -c "import asyncio"
-    if ($LASTEXITCODE -ne 0) { Write-Host "用意した Python が動きませんでした。"; exit 1 }
-    Set-Content -Path $Ready -Value "ok" -Encoding ASCII
-    exit 0
-}
-
 Write-Host "部品を入れています..."
 $reqPath = Join-Path $Root $Req
 if ($haveUv) {
     & $UvExe pip install --python $Py -r $reqPath
-    if ($LASTEXITCODE -eq 0 -and $Target -eq "server") { & $UvExe pip install --python $Py sherpa-onnx }
 } else {
     & $Py -m pip install -r $reqPath
-    if ($LASTEXITCODE -eq 0 -and $Target -eq "server") { & $Py -m pip install sherpa-onnx }
 }
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
@@ -124,9 +110,9 @@ if ($LASTEXITCODE -ne 0) {
 
 # 入ったものが動くか確かめる
 if ($Target -eq "server") {
-    & $Py -c "import fastapi, uvicorn, numpy, sherpa_onnx"
+    & $Py -c "import fastapi, uvicorn, numpy"
 } else {
-    & $Py -c "import tkinter, numpy, sounddevice, requests, pystray, PIL, sherpa_onnx, uiautomation, pycaw; tkinter.Tcl()"
+    & $Py -c "import tkinter, numpy, sounddevice, requests, pystray, PIL, uiautomation, pycaw; tkinter.Tcl()"
 }
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
@@ -138,22 +124,19 @@ Set-Content -Path $Ready -Value "ok" -Encoding ASCII
 Write-Host ""
 Write-Host "============================================================"
 if ($Target -eq "server") {
-    Write-Host "認識用のデータ（約840MB）を用意しています..."
-    & $Py (Join-Path $Root "download_model.py")
+    Write-Host "聞き取りの部品（speech.cpp と Haas-ja、約0.7GB）を用意しています..."
+    & $Py (Join-Path $Root "shared\speechcpp_setup.py") $Root
     if ($LASTEXITCODE -ne 0) {
         Remove-Item -Path $Ready -Force -ErrorAction SilentlyContinue
+        Write-Host "用意できませんでした。インターネットにつながっているか確かめて、もう一度実行してください。"
         exit 1
     }
-    # 聞き間違いの少ない Haas-ja（speech.cpp、約 0.7GB）。用意できなければ、これまでの Fun-ASR で動く
-    Write-Host "聞き間違いの少ない Haas-ja（約0.7GB）を用意しています..."
-    & $Py (Join-Path $Root "shared\speechcpp_setup.py") $Root
-    if ($LASTEXITCODE -ne 0) { Write-Host "Haas-ja を用意できませんでした（これまでの Fun-ASR で動きます）" }
     Write-Host ""
     if ($Starting) { Write-Host "準備できました。サーバーを起動します。" } else { Write-Host "準備できました。server_windows.bat で起動します。" }
     Write-Host "Windows のファイアウォールの確認が出たら「許可」を選んでください。"
 } else {
     if ($Starting) { Write-Host "準備できました。OnseiMan を起動します。" } else { Write-Host "準備できました。start_client.bat をダブルクリックで起動します。" }
-    Write-Host " - 初めて起動したとき、声を文字にするためのデータ（約840MB）を自動でダウンロードします。"
+    Write-Host " - 初めて起動したとき、声を文字にするための部品（約0.7GB）を自動でダウンロードします。"
     Write-Host " - 右Alt を押して話し、もう一度押すと、カーソルの場所に文字が入ります。"
 }
 Write-Host "============================================================"

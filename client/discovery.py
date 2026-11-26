@@ -112,7 +112,7 @@ def _probe(ip: str, port: int, timeout: float) -> Optional[dict]:
                 # 新しいサーバーは、起動ごとの番号とパソコンの名前を返す（同じパソコンかどうかの判定に使う）
                 "id": str(data.get("id", ""))[:64], "host": str(data.get("name", ""))[:64],
                 # 聞き取りの仕組み（haas = GPU で聞き取る。聞き間違いが少ないので先に選ぶ）
-                "engine": str(data.get("engine", "") or "funasr")[:16]}
+                "engine": str(data.get("engine", "") or "")[:16]}
     except Exception:
         return None
 

@@ -79,13 +79,7 @@ class ClientConfig:
     server_names: Dict[str, str] = field(default_factory=dict)
     # いつも使うサーバー（server_urls のどれか）。止まっているときだけ、ほかのサーバーを使う。空なら最後に成功したもの
     preferred_server: str = ""
-    # NVIDIA の GPU があるパソコンで、GPU 版の認識役（WSL2 と約 10GB）を裏で自動で準備するか。
-    # speech.cpp の Haas-ja が CPU でも速いので、はじめは切。使う人は true にするか、server_gpu.bat で入れる
-    gpu_host_auto: bool = False
-    # このパソコンで聞き取るときの仕組み。haas = speech.cpp の Haas-ja（聞き間違いが少ない。部品は起動したときに裏で用意する）、
-    # funasr = これまでの Fun-ASR Nano。haas の部品がまだ無いときは funasr を使う
-    local_engine: str = "haas"
-    # speech.cpp を動かす場所（空ならおまかせ: Windows は CPU、Mac は GPU）
+    # このパソコンで聞き取るときに speech.cpp を動かす場所（空ならおまかせ: Windows は CPU、Mac は GPU）
     local_device: str = ""
     server_connect_timeout_sec: float = 1.5
     # 辞書をほかのパソコンと合わせる: ""（合わせない）/ "server"（認識役のパソコンに預ける）/ "folder"（同期フォルダに置く）
@@ -96,7 +90,6 @@ class ClientConfig:
     dict_share_name: str = "shared"
     server_read_timeout_sec: float = 30.0
     local_fallback: bool = True
-    local_model_dir: str = "models/sherpa-onnx-funasr-nano-int8-2025-12-30"
     local_num_threads: int = 4
     language: str = ""
     itn: bool = True

@@ -105,23 +105,5 @@ class TestWebUIGuard(unittest.TestCase):
         self.assertEqual(ClientConfig.load(self.cfg).server_urls, [])
 
 
-class TestSafeExtract(unittest.TestCase):
-    def test_model_archive_cannot_escape_folder(self) -> None:
-        from client.model_setup import MODEL_NAME, download_and_extract
-        import threading
-
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w:bz2") as tar:
-            info = tarfile.TarInfo(f"{MODEL_NAME}/evil-link")
-            info.type = tarfile.SYMTYPE
-            info.linkname = "../../../../outside.txt"
-            tar.addfile(info)
-        with tempfile.TemporaryDirectory() as d:
-            (Path(d) / f"{MODEL_NAME}.tar.bz2").write_bytes(buf.getvalue())
-            with self.assertRaises(Exception):
-                download_and_extract(Path(d), lambda a, b: None, lambda p: None, threading.Event(), expected_sha256=None)
-            self.assertFalse((Path(d).parent / "outside.txt").exists())
-
-
 if __name__ == "__main__":
     unittest.main()

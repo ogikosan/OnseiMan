@@ -1,8 +1,8 @@
-"""speech.cpp の worker で Haas-ja を動かす（Python も CUDA も WSL2 も要らない）。
+"""speech.cpp の worker で Haas-ja を動かす（Python も CUDA も要らない）。
 
 `speech worker <モデル>` を 1 つ起動して、AI を読み込んだまま待たせ、JSON Lines でやりとりする
 （https://github.com/nyosegawa/speech.cpp/blob/main/docs/worker.md 、protocol 4）。
-FunASRNanoEngine と同じ形（load / transcribe）で使える。
+アプリの「このパソコン」の聞き取りと、認識役（server/app.py）の両方で使う。
 
 - Haas は「1 回に 1 つの発話」を渡す作り（いくつもの文が入った長い録音だと、文がまるごと抜けることがある）。
   そのため、一度に渡す長さは MAX_SEGMENT_SEC まで（OnseiMan はそれより短く区切って渡す）。
@@ -25,7 +25,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from shared.haas_engine import fix_acronyms
+from shared.acronyms import fix_acronyms
 from shared.speechcpp_setup import find_exe, model_path
 
 logger = logging.getLogger("onseiman.speechcpp")

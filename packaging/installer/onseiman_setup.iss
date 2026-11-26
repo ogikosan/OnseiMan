@@ -63,15 +63,13 @@ Filename: "{app}\start_client.bat"; WorkingDir: "{app}"; Description: "OnseiMan 
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\uninstall_helper.ps1"" -Root ""{app}"""; Flags: runhidden waituntilterminated; RunOnceId: "OnseiManCleanup"
 
 [UninstallDelete]
-; 作り直せる大きなもの（専用の Python・部品・認識用のデータ・GPU 版の Linux・控え）は消す
+; 作り直せる大きなもの（専用の Python・部品・聞き取りの部品・控え）は消す
 Type: filesandordirs; Name: "{app}\.venv"
 Type: filesandordirs; Name: "{app}\.venv_server"
-Type: filesandordirs; Name: "{app}\.venv_relay"
 Type: filesandordirs; Name: "{app}\tools\python"
 Type: filesandordirs; Name: "{app}\tools\bin"
 Type: filesandordirs; Name: "{app}\tools\speech"
 Type: filesandordirs; Name: "{app}\models"
-Type: filesandordirs; Name: "{app}\wsl"
 Type: filesandordirs; Name: "{app}\backup"
 Type: filesandordirs; Name: "{app}\browser_profile"
 Type: filesandordirs; Name: "{app}\__pycache__"
@@ -96,7 +94,7 @@ var
 begin
   if CurStep <> ssPostInstall then
     exit;
-  Args := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\tools\installer_run.ps1') + '" -App';
+  Args := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\tools\installer_run.ps1') + '"';
   if WizardSilent() then
     Args := Args + ' -NoPause';
   WizardForm.StatusLabel.Caption := '部品を用意しています（別の窓に進み具合が出ます。数分かかります）...';

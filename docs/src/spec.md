@@ -24,78 +24,35 @@
 - 使う順番: `preferred_server`（画面の「いつも使う」）→ 最後に成功したサーバー → ほかの登録順。
   失敗したサーバーは 60 秒後回し。初めて探したときは返事がいちばん速いものを「いつも使う」にする。
 
-## Haas-ja を speech.cpp で動かす（はじめの聞き取り。`shared/speechcpp_engine.py`・`shared/speechcpp_setup.py`）
+## 聞き取り（Haas-ja を speech.cpp で動かす。`shared/speechcpp_engine.py`・`shared/speechcpp_setup.py`）
 
+- 聞き取りはこれ 1 つ（アプリの「このパソコン」と、認識役の両方）。予備の聞き取りは持たない。
 - speech.cpp（nyosegawa/speech.cpp、MIT）の `speech worker <gguf> --device cpu|gpu` を 1 つ起動し、JSON Lines（protocol 4）で
   やりとりする。録音は 16bit の PCM を base64 にして 4 秒ずつ `chunk` で送り、`transcribe` で文を受け取る。`progress` は読み飛ばす。
-  優先語は `keywords`（1 行に 1 語）。断られたら優先語なしでやり直す。worker が落ちたら 1 回だけ起動し直す。
+  worker が落ちたら 1 回だけ起動し直す。
+- 優先語は `keywords`（1 行に 1 語、「書き方=読み,読み」）。読みは辞書の「聞き間違えた言い方」のうちカナだけのもの
+  （`CustomDictionary.keyword_readings`、1 語 5 つまで）。認識役には `keywords` 項目（JSON）で送る。断られたら優先語なしでやり直す。
+- 英字はすべて小文字で出るので、よく使う略語を大文字にする（`shared/acronyms.py`）。
 - 部品は版を固定して確認の値で確かめる: speech.cpp 0.11.2（Windows は Vulkan 版、Mac は Metal 版。`tools/speech/`）、
-  Haas-616M-ja-v1.0-Q8_0.gguf（0.66GB、HF のリビジョン固定。`models/haas-ja/`）。
-- 実測（いつもの 14 本、129 秒分）: reo-minipc の CPU 6.7 秒（1 本 0.24〜1.1 秒）、内蔵 GPU（Vulkan）3.9 秒
-  （1 本だけ文の終わりが欠けたので Windows は CPU にする）、Mac M4 Pro の GPU（Metal）0.96 秒、CPU 3.0 秒。文は NeMo 版とほぼ同じ。
-- Haas は 1 回に 1 つの発話を渡す作り（長い録音だと文がまるごと抜けることがある）ので、区切りの上限は 15 秒。
-- アプリ: `local_engine`（haas / funasr、はじめは haas）。起動して 20 秒後に部品を裏で用意し、揃ったら手元の聞き取りを作り直す
-  （`_prepare_haas`）。揃うまでは Fun-ASR。履歴の backend は `Local-Haas`。
-- 認識役: `--engine auto`（はじめの値）は部品があれば speechcpp、なければ funasr。`/health` は `engine: haas`・`runtime: speechcpp`。
-  準備の手順（install.ps1 の server、setup_macos.sh）で部品も用意する。
+  Haas-616M-ja-v1.0-Q8_0.gguf（0.66GB、HF のリビジョン固定。`models/haas-ja/`）。途中で止まったら続きから取る（Range）。
+  zip は取り出し先の外に書けない。
+- 動かす場所: Windows は CPU（内蔵 GPU では文の終わりが欠けたことがある）、Mac は Apple の GPU（`default_device`）。
+- 実測（いつもの 14 本、129 秒分）: reo-minipc の CPU 6.7 秒（1 本 0.24〜1.1 秒）、Mac M4 Pro の GPU 0.96 秒。
+- Haas は 1 回に 1 つの発話を渡す作り（いくつもの文が入った長い録音では、文がまるごと抜けることがある）。
+  区切りの上限は 15 秒（`MAX_SEGMENT_SEC`）。認識役がもっと短い長さを返せば、それに合わせる（`_max_segment_sec`）。
+  短い話は区切らずに通しで聞き取る（上限の 85% まで。区切ると前後のつながりが切れて聞き間違いが増える）。
+- アプリ: はじめて起動したとき、部品が無ければ準備の画面（`client/model_setup.py`）で取ってくる。履歴の backend は `Local-Haas`。
+- 認識役: `server/app.py`。部品が無ければ起動しない（準備の手順 `install.ps1 -Target server`・`setup_macos.sh` が取ってくる）。
+  `/health` は `engine: haas`・`max_segment_sec: 15`。アプリは `engine: haas` の認識役を先に並べ、はじめての「いつも使う」にする。
+- 辞書の優先語は新しく登録した順に 40 語まで。ひらがなだけ・1 文字の言葉は渡さない（`shared/dictionary.py: active_hotwords`）。
 
-## 認識役の 2 つの版（`server/app.py --engine`）
+## インストーラー（`packaging/installer/`、Inno Setup 6）
 
-| | CPU で聞き取る版（`funasr`、既定） | GPU で聞き取る版（`haas`） |
-|---|---|---|
-| 聞き取り | Fun-ASR Nano int8（sherpa-onnx） | Haas-ja-v1.0（NeMo, bf16。`shared/haas_engine.py`） |
-| 動く所 | Mac・Windows・CPU | Linux と NVIDIA の GPU（Windows では WSL2 の `onseiman-gpu`） |
-| 準備 | `server_windows.bat` / `server_mac.command` | `server_gpu.bat`（`tools/setup_gpu_server.ps1` → `server/wsl/setup_haas.sh`） |
-| 一度に送る長さ | 下の表のとおり（ヒントで短くなる） | 25 秒（`/health` の `max_segment_sec`） |
-| 1 回（4070 Ti 実測） | 0.3〜0.6 秒（Mac の CPU） | 0.04〜0.06 秒。GPU の記憶 約 1.9GB |
-
-- GPU 版は Linux の中で `127.0.0.1:8766` に立ち、Windows 側の中継 `server/relay.py`（`.venv_relay`、標準の部品だけ）が
-  `0.0.0.0:8765` で受けて渡す（WSL2 の中のポートはほかのパソコンから見えないため）。起動は
-  `server/start_server_gpu_hidden.vbs`（HKCU の Run `OnseiManServer`）。やめるのは `server_gpu_remove.bat`。
-- GPU 版の読み込みでは、読み込みの直後に `torch.cuda.empty_cache()` して一時的な記憶（約 1.9GB）を返す。
-  CUDA グラフ（速くする仕組み）は残す。聞き取りのたびに返すと CUDA グラフとぶつかって落ちる（実測）。
-- Haas は英字をすべて小文字で書くので、`fix_acronyms` でよく使う略語を大文字にする。優先語は `haas_asr.Vocabulary` に渡す。
-- 部品の版は固定（Haas-ASR のコミット、モデルのリビジョン、uv の版と SHA-256。`setup_haas.sh`）。
-- アプリは、使っている認識役が `engine: haas` なら区切りの上限をその `max_segment_sec` にする（`_max_segment_sec`）。
-
-## このパソコンを認識役にする（裏で自動。`client/host_setup.py`、`client/main.py: _auto_gpu_host`）
-
-- 設定画面には出さない（話す側の「声を文字にする場所」と混ざって分かりにくかった。頼まれる側の準備は必ず要るので、自動でやる）。
-- **はじめは切**（`gpu_host_auto: false`、1.2.25 から）。speech.cpp の Haas-ja が CPU でも速いので、GPU のパソコンに
-  WSL2 と約 10GB を勝手に入れない。true にしたときだけ、次の動きをする。
-- NVIDIA の GPU（ドライバー 580 以上）があるパソコンで起動すると、45 秒後に GPU 版の準備を始める（未準備のときだけ）。
-  失敗したら 24 時間はやり直さない（`logs/gpu_host_auto.json`）。切るのは `config.json` の `gpu_host_auto: false` か、
-  フォルダに `gpu_host_off`（古い版が設定を保存し直しても消えない）。
-- 話す側は、さがしたときに `engine: haas` の認識役を先に並べ、はじめての「いつも使う」にする（`discovery.merge_same_machines`、app.js）。
-- 以下の API と手順は残してある（画面からは呼ばない）:
-
-- T3 Code（pingdotgg/t3code）の「共有とアクセス」にならい、自分では入れず、決まった手順を裏で動かして状態を読む。
-- `GET /api/host` → 状態（すぐ返す。GPU・ファイアウォール・アドレス・Tailscale・認識役の返事は裏のスレッドで確かめて覚えておく）。
-  `POST /api/host/start {kind}`（`tools/installer_run.ps1 -Server cpu|gpu -NoPause` を窓なしで。記録は `logs/host_setup.log`。
-  記録は cp932 と UTF-8 が混ざるので 1 行ずつ見分けて読む）、`/stop {remove_gpu}`（`tools/stop_host_server.ps1`）、
-  `/firewall`（`tools/admin_setup.ps1 -Firewall` を管理者で。tools\python の Python に、ポート 8765・プライベートだけ許可。
-  自動でできた「止める」は消す）、`/tailscale {action: install|login}`。
-- `installer_run.ps1` は、切り替えのときに前の役を止めてから始める。GPU 版で WSL2 を入れたら 3010（再起動のあと RunOnce で続き）。
-- アドレスの一覧は、仮のネットワーク（vEthernet・WSL・Docker・VMware・VirtualBox など）を外し、Tailscale を先にする。
-- インストーラー（`packaging/installer/`、Inno Setup 6）はアプリだけを入れる。`RedirectionGuard=no` が要る
-  （有効だと子の手順にも引き継がれ、uv が Python のジャンクションを作れず os error 448 で失敗する）。
-- GPU 版の中継は、127.0.0.1:8766 で届かなければ Linux のアドレス（`hostname -I`）に渡す（WSL の転送が不安定なパソコンがある。
-  T3 Code も同じ扱い）。そのため Linux の中では 0.0.0.0:8766 で受ける。
-
-## 量の上限（重要）
-
-Fun-ASR Nano は一度に扱える量（音声 + 辞書のヒント + 出力）に上限があり、超えると文が欠けるか空になる。実測：
-
-| 一続きの長さ | ヒント 20 語 | 28 語 | 36 語 | 48 語 |
-|---|---|---|---|---|
-| 12 秒 | OK | OK | OK | ほぼ空 |
-| 15 秒 | OK | OK | 欠ける | 空 |
-| 18 秒 | OK | 欠ける | 空 | 空 |
-
-対策（変えるときは実音声で再確認）：
-- 区切りの上限 = `min(18, 25 - 0.4 × ヒント数)` 秒、最短 6 秒（`client/main.py: _max_segment_sec`）。
-- ヒントは新しく登録した順に 40 語まで。ひらがなだけ・1 文字の言葉は渡さない（`shared/dictionary.py: active_hotwords`）。
-- 区切りの結果が「5 秒以上で 1 秒 1 文字未満」なら、ヒントなしで認識し直して多いほうを使う（`_recognize_safely`）。
+- アプリだけを入れる（管理者の権限なし、はじめは `%LOCALAPPDATA%\Programs\OnseiMan`）。ファイルを置いたあと
+  `tools/installer_run.ps1` で `install.ps1 -Target client` を動かす。聞き取りの部品は、はじめて起動したときに取ってくる。
+- `RedirectionGuard=no` が要る（有効だと子の手順にも引き継がれ、uv が Python のジャンクションを作れず os error 448 で失敗する）。
+- アンインストールで消すのは作り直せる大きなもの（専用の Python・部品・聞き取りの部品・控え）。設定・辞書・履歴は残す。
+- 公開は `python packaging\release.py`（テスト → zip 2 つ → インストーラー → main → タグ → GitHub に公開を全部）。
 
 ## 辞書（`dict.json`）
 
@@ -136,7 +93,7 @@ Fun-ASR Nano は一度に扱える量（音声 + 辞書のヒント + 出力）�
 
 - `install_client.bat` → `tools\install.ps1 -Target client`。uv（版と SHA-256 を固定）を `tools\bin` に取得し、
   専用の Python 3.11 を `tools\python` に置いて `.venv` を作る。Python が入っていなくてよい。最後に全部品の読み込みを確かめる。
-  uv を取得できないときは、入っている Python 3.11 以上で代用する。サーバーは `-Target server`（`.venv_server`、モデルも取得）。
+  uv を取得できないときは、入っている Python 3.11 以上で代用する。サーバーは `-Target server`（`.venv_server`、聞き取りの部品も取得）。
 - `update.bat` → `tools\update.ps1`。GitHub の `main` の zip で上書きし、`install.ps1` で部品を確かめる。
   `config.json`・`dict.json`・`logs`・`models`・`.venv` には触らない。前の版は `backup\` に残す（`tools\bin`・`tools\python` は残さない）。
   動いているかの確かめは、このフォルダから動いている OnseiMan だけ。git で管理しているフォルダ（開発用）は上書きしない。

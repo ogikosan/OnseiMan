@@ -2,7 +2,7 @@
 # OnseiMan の認識サーバーを Mac に準備する（server_mac.command から呼ばれる）。
 # - Python を自分で入れなくてよい。OnseiMan 専用の Python を、このフォルダの中（tools/python）に用意する。
 #   用意には uv（https://github.com/astral-sh/uv）を使う。決まった版を、確認用の値（SHA-256）を確かめてから使う。
-# - 認識用のデータ（約840MB）をダウンロードし、Mac を起動するたびに自動で動くよう登録する（launchd）。
+# - 聞き取りの部品（speech.cpp の Metal 版と Haas-ja、約0.7GB）をダウンロードし、Mac を起動するたびに自動で動くよう登録する（launchd）。
 # - --with-ai を付けると、文章を整える AI（Ollama + qwen2.5:7b、約4.7GB）も入れる。
 set -euo pipefail
 
@@ -56,7 +56,7 @@ if get_uv; then
     echo "OnseiMan 専用の Python を用意しています..."
     "$UV" venv --managed-python --python 3.11 "$VENV"
   fi
-  "$UV" pip install --python "$PY" -r server/requirements.txt sherpa-onnx
+  "$UV" pip install --python "$PY" -r server/requirements.txt
 else
   # 道具を取れないとき: Mac に入っている Python 3.11 以上で代わりに用意する
   PYTHON_BIN=""
@@ -71,18 +71,18 @@ else
     exit 1
   fi
   [ -x "$PY" ] || "$PYTHON_BIN" -m venv "$VENV"
-  "$PY" -m pip install -r server/requirements.txt sherpa-onnx
+  "$PY" -m pip install -r server/requirements.txt
 fi
-if ! "$PY" -c "import fastapi, uvicorn, numpy, soundfile, sherpa_onnx"; then
+if ! "$PY" -c "import fastapi, uvicorn, numpy, soundfile"; then
   echo "用意したものが正しく動きませんでした。この画面の内容を、作った人に見せてください。"
   exit 1
 fi
 
-echo "=== [2/4] 認識用のデータ（約840MB）を用意します ==="
-"$PY" download_model.py
-# 聞き間違いの少ない Haas-ja（speech.cpp の Metal 版、約 0.7GB）。用意できれば、こちらで聞き取る（Apple の GPU で速い）
-echo "聞き間違いの少ない Haas-ja（約0.7GB）を用意しています..."
-"$PY" shared/speechcpp_setup.py "$BASE_DIR" || echo "Haas-ja を用意できませんでした（これまでの Fun-ASR で動きます）"
+echo "=== [2/4] 聞き取りの部品（speech.cpp と Haas-ja、約0.7GB）を用意します ==="
+if ! "$PY" shared/speechcpp_setup.py "$BASE_DIR"; then
+  echo "用意できませんでした。インターネットにつながっているか確かめて、もう一度実行してください。"
+  exit 1
+fi
 
 if [ "${1:-}" != "--with-ai" ]; then
   echo "=== [3/4] AI 整形（Ollama, 約4.7GB）は入れません（入れるときは --with-ai を付けて実行） ==="
@@ -146,7 +146,6 @@ cat > "$HOME/Library/LaunchAgents/com.onseiman.asr.plist" <<EOF
     <string>${BASE_DIR}/server/app.py</string>
     <string>--host</string><string>0.0.0.0</string>
     <string>--port</string><string>${PORT}</string>
-    <string>--provider</string><string>cpu</string>
     <string>--threads</string><string>${THREADS}</string>
   </array>
   <key>RunAtLoad</key><true/>
@@ -159,7 +158,7 @@ EOF
 launchctl unload "$HOME/Library/LaunchAgents/com.onseiman.asr.plist" 2>/dev/null || true
 launchctl load "$HOME/Library/LaunchAgents/com.onseiman.asr.plist"
 
-echo "サーバーの起動を待っています（データの読み込みに 1 分ほどかかります）..."
+echo "サーバーの起動を待っています..."
 ok=""
 for _ in $(seq 1 90); do
   if curl -fs "http://127.0.0.1:${PORT}/health" 2>/dev/null | grep -q '"ok"'; then ok="yes"; break; fi

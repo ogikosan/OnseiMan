@@ -141,7 +141,6 @@ class CustomDictionary:
         """優先語の「読み」: 聞き間違えた言い方のうち、カナだけで書いたもの（例: GitHub ← ギットハブ）。
 
         Haas-ja（speech.cpp・NeMo）は、言葉の書き方と読みを渡すと、聞き取る段階でその言葉にしやすくなる。
-        Fun-ASR は使わない（置き換えはこれまでどおり効く）。
         """
         active = set(self.active_hotwords())
         out: dict = {}

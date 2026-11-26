@@ -1,10 +1,7 @@
-"""OnseiMan LAN 音声認識 API サーバー。
+"""OnseiMan の認識役（ほかのパソコンから届いた声を文字にして返す）。
 
-聞き取りの仕組みは 2 つから選ぶ（--engine）:
-- auto:      speech.cpp と Haas-ja の部品があれば speechcpp、なければ funasr（はじめの値）
-- speechcpp: speech.cpp で Haas-ja（Python も CUDA も要らない。Mac は GPU、Windows は CPU。shared/speechcpp_setup.py が用意する）
-- funasr:    これまでの Fun-ASR Nano / sherpa-onnx
-- haas:      NVIDIA の GPU と Linux で NeMo の Haas-ja（Windows では WSL2 の中。server_gpu.bat が用意する）
+聞き取りは Haas-ja を speech.cpp で動かす（Python も CUDA も要らない。Mac は Apple の GPU、Windows は CPU）。
+部品は shared/speechcpp_setup.py が用意する（server_mac.command / server_windows.bat の準備の手順から）。
 """
 from __future__ import annotations
 
@@ -25,28 +22,6 @@ import wave
 from pathlib import Path
 from typing import Optional
 
-# Ensure pip-installed NVIDIA CUDA 12 / cuDNN 9 DLLs inside venv are discoverable before sherpa_onnx loads
-def _register_nvidia_dll_dirs() -> None:
-    if os.name != "nt":
-        return
-    base = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
-    if not base.is_dir():
-        return
-    added: list[str] = []
-    for bin_dir in sorted(base.glob("*/bin")):
-        if bin_dir.is_dir():
-            p = str(bin_dir)
-            try:
-                os.add_dll_directory(p)
-            except Exception:
-                pass
-            added.append(p)
-    if added:
-        os.environ["PATH"] = os.pathsep.join(added) + os.pathsep + os.environ.get("PATH", "")
-
-
-_register_nvidia_dll_dirs()
-
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -56,10 +31,12 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from shared import speechcpp_setup
 from shared.audio import decode_wav_bytes
 from shared.dict_format import NAME_RE, clean_data
 from shared.segmenter import join_texts, split_on_pauses
 from shared.server_fingerprint import fingerprint, read_version
+from shared.speechcpp_engine import MAX_SEGMENT_SEC, SpeechCppEngine
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,8 +46,7 @@ logger = logging.getLogger("onseiman.server")
 
 # 説明用のページ（/docs など）は出さない
 app = FastAPI(title="OnseiMan ASR Server", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
-engine = None  # FunASRNanoEngine か HaasEngine（main で決める）
-ENGINE_KIND = "funasr"
+engine = None  # SpeechCppEngine（main で読み込む）
 
 
 @app.get("/health")
@@ -79,13 +55,11 @@ def health() -> dict:
         return {"status": "initializing"}
     return {
         "status": "ok",
-        "model": engine.model_name if ENGINE_KIND in ("haas", "speechcpp") else engine.model_dir.name,
+        "model": engine.model_name,
         "provider": engine.active_provider,
-        # つなぐ側には聞き取りの AI の名前を返す（haas なら聞き間違いが少ないので先に選ばれる）
-        "engine": "haas" if ENGINE_KIND in ("haas", "speechcpp") else ENGINE_KIND,
-        "runtime": ENGINE_KIND,
+        "engine": "haas",
         # つなぐ側が、一度に送る長さを決めるのに使う
-        "max_segment_sec": segment_max_sec(""),
+        "max_segment_sec": MAX_SEGMENT_SEC,
         # さがす側が「同じパソコンが 2 つの行き方で見つかった」と分かるようにする
         "id": SERVER_ID,
         "name": SERVER_NAME,
@@ -116,23 +90,8 @@ SERVER_FINGERPRINT = fingerprint(ROOT_DIR)
 
 MAX_AUDIO_BYTES = 30 * 1024 * 1024
 MAX_HOTWORDS_CHARS = 4000
-MAX_AUDIO_SEC = 300.0  # OnseiMan は 18 秒以内に区切って送る
+MAX_AUDIO_SEC = 300.0  # OnseiMan は区切って送る（iPhone のショートカットなどからは長いものも来る）
 CONVERT_TIMEOUT_SEC = 15.0
-
-
-def segment_max_sec(hotwords: str) -> float:
-    """一度に認識に渡す長さ。認識データは一度に扱える量に上限があり（約 30 秒を超えると結果が空になる）、
-    優先語が多いほど短くなる。アプリ（client/main.py の _max_segment_sec）と同じ決め方。"""
-    if ENGINE_KIND == "haas":
-        from shared.haas_engine import MAX_SEGMENT_SEC
-
-        return MAX_SEGMENT_SEC  # 優先語の数で短くならない
-    if ENGINE_KIND == "speechcpp":
-        from shared.speechcpp_engine import MAX_SEGMENT_SEC as SPEECHCPP_MAX
-
-        return SPEECHCPP_MAX  # 1 回に 1 つの発話（長い録音では文が抜けることがある）
-    n = len([h for h in hotwords.split(",") if h.strip()])
-    return max(6.0, min(18.0, 25.0 - 0.4 * n))
 
 
 def parse_readings(raw: str) -> dict:
@@ -222,6 +181,7 @@ async def transcribe(
     audio: UploadFile = File(...),
     hotwords: str = Form(default=""),
     keywords: str = Form(default=""),
+    # 前の版のアプリが送ってくる（Haas-ja は日本語専用なので使わない）
     language: str = Form(default=""),
     itn: bool = Form(default=True),
 ) -> dict:
@@ -251,21 +211,19 @@ async def transcribe(
         raise HTTPException(status_code=400, detail="Unsupported sample rate")
     if samples.size / float(sr) > MAX_AUDIO_SEC:
         raise HTTPException(status_code=413, detail="Audio too long")
-    language = language[:16]
 
     if samples.size == 0:
         return {"text": "", "elapsed_ms": 0.0, "provider": engine.active_provider}
 
     # OnseiMan のアプリは区切って送る。iPhone のショートカットなどから長い音声が来たら、ここで話の切れ目で区切る
-    max_sec = segment_max_sec(hotwords)
+    max_sec = MAX_SEGMENT_SEC
     if samples.size / float(sr) > max_sec:
         parts = split_on_pauses(samples, sr, max_segment_sec=max_sec, min_segment_sec=min(4.0, max_sec * 0.5))
     else:
         parts = [samples]
     texts, elapsed_ms = [], 0.0
     for part in parts:
-        extra = {"readings": readings} if (readings and ENGINE_KIND in ("speechcpp", "haas")) else {}
-        t, ms = engine.transcribe(samples=part, sample_rate=sr, hotwords=hotwords, language=language, itn=itn, **extra)
+        t, ms = engine.transcribe(samples=part, sample_rate=sr, hotwords=hotwords, readings=readings)
         texts.append(t)
         elapsed_ms += ms
     text = join_texts(texts)
@@ -348,59 +306,25 @@ async def put_dict(name: str, request: Request) -> dict:
 
 
 def main() -> None:
-    global engine, ENGINE_KIND
+    global engine
 
-    parser = argparse.ArgumentParser(description="OnseiMan LAN 音声認識サーバー")
+    parser = argparse.ArgumentParser(description="OnseiMan の認識役")
     parser.add_argument("--host", default=os.environ.get("ONSEIMAN_HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("ONSEIMAN_PORT", "8765")))
-    parser.add_argument(
-        "--model-dir",
-        default=os.environ.get(
-            "ONSEIMAN_MODEL_DIR",
-            str(ROOT_DIR / "models" / "sherpa-onnx-funasr-nano-int8-2025-12-30"),
-        ),
-    )
-    parser.add_argument(
-        "--provider",
-        default=os.environ.get("ONSEIMAN_PROVIDER", "cuda"),
-        choices=["cuda", "cpu"],
-        help="推論プロバイダ (GPU PC では cuda、未対応時は自動で cpu にフォールバック)",
-    )
     parser.add_argument("--threads", type=int, default=int(os.environ.get("ONSEIMAN_THREADS", "4")))
-    parser.add_argument(
-        "--engine",
-        default=os.environ.get("ONSEIMAN_ENGINE", "auto"),
-        choices=["auto", "speechcpp", "funasr", "haas"],
-        help="auto = speech.cpp の Haas-ja があればそれ、なければ Fun-ASR",
-    )
     parser.add_argument("--device", default=os.environ.get("ONSEIMAN_DEVICE", ""),
-                        help="speechcpp を動かす場所（gpu / cpu。空ならおまかせ: Mac は GPU、Windows は CPU）")
+                        help="speech.cpp を動かす場所（gpu / cpu。空ならおまかせ: Mac は GPU、Windows は CPU）")
+    # 前の版の起動の登録（Mac の launchd など）が付けている。受け取って使わない
+    parser.add_argument("--provider", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    ENGINE_KIND = args.engine
-    if ENGINE_KIND == "auto":
-        from shared import speechcpp_setup
-
-        ENGINE_KIND = "speechcpp" if speechcpp_setup.ready(ROOT_DIR) else "funasr"
-    if ENGINE_KIND == "speechcpp":
-        from shared.speechcpp_engine import SpeechCppEngine
-
-        engine = SpeechCppEngine(ROOT_DIR, device=args.device, threads=args.threads)
-    elif ENGINE_KIND == "haas":
-        from shared.haas_engine import HaasEngine
-
-        engine = HaasEngine()
-    else:
-        from shared.asr_engine import FunASRNanoEngine
-
-        engine = FunASRNanoEngine(
-            model_dir=args.model_dir,
-            provider=args.provider,
-            num_threads=args.threads,
-        )
+    if not speechcpp_setup.ready(ROOT_DIR):
+        print("聞き取りの部品がありません。server_mac.command（Mac）か server_windows.bat（Windows）で準備してください。", flush=True)
+        sys.exit(1)
+    engine = SpeechCppEngine(ROOT_DIR, device=args.device, threads=args.threads)
     engine.load()
 
-    logger.info("サーバー起動: http://%s:%d (engine=%s, provider=%s)", args.host, args.port, ENGINE_KIND, engine.active_provider)
+    logger.info("サーバー起動: http://%s:%d (%s)", args.host, args.port, engine.active_provider)
     print()
     print("OnseiMan のサーバーが動いています。この窓は開いたままにしてください。")
     print("つなぐ側は、設定の「別のパソコン」→「サーバーをさがす」で自動で見つかります。")

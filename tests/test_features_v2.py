@@ -350,19 +350,20 @@ class TestRecognizeSafely(unittest.TestCase):
         app.transcriber = mock.MagicMock()
         return app
 
-    def test_too_short_result_is_redone_without_hints(self) -> None:
+    def test_readings_are_passed(self) -> None:
+        # 辞書のカナの言い方は、優先語の読みとして渡す
         app = self._app()
-        app.transcriber.transcribe.side_effect = [
-            mock.MagicMock(text="人民たちは", elapsed_ms=100.0),
-            mock.MagicMock(text="人民たちは金欲しさに大をのけものにしてしまって、何でも", elapsed_ms=100.0),
-        ]
-        res = app._recognize_safely(speech(10), SR, "ComfyUI,GitHub")
-        self.assertTrue(res.text.endswith("何でも"))
-        self.assertEqual(app.transcriber.transcribe.call_args_list[1].kwargs["hotwords_csv"], "")
+        app.dictionary = mock.MagicMock()
+        app.dictionary.keyword_readings.return_value = {"GitHub": ["ギットハブ"]}
+        app.transcriber.transcribe.return_value = mock.MagicMock(text="GitHub", elapsed_ms=10.0)
+        app._recognize_safely(speech(3), SR, "GitHub")
+        self.assertEqual(app.transcriber.transcribe.call_args.kwargs["readings"], {"GitHub": ["ギットハブ"]})
 
-    def test_normal_result_is_kept(self) -> None:
+    def test_recognized_once(self) -> None:
         app = self._app()
-        app.transcriber.transcribe.return_value = mock.MagicMock(text="あ" * 40, elapsed_ms=10.0)
+        app.dictionary = mock.MagicMock()
+        app.dictionary.keyword_readings.return_value = {}
+        app.transcriber.transcribe.return_value = mock.MagicMock(text="あ", elapsed_ms=10.0)
         app._recognize_safely(speech(8), SR, "ComfyUI")
         self.assertEqual(app.transcriber.transcribe.call_count, 1)
 
@@ -375,7 +376,7 @@ class TestRecognitionPlace(unittest.TestCase):
         self.assertFalse(tr.uses_servers())
         self.assertEqual(tr.ordered_servers(), [])
         self.assertIsNone(tr.check_server_health())
-        self.assertEqual(tr.last_backend_status, "Local CPU")
+        self.assertEqual(tr.last_backend_status, "Local")
 
     def test_old_settings_keep_using_servers(self) -> None:
         from client.transcriber import HybridTranscriber

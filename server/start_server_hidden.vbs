@@ -29,5 +29,5 @@ On Error GoTo 0
 If threads < 2 Then threads = 2
 If threads > 8 Then threads = 8
 
-cmd = "cmd.exe /c """"" & pythonExe & """ """ & appPy & """ --host 0.0.0.0 --port 8765 --provider cpu --threads " & threads & " > """ & logFile & """ 2>&1"""
+cmd = "cmd.exe /c """"" & pythonExe & """ """ & appPy & """ --host 0.0.0.0 --port 8765 --threads " & threads & " > """ & logFile & """ 2>&1"""
 shell.Run cmd, 0, False

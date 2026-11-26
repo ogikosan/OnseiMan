@@ -232,11 +232,6 @@ class OnseiManApp:
         self._mic_test: dict = {"state": "idle"}
         self.web_ui.on_mic_test_start = self._mic_test_start
         self.web_ui.get_mic_test_fn = lambda: dict(self._mic_test)
-        # このパソコンを「声を文字にする役」にする（設定画面から。Windows でソースのまま動かしているときだけ）
-        if os.name == "nt" and not FROZEN:
-            from client.host_setup import HostSetup
-
-            self.web_ui.host_setup = HostSetup(ROOT_DIR)
         # GitHub に出ている新しい版（なければ None）
         self.update_info: Optional[dict] = None
         self._update_notified = ""
@@ -377,29 +372,13 @@ class OnseiManApp:
             muter.restore()
 
     def _recognize_safely(self, samples, sample_rate: int, hotwords: str):
-        """認識して、話した長さの割に文字が少なすぎるときは、ヒント（辞書の言葉）なしでもう一度認識する。
-
-        モデルは一度に扱える量に上限があり、ヒントが多いと文の後半が消えることがある。
-        区切りの長さで防いでいるが、念のため結果を確かめて、話したことを捨てないようにする。
-        """
+        """認識する。辞書の優先語と、その読み（カナの言い方）を渡す。"""
         try:
             readings = self.dictionary.keyword_readings() if hotwords else {}
         except Exception:
             readings = {}
         extra = {"readings": readings} if readings else {}
-        res = self.transcriber.transcribe(samples=samples, sample_rate=sample_rate, hotwords_csv=hotwords, **extra)
-        dur = len(samples) / float(max(sample_rate, 1))
-        text = getattr(res, "text", "") or ""
-        if hotwords and dur >= 5.0 and len(text) < dur * 1.0 and self._had_voice(samples, dur):
-            again = self.transcriber.transcribe(samples=samples, sample_rate=sample_rate, hotwords_csv="")
-            if len(getattr(again, "text", "") or "") > len(text) * 1.5:
-                logger.warning(
-                    "認識結果が短すぎたため、ヒントなしで認識し直しました (%.1fs: %d文字 → %d文字)",
-                    dur, len(text), len(again.text),
-                )
-                again.elapsed_ms = float(getattr(again, "elapsed_ms", 0.0)) + float(getattr(res, "elapsed_ms", 0.0))
-                return again
-        return res
+        return self.transcriber.transcribe(samples=samples, sample_rate=sample_rate, hotwords_csv=hotwords, **extra)
 
     def _had_voice(self, samples, duration: float) -> bool:
         """声らしい音が入っていたか。入っていない短い録音（押し間違い・試し押し）は履歴に残さない。"""
@@ -437,32 +416,18 @@ class OnseiManApp:
         logger.info("録音中の表示の位置: %s", f"{pos[0]},{pos[1]} に固定" if pos else "カーソルの近く")
 
     def _max_segment_sec(self) -> float:
-        """一度に認識する長さの上限。優先語が多いほど短くする（多いと長い発話の後半が消えるため）。
+        """一度に認識する長さの上限。Haas-ja は 1 回に 1 つの発話を渡す作り（長い録音だと文がまるごと抜けることがある）。"""
+        from shared.speechcpp_engine import MAX_SEGMENT_SEC
 
-        実測（Fun-ASR Nano）: 18 秒は優先語 20 語まで、15 秒は 28 語まで、12 秒は 36 語まで欠けない。
-        → 「秒数 + 優先語の数 × 0.4 ≤ 25」を目安にする。
-        """
-        # GPU で聞き取る版（Haas-ja）は、優先語が多くても長い話を聞き取れる。認識役が教えてくれる長さを使う
-        info = {}
+        limit = min(float(self.config.segment_max_sec), MAX_SEGMENT_SEC)
         try:
             if self.config.recognition_place != "local":
-                info = self.transcriber.preferred_server_info()
-        except Exception:
-            info = {}
-        if info.get("engine") == "haas" and info.get("max_segment_sec"):
-            return max(6.0, float(info["max_segment_sec"]))
-        try:
-            if self.config.recognition_place == "local" and self.transcriber.local_uses_haas():
-                from shared.speechcpp_engine import MAX_SEGMENT_SEC
-
-                return MAX_SEGMENT_SEC
+                server_max = self.transcriber.preferred_server_info().get("max_segment_sec")
+                if server_max:
+                    limit = min(limit, float(server_max))
         except Exception:
             pass
-        try:
-            n = len(self.dictionary.active_hotwords())
-        except Exception:
-            n = 0
-        return max(6.0, min(float(self.config.segment_max_sec), 25.0 - 0.4 * n))
+        return max(6.0, limit)
 
     def _segment_kwargs(self) -> Optional[dict]:
         """話の切れ目で区切る設定（区切らない設定なら None）。"""
@@ -1414,32 +1379,6 @@ class OnseiManApp:
     # ---- GitHub の新しい版（フォルダを置いて使う形） ----
     UPDATE_CHECK_SEC = 24 * 3600
 
-    def _prepare_haas(self) -> None:
-        """このパソコンで聞き取るときの Haas-ja（speech.cpp）の部品を、裏で用意する（はじめの 1 回。約 0.7GB）。
-
-        揃うまでは、これまでの Fun-ASR で聞き取る。揃ったら、次の聞き取りから Haas-ja に替わる。
-        """
-        from shared import speechcpp_setup
-
-        if (getattr(self.config, "local_engine", "haas") or "haas") != "haas" or speechcpp_setup.platform_key() is None:
-            return
-        if not speechcpp_setup.ready(ROOT_DIR):
-            if self._stop_event.wait(20):   # 起動の直後は、ほかの確かめと重ならないように少し待つ
-                return
-            logger.info("Haas-ja（speech.cpp）の部品を用意します")
-            try:
-                speechcpp_setup.ensure(ROOT_DIR, cancel=self._stop_event)
-            except Exception as exc:
-                logger.warning("Haas-ja の部品を用意できませんでした（Fun-ASR で聞き取ります）: %s", exc)
-                return
-            logger.info("Haas-ja の部品を用意しました")
-            self.transcriber.reset_local()
-            self.recorder.segment_kwargs = self._segment_kwargs()
-            if self.config.recognition_place == "local":
-                self.ui.show_status("✓ 聞き間違いの少ない Haas-ja で聞き取るようになりました", bg="#065f46", auto_hide_ms=4000)
-        if self.config.recognition_place == "local" or self.config.local_fallback:
-            self.transcriber.preload_local()
-
     MIC_TEST_SEC = 5.0
 
     def _mic_test_start(self) -> None:
@@ -1507,61 +1446,6 @@ class OnseiManApp:
         except Exception as exc:
             logger.warning("マイクテストで文字にできませんでした: %s", exc)
             st.update(state="done", text="", backend=f"文字にできませんでした（{exc}）")
-
-    GPU_HOST_RETRY_SEC = 24 * 3600
-
-    def _auto_gpu_host(self) -> None:
-        """NVIDIA の GPU があるパソコンなら、ほかのパソコンの声も GPU で文字にできるよう、裏で自動で準備する。
-
-        ほかのパソコンの「別のパソコン」の一覧に出るには、このパソコン側の準備（Haas-ja・ファイアウォール・自動で動く登録）が
-        必ず要るので、画面に出さずに OnseiMan がやる。失敗したら、やり直すのは 1 日に 1 回まで。
-        動画を作る AI などで GPU の記憶を使い切るパソコンは、config.json の gpu_host_auto を false にする。
-        """
-        host = getattr(self.web_ui, "host_setup", None)
-        # 切る方法: config.json の gpu_host_auto を false にするか、OnseiMan のフォルダに gpu_host_off という空のファイルを置く
-        # （ファイルの印は、古い版が設定を保存し直しても消えない）
-        if host is None or not getattr(self.config, "gpu_host_auto", True) or (ROOT_DIR / "gpu_host_off").exists():
-            return
-        if self._stop_event.wait(45):   # 起動の直後は、ほかの確かめと重ならないように少し待つ
-            return
-        state_path = LOG_DIR / "gpu_host_auto.json"
-        try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        except Exception:
-            state = {}
-        try:
-            st = host.status()
-            if st.get("registered") == "gpu" or st.get("gpu_ready") or (st.get("job") or {}).get("running"):
-                return   # もう準備してある（ログインしたときに自動で動く）
-            if time.time() - float(state.get("last", 0)) < self.GPU_HOST_RETRY_SEC:
-                return
-            gpu = host._check_gpu()
-            host._cache["gpu"] = gpu
-            if not gpu.get("ok"):
-                return   # NVIDIA の GPU が無い・ドライバーが古い（ふだん話すだけのパソコン）
-            logger.info("GPU があるので、ほかのパソコンからも使えるように準備します: %s", gpu.get("message"))
-            self.ui.show_status("◌ GPU があるので、ほかのパソコンの声もここで文字にできるよう準備します（10〜20 分）。"
-                                "管理者の確認が出たら「はい」", bg="#0369a1", auto_hide_ms=8000)
-            host.start_server("gpu")
-            state = {"last": time.time(), "result": None}
-            state_path.write_text(json.dumps(state), encoding="utf-8")
-            while not self._stop_event.wait(10):
-                job = host.status().get("job") or {}
-                if not job.get("running"):
-                    break
-            code = (host.status().get("job") or {}).get("result")
-            state["result"] = code
-            state_path.write_text(json.dumps(state), encoding="utf-8")
-            if code == 0:
-                logger.info("GPU で聞き取る準備ができました")
-                self.ui.show_status("✓ 準備できました。ほかのパソコンの「別のパソコン」で、このパソコンが見つかります",
-                                    bg="#065f46", auto_hide_ms=6000)
-            elif code == 3010:
-                self.ui.show_status("WSL2 を入れました。パソコンを再起動すると、続きを自動でします", bg="#92400e", auto_hide_ms=8000)
-            else:
-                logger.warning("GPU で聞き取る準備がうまくいきませんでした（記録: logs\\host_setup.log）: %s", code)
-        except Exception:
-            logger.exception("GPU で聞き取る準備を始められませんでした")
 
     def _update_loop(self) -> None:
         """起動したときと、そのあと 1 日 1 回、GitHub に新しい版がないか確かめる。"""
@@ -1852,8 +1736,6 @@ class OnseiManApp:
                     threading.Thread(target=self._check_update, daemon=True).start()
                 else:
                     threading.Thread(target=self._update_loop, name="update-check", daemon=True).start()
-                    threading.Thread(target=self._auto_gpu_host, name="gpu-host", daemon=True).start()
-                threading.Thread(target=self._prepare_haas, name="haas-setup", daemon=True).start()
                 self._health_poll_loop()
 
             threading.Thread(target=_init_health, daemon=True).start()
@@ -1913,23 +1795,21 @@ def _prepare_first_run() -> None:
 
 
 def _ensure_model(app: "OnseiManApp") -> bool:
-    """このパソコンで認識するのにモデルが無ければ、ダウンロード画面を出す。続けてよければ True。"""
-    from client.model_setup import model_ready, run_setup_window, show_message
+    """このパソコンで聞き取る部品（speech.cpp と Haas-ja）が無ければ、準備の画面を出す。続けてよければ True。"""
+    from client.model_setup import run_setup_window, show_message
+    from shared import speechcpp_setup
 
     cfg = app.config
-    model_dir = Path(cfg.local_model_dir)
-    if not model_dir.is_absolute():
-        model_dir = DATA_DIR / model_dir
     place = (cfg.recognition_place or ("server" if cfg.server_urls else "local"))
-    if (place == "server" and not cfg.local_fallback) or model_ready(model_dir):
+    if (place == "server" and not cfg.local_fallback) or speechcpp_setup.ready(DATA_DIR):
         return True
-    if run_setup_window(model_dir.parent):
+    if run_setup_window(DATA_DIR):
         return True
     if place == "server" and cfg.server_urls:
-        return True  # サーバーがあればモデル無しでも動ける
+        return True  # 認識役のパソコンがあれば、手元の部品が無くても動ける
     show_message(
         "OnseiMan",
-        "音声認識のデータが用意できなかったため終了します。\n"
+        "声を文字にするための部品を用意できなかったため終了します。\n"
         "インターネットにつながった状態で、もう一度 OnseiMan を起動してください。",
     )
     return False
@@ -1953,17 +1833,6 @@ def _selftest(out_path: str) -> int:
 
         report["audio_sessions"] = len(AudioUtilities.GetAllSessions())
         from client.pill import StatusPill  # noqa: F401
-        model_dir = Path(sys.argv[sys.argv.index("--selftest-model") + 1]) if "--selftest-model" in sys.argv else None
-        if model_dir:
-            from shared.asr_engine import FunASRNanoEngine
-
-            eng = FunASRNanoEngine(model_dir=model_dir, provider="cpu", num_threads=4)
-            eng.load()
-            wav = model_dir / "test_wavs" / "ja.wav"
-            samples, sr = decode_wav_bytes(wav.read_bytes())
-            text, ms = eng.transcribe(samples=samples, sample_rate=sr)
-            report["asr_text"] = text
-            report["asr_ms"] = round(ms)
         report["ok"] = True
     except Exception:
         report["ok"] = False
@@ -1993,7 +1862,7 @@ def main() -> None:
         logging.getLogger("onseiman.client").info("OnseiMan は既に起動しています（2重起動をスキップ）")
         return
     app = OnseiManApp()
-    if not _ensure_model(app):  # このパソコンで認識するのにデータが無ければ、ダウンロード画面を出す
+    if not _ensure_model(app):  # このパソコンで聞き取る部品が無ければ、準備の画面を出す
         app.app_logger.close()
         return
     app.run()

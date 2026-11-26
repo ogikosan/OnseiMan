@@ -18,23 +18,19 @@ ROOT = Path(__file__).resolve().parent.parent
 TOP = "OnseiMan"
 SKIP_PARTS = {"__pycache__", ".pytest_cache"}
 SKIP_SUFFIX = {".pyc", ".pyo", ".log"}
-COMMON_FILES = ["download_model.py", "LICENSE", "SECURITY.md", "packaging/friend/変更点.md"]
+COMMON_FILES = ["LICENSE", "SECURITY.md", "packaging/friend/変更点.md"]
 
 # 中の場所 → 元のファイル。フォルダは中身をまとめて入れる。
 PACKAGES = {
     "Windows": {
         "dirs": ["client", "shared", "server", "tools"],
         "skip_suffix": {".sh"},
-        # GPU で聞き取る版は Windows の中の Linux（WSL2）で動くので、その分の .sh は入れる
-        "keep_prefix": ("server/wsl/",),
         "files": ["install_client.bat", "start_client.bat", "update.bat", "server_windows.bat",
-                  "server_gpu.bat", "server_gpu_remove.bat",
                   "packaging/friend/はじめに.md", "packaging/friend/AGENTS.md"],
     },
     "Mac": {
         "dirs": ["shared"],
         "skip_suffix": set(),
-        "keep_prefix": (),
         "files": ["client/version.py", "server/app.py", "server/requirements.txt", "server/setup_macos.sh", "server/start_server.sh",
                   "server_mac.command", "server_mac_remove.command", "packaging/mac/はじめに.md"],
     },
@@ -79,8 +75,8 @@ def collect(kind: str) -> list:
     for d in spec["dirs"]:
         for p in sorted(x for x in (ROOT / d).rglob("*") if x in tracked):
             rel = p.relative_to(ROOT).as_posix()
-            skip = p.suffix in spec["skip_suffix"] and not rel.startswith(spec["keep_prefix"])
-            if p.is_file() and not (SKIP_PARTS & set(p.parts)) and p.suffix not in SKIP_SUFFIX and not skip:
+            if (p.is_file() and not (SKIP_PARTS & set(p.parts))
+                    and p.suffix not in SKIP_SUFFIX and p.suffix not in spec["skip_suffix"]):
                 files.append((p, rel))
     for rel in spec["files"] + COMMON_FILES:
         files.append((ROOT / rel, _arcname(rel)))

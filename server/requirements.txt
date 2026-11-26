@@ -4,4 +4,3 @@ uvicorn>=0.32.0
 python-multipart>=0.0.12
 numpy>=1.26.0
 soundfile>=0.12.1
-# sherpa-onnx is installed separately by tools\install.ps1 / setup_macos.sh (CPU build).

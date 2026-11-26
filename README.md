@@ -20,7 +20,7 @@
 | `OnseiMan-<版>-Windows.zip` | 好きな場所に展開して、`start_client.bat` をダブルクリック |
 
 - Windows 10 / 11（64 ビット）で動きます。Python などを自分で入れる必要はありません。必要なものは、そのフォルダの中に自動で用意します（パソコン全体には何も入れません）
-- はじめて起動したとき、聞き取りの部品（約 0.7GB）を裏で用意します。用意できるまでは、これまでの聞き取り（Fun-ASR、約 840MB）で動きます
+- はじめて起動したとき、聞き取りの部品（約 0.7GB）をダウンロードします（数分。途中で止まっても、次は続きから）
 - インストーラーは、まだデジタル署名をしていません。「PC を保護しました」と出たら「詳細情報」→「実行」で進めてください
 
 ## 使い方
@@ -50,7 +50,6 @@ AI に入れてもらう場合は、[AGENTS.md（入れ方）](packaging/friend/
 
 - Mac で「開けません」と出たら、`server_mac.command` を右クリック→「開く」。それでも開けないときは「システム設定」→「プライバシーとセキュリティ」の「このまま開く」
 - 認識役の Mac には、iPhone のショートカットから声を送って、文字にしてもらうこともできます（[はじめに.md（Mac）](packaging/mac/はじめに.md)）
-- NVIDIA の GPU と WSL2 がある Windows では、`server_gpu.bat` で NVIDIA の GPU を使う版も入れられます（約 10GB。ふつうは要りません）
 
 ## 開発
 
@@ -58,15 +57,16 @@ AI に入れてもらう場合は、[AGENTS.md（入れ方）](packaging/friend/
 - テスト: `.venv\Scripts\python.exe -m unittest discover -s tests`
 - 配る zip（Windows 用・Mac 用）を作る: `python packaging\make_friend_package.py`（`build_dist\` にできる）
 - インストーラーを作る: `python packaging\installer\build_installer.py`（Inno Setup 6 が要る）
+- 公開する: `python packaging\release.py`（テスト・zip・インストーラー・タグ・GitHub への公開を全部）
 
 | 場所 | 中身 |
 |---|---|
 | `client/` | Windows のアプリ（録音・貼り付け・表示・設定画面 `client/web/`） |
-| `shared/` | 聞き取り（`speechcpp_engine.py` = Haas-ja、`asr_engine.py` = Fun-ASR）・辞書・文の整え方など、アプリと認識役で共通の部品 |
+| `shared/` | 聞き取り（`speechcpp_engine.py`・`speechcpp_setup.py`）・辞書・文の整え方など、アプリと認識役で共通の部品 |
 | `server/` | 認識役（Mac の準備: `setup_macos.sh` / Windows: `start_server.bat`。直下のダブルクリック用から呼ばれる） |
 | `tools/` | 準備（`install.ps1`）と更新（`update.ps1`）など |
 | `tests/` | 自動テスト |
-| `packaging/` | 配る説明（`friend/` は Windows 用、`mac/` は Mac 用）と、zip・インストーラー（`installer/`）の作り方。`exe-installer/` は今は使っていない |
+| `packaging/` | 配る説明（`friend/` は Windows 用、`mac/` は Mac 用）と、zip・インストーラー（`installer/`）・公開（`release.py`）の作り方 |
 
 `config.json`・`dict.json`・`logs/`（設定・辞書・履歴と録音）は利用者のデータなので、リポジトリには入れません。
 
@@ -79,7 +79,6 @@ AI に入れてもらう場合は、[AGENTS.md（入れ方）](packaging/friend/
 
 - [Haas-ja-v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0)（Third Intelligence、Apache-2.0）: 日本語の聞き取りの AI
 - [speech.cpp](https://github.com/nyosegawa/speech.cpp)（MIT）: Haas-ja を Python も GPU もなしで動かす道具
-- [Fun-ASR Nano](https://github.com/FunAudioLLM/Fun-ASR)（[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 版）: これまでの聞き取り（予備）
 
 ## ライセンス
 

@@ -36,7 +36,7 @@ class _ServerCase(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = mock.MagicMock(active_provider="cpu")
         self.engine.transcribe.return_value = ("こんにちは", 12.0)
-        self.engine.model_dir.name = "m"
+        self.engine.model_name = "Haas-ja-v1.0"
         p = mock.patch.object(srv, "engine", self.engine)
         p.start()
         self.addCleanup(p.stop)
@@ -89,10 +89,10 @@ class TestServerGuard(_ServerCase):
         self.assertTrue(all(c.kwargs["samples"].size / sr <= 18.0 for c in calls))
         self.assertTrue(r.json()["text"].startswith("一つ目二つ目"))
 
-    def test_segment_length_follows_hotwords(self) -> None:
-        self.assertEqual(srv.segment_max_sec(""), 18.0)
-        self.assertLess(srv.segment_max_sec(",".join(f"w{i}" for i in range(30))), 18.0)
-        self.assertEqual(srv.segment_max_sec(",".join(f"w{i}" for i in range(200))), 6.0)
+    def test_health_tells_engine_and_segment_length(self) -> None:
+        h = self.c.get("/health").json()
+        self.assertEqual(h["engine"], "haas")
+        self.assertEqual(h["max_segment_sec"], 15.0)
 
     def test_error_does_not_leak_details(self) -> None:
         r = self._post(b"RIFF" + b"\0" * 4 + b"WAVE" + b"\0" * 60)

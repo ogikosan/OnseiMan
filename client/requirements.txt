@@ -6,5 +6,3 @@ pystray>=0.19.5
 Pillow>=10.4.0
 uiautomation>=2.0.20
 pycaw>=20240316
-# Speech recognition on this PC (also used when no server is reachable)
-sherpa-onnx>=1.12.20

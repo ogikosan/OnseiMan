@@ -322,7 +322,7 @@
               <details class="adv server-guide" id="server-guide">
                 <summary>相手のパソコンの準備のしかた（はじめて使うとき）</summary>
                 <div class="guide-body">
-                  <p>声を文字にする役のパソコンには、OnseiMan のサーバーと、認識用のデータ（約840MB）が要ります。</p>
+                  <p>声を文字にする役のパソコンには、OnseiMan のサーバーと、聞き取りの部品（約0.7GB）が要ります。</p>
                   <p class="guide-warn"><b>このパソコンから、相手のパソコンに入れることはしません。</b>
                   相手のパソコンの前で、そのパソコンを使っている人（自分のパソコンなら自分）が、次の準備をしてください。
                   ほかの人のパソコンを使うときは、先にその人に聞いてください。</p>
@@ -330,12 +330,8 @@
                     <li>相手のパソコンに OnseiMan を置く。GitHub の「Releases」から、Windows なら <code>OnseiMan-…-Windows.zip</code>、
                       Mac なら <code>OnseiMan-…-Mac.zip</code> を取ってきて展開する（このフォルダをコピーしても同じ）</li>
                     <li><b>Windows のとき</b>：<code>server_windows.bat</code> をダブルクリック。
-                      はじめては、そのパソコンに必要なものとデータ（約840MB）をダウンロードするので、数分〜10分かかります。「ファイアウォール」の確認が出たら「許可」。
+                      はじめては、そのパソコンに必要なものと聞き取りの部品（約0.7GB）をダウンロードするので、数分〜10分かかります。「ファイアウォール」の確認が出たら「許可」。
                       <b>使うあいだは、出てきた黒い窓を閉じないでください。</b></li>
-                    <li><b>NVIDIA の GPU（RTX など）がある Windows のとき</b>：<code>server_windows.bat</code> のかわりに
-                      <code>server_gpu.bat</code> をダブルクリックすると、<b>GPU で聞き取る版</b>（聞き間違いがずっと少ない）になります。
-                      WSL2 が要ります。はじめては 10〜20分かかり、GPU の記憶を約 2GB、置き場所を約 10GB 使います。
-                      一度済めば、ログインするたびに窓を出さずに自動で動きます。やめるときは <code>server_gpu_remove.bat</code>。</li>
                     <li><b>Mac のとき</b>：<code>server_mac.command</code> をダブルクリック（Python は要りません）。
                       データのダウンロードを含めて 10分ほどかかります。「開けません」と出たら、右クリック→「開く」。
                       一度済めば、Mac を起動するたびに自動で動きます。やめるときは <code>server_mac_remove.command</code>。</li>
