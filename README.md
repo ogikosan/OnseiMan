@@ -76,10 +76,14 @@ AI に入れてもらう場合は、[AGENTS.md（入れ方）](packaging/friend/
 守り方と、問題を見つけたときの知らせ方は [SECURITY.md](SECURITY.md) にあります。
 認識役（任意）は合言葉なしで使えるので、信頼できるネットワーク（家の Wi-Fi・Tailscale）の中でだけ動かしてください。
 
-## 使わせてもらっているもの
+## スペシャルサンクス
+
+OnseiMan は、次の方々が公開しているものに支えられています。ありがとうございます。
 
 - [Haas-ja-v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0)（Third Intelligence、Apache-2.0）: 日本語の聞き取りの AI
+- [Haas-ja-v1.0-GGUF](https://huggingface.co/sakasegawa/Haas-ja-v1.0-GGUF)（sakasegawa）: Haas-ja を軽くした版。OnseiMan はこの中の `Q8_0` を使っています
 - [speech.cpp](https://github.com/nyosegawa/speech.cpp)（MIT）: Haas-ja を Python も GPU もなしで動かす道具
+- [OpenHinoVoice](https://github.com/iiinno/OpenHinoVoice): マイクを試す機能や、辞書の読みをヒントにする仕組みの参考にさせてもらいました
 
 ## ライセンス
 
