@@ -146,8 +146,11 @@ async fn main() {
 
     // システムトレイアイコン（左クリックで管理画面、右クリックで終了）
     let (tray_tx, tray_rx) = mpsc::channel();
-    let _tray = TrayIcon::start(&format!("OnseiMan v{}", env!("CARGO_PKG_VERSION")), tray_tx);
-    append_log(&ctx.root_dir, &format!("tray_add={}", _tray.is_added()));
+    let tray = Arc::new(TrayIcon::start(
+        &format!("OnseiMan v{}", env!("CARGO_PKG_VERSION")),
+        tray_tx,
+    ));
+    append_log(&ctx.root_dir, &format!("tray_add={}", tray.is_added()));
     {
         let url_tray = url.clone();
         let profile = ctx.root_dir.join("logs").join("browser_profile");
@@ -168,17 +171,19 @@ async fn main() {
     // 非アクティブ・最前面カプセルオーバーレイ
     let overlay = Arc::new(RecordingOverlay::start());
 
-    // バックグラウンドでサーバーの生死確認
+    // バックグラウンドでサーバーの生死確認＋トレイ色を状態に合わせる
     {
         let ctx_health = ctx.clone();
+        let tray_health = Arc::clone(&tray);
         thread::spawn(move || {
             let cfg = ctx_health.config.lock().unwrap().clone();
             let _ = ctx_health.transcriber.check_server_health(&cfg);
+            restore_idle_tray(&ctx_health, &tray_health);
         });
     }
 
     // グローバルホットキー＋録音・認識・貼り付けループ
-    let _hotkey_guard = start_hotkey_loop(ctx.clone(), Arc::clone(&overlay));
+    let _hotkey_guard = start_hotkey_loop(ctx.clone(), Arc::clone(&overlay), Arc::clone(&tray));
 
     if args.open_ui {
         let profile = ctx.root_dir.join("logs").join("browser_profile");
@@ -205,7 +210,28 @@ struct ActiveSession {
     silence_triggered: Arc<AtomicBool>,
 }
 
-fn start_hotkey_loop(ctx: Arc<AppContext>, overlay: Arc<RecordingOverlay>) -> Option<GlobalHotkey> {
+fn restore_idle_tray(ctx: &AppContext, tray: &TrayIcon) {
+    let status = ctx.transcriber.last_backend_status();
+    let rgb = if status.starts_with("LAN") {
+        (0x16, 0xa3, 0x4a) // 緑（LAN 待機）
+    } else if status.starts_with("Local") {
+        (0xca, 0x8a, 0x04) // 黄（ローカル待機）
+    } else {
+        (0x6b, 0x72, 0x80) // 灰（未接続）
+    };
+    let hk = ctx
+        .config
+        .lock()
+        .map(|c| c.hotkey.clone())
+        .unwrap_or_else(|_| "ralt".into());
+    tray.set_state(rgb, &format!("OnseiMan | 待機中（{status}）| キー: {hk}"));
+}
+
+fn start_hotkey_loop(
+    ctx: Arc<AppContext>,
+    overlay: Arc<RecordingOverlay>,
+    tray: Arc<TrayIcon>,
+) -> Option<GlobalHotkey> {
     let cfg = ctx.config.lock().unwrap().clone();
     let primary = parse_binding(&cfg.hotkey).ok()?;
     let extra = if cfg.hotkey_extra.trim().is_empty() {
@@ -307,6 +333,11 @@ fn start_hotkey_loop(ctx: Arc<AppContext>, overlay: Arc<RecordingOverlay>) -> Op
                             level: 0.0,
                         });
                     }
+                    if use_ai {
+                        tray.set_state((0x7c, 0x3a, 0xed), "OnseiMan | AI 録音中…");
+                    } else {
+                        tray.set_state((0xdc, 0x26, 0x26), "OnseiMan | 録音中…");
+                    }
                     *slot = Some(ActiveSession {
                         handle,
                         _mute_guard: mute_guard,
@@ -334,6 +365,7 @@ fn start_hotkey_loop(ctx: Arc<AppContext>, overlay: Arc<RecordingOverlay>) -> Op
             let duration_sec = samples.len() as f64 / 16_000.0;
             if duration_sec < 0.15 {
                 ov.set_state(OverlayState::Hidden);
+                restore_idle_tray(ctx, &tray);
                 eprintln!("録音が短すぎるためスキップ ({duration_sec:.2}s)");
                 return;
             }
@@ -341,8 +373,10 @@ fn start_hotkey_loop(ctx: Arc<AppContext>, overlay: Arc<RecordingOverlay>) -> Op
             if show_ov {
                 ov.set_state(OverlayState::Transcribing);
             }
+            tray.set_state((0x7c, 0x3a, 0xed), "OnseiMan | 文字にしています…");
             let ctx_job = ctx.clone();
             let ov_job = Arc::clone(ov);
+            let tray_job = Arc::clone(&tray);
             let target = sess.target;
             let use_ai = sess.use_ai;
             thread::spawn(move || {
@@ -408,6 +442,7 @@ fn start_hotkey_loop(ctx: Arc<AppContext>, overlay: Arc<RecordingOverlay>) -> Op
                     }
                 }
                 ov_job.set_state(OverlayState::Hidden);
+                restore_idle_tray(&ctx_job, &tray_job);
             });
         };
 
@@ -459,6 +494,7 @@ fn start_hotkey_loop(ctx: Arc<AppContext>, overlay: Arc<RecordingOverlay>) -> Op
                         let _ = sess.handle.stop();
                         drop(sess._mute_guard);
                         overlay.set_state(OverlayState::Hidden);
+                        restore_idle_tray(&ctx, &tray);
                         eprintln!("録音をキャンセルしました");
                     }
                 }

@@ -87,6 +87,12 @@ impl LlmRefiner {
                 "AI のアドレスが入っていません（設定の「AI で整える」で入れてください）".into(),
             );
         }
+        if !base.is_empty() {
+            let lower = base.to_ascii_lowercase();
+            if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+                return Err("AI のアドレスは http:// または https:// で始めてください".into());
+            }
+        }
         Ok(Self {
             provider: provider.to_string(),
             model: resolved_model,
@@ -97,12 +103,11 @@ impl LlmRefiner {
     }
 
     fn agent(&self) -> ureq::Agent {
-        let mut b = ureq::AgentBuilder::new().timeout(self.timeout);
-        // クラウド API はリダイレクト先へ API キーを送らないようリダイレクトを止める
-        if self.provider != "ollama" {
-            b = b.redirects(0);
-        }
-        b.build()
+        // リダイレクト先へ API キーや本文が送られないよう全プロバイダでリダイレクトを止める
+        ureq::AgentBuilder::new()
+            .timeout(self.timeout)
+            .redirects(0)
+            .build()
     }
 
     fn post_json(
@@ -137,6 +142,7 @@ impl LlmRefiner {
         let url = format!("{}/api/tags", self.base_url);
         ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(2))
+            .redirects(0)
             .build()
             .get(&url)
             .call()

@@ -23,7 +23,8 @@ mod imp {
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::Shell::{
-        Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+        Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+        NOTIFYICONDATAW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
@@ -35,17 +36,26 @@ mod imp {
     };
 
     const WM_TRAY_ICON: u32 = WM_APP + 20;
+    const WM_TRAY_UPDATE: u32 = WM_APP + 21;
     const CMD_OPEN_UI: usize = 1001;
     const CMD_QUIT: usize = 1002;
 
+    struct PendingIcon {
+        rgb: (u8, u8, u8),
+        tooltip: String,
+    }
+
     static TRAY_TX: OnceLock<Mutex<Option<Sender<TrayEvent>>>> = OnceLock::new();
+    static PENDING_ICON: OnceLock<Mutex<Option<PendingIcon>>> = OnceLock::new();
+    static CUR_ICON: OnceLock<Mutex<(isize, bool)>> = OnceLock::new();
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    /// 元の `_make_icon_image("#2563eb")`（64×64 座標系）と同じ青い丸＋白いマイクを 32×32 BGRA で描く。
-    pub(super) unsafe fn create_mic_icon(r_bg: u8, g_bg: u8, b_bg: u8) -> HICON {
+    /// 元の `_make_icon_image`（64×64 座標系）と同じ丸＋白いマイクを 32×32 BGRA で描く。
+    /// 戻り値の `bool` が `true` のときのみ `DestroyIcon` で解放すべき自作アイコン。
+    pub(super) unsafe fn create_mic_icon(r_bg: u8, g_bg: u8, b_bg: u8) -> (HICON, bool) {
         const SIZE: i32 = 32;
         let bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
@@ -73,7 +83,10 @@ mod imp {
             0,
         );
         if hbm_color.is_null() || bits.is_null() {
-            return LoadIconW(ptr::null_mut(), IDI_APPLICATION);
+            if !hbm_color.is_null() {
+                DeleteObject(hbm_color);
+            }
+            return (LoadIconW(ptr::null_mut(), IDI_APPLICATION), false);
         }
 
         let buf = std::slice::from_raw_parts_mut(bits as *mut u8, (SIZE * SIZE * 4) as usize);
@@ -125,6 +138,10 @@ mod imp {
         }
 
         let hbm_mask = CreateBitmap(SIZE, SIZE, 1, 1, ptr::null());
+        if hbm_mask.is_null() {
+            DeleteObject(hbm_color);
+            return (LoadIconW(ptr::null_mut(), IDI_APPLICATION), false);
+        }
         let ii = ICONINFO {
             fIcon: 1,
             xHotspot: 0,
@@ -136,9 +153,9 @@ mod imp {
         DeleteObject(hbm_color);
         DeleteObject(hbm_mask);
         if icon.is_null() {
-            LoadIconW(ptr::null_mut(), IDI_APPLICATION)
+            (LoadIconW(ptr::null_mut(), IDI_APPLICATION), false)
         } else {
-            icon
+            (icon, true)
         }
     }
 
@@ -194,6 +211,35 @@ mod imp {
                     emit(TrayEvent::OpenUi);
                 } else if id == CMD_QUIT {
                     emit(TrayEvent::Quit);
+                }
+                return 0;
+            }
+            WM_TRAY_UPDATE => {
+                if let Some(lock) = PENDING_ICON.get() {
+                    if let Ok(mut g) = lock.lock() {
+                        if let Some(p) = g.take() {
+                            let (new_icon, new_owned) = create_mic_icon(p.rgb.0, p.rgb.1, p.rgb.2);
+                            let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+                            nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+                            nid.hWnd = hwnd;
+                            nid.uID = 1;
+                            nid.uFlags = NIF_ICON | NIF_TIP;
+                            nid.hIcon = new_icon;
+                            let tip_u16: Vec<u16> = p.tooltip.encode_utf16().take(127).collect();
+                            for (i, ch) in tip_u16.into_iter().enumerate() {
+                                nid.szTip[i] = ch;
+                            }
+                            Shell_NotifyIconW(NIM_MODIFY, &nid);
+                            let cur = CUR_ICON.get_or_init(|| Mutex::new((0, false)));
+                            if let Ok(mut cg) = cur.lock() {
+                                let (old, old_owned) = *cg;
+                                *cg = (new_icon as isize, new_owned);
+                                if old_owned && old != 0 {
+                                    DestroyIcon(old as HICON);
+                                }
+                            }
+                        }
+                    }
                 }
                 return 0;
             }
@@ -267,7 +313,7 @@ mod imp {
                 }
 
                 // 元の OnseiMan 待機アイコン（緑 #16a34a＋白マイク）
-                let custom_icon = create_mic_icon(0x16, 0xa3, 0x4a);
+                let (custom_icon, custom_owned) = create_mic_icon(0x16, 0xa3, 0x4a);
                 let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
                 nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
                 nid.hWnd = hwnd;
@@ -280,6 +326,9 @@ mod imp {
                     nid.szTip[i] = ch;
                 }
                 let ok = Shell_NotifyIconW(NIM_ADD, &nid) != 0;
+                if let Ok(mut cg) = CUR_ICON.get_or_init(|| Mutex::new((0, false))).lock() {
+                    *cg = (custom_icon as isize, custom_owned);
+                }
                 if !ok {
                     let err = windows_sys::Win32::Foundation::GetLastError();
                     eprintln!(
@@ -295,8 +344,12 @@ mod imp {
                     DispatchMessageW(&msg);
                 }
                 Shell_NotifyIconW(NIM_DELETE, &nid);
-                if !custom_icon.is_null() {
-                    DestroyIcon(custom_icon);
+                if let Ok(mut cg) = CUR_ICON.get_or_init(|| Mutex::new((0, false))).lock() {
+                    let (cur, owned) = *cg;
+                    *cg = (0, false);
+                    if owned && cur != 0 {
+                        DestroyIcon(cur as HICON);
+                    }
                 }
             });
 
@@ -312,6 +365,24 @@ mod imp {
 
         pub fn is_added(&self) -> bool {
             self.added
+        }
+
+        /// トレイアイコンの色（RGB）とツールチップを動的に変更する。
+        pub fn set_state(&self, rgb: (u8, u8, u8), tooltip: &str) {
+            let lock = PENDING_ICON.get_or_init(|| Mutex::new(None));
+            if let Ok(mut g) = lock.lock() {
+                *g = Some(PendingIcon {
+                    rgb,
+                    tooltip: tooltip.to_string(),
+                });
+            }
+            if let Ok(h) = self.hwnd.lock() {
+                if *h != 0 {
+                    unsafe {
+                        PostMessageW(*h as HWND, WM_TRAY_UPDATE, 0, 0);
+                    }
+                }
+            }
         }
     }
 
@@ -349,6 +420,7 @@ mod imp {
         pub fn is_added(&self) -> bool {
             true
         }
+        pub fn set_state(&self, _rgb: (u8, u8, u8), _tooltip: &str) {}
     }
 }
 
@@ -362,8 +434,9 @@ mod tests {
     #[test]
     fn mic_icon_creates_cleanly() {
         unsafe {
-            let h = create_mic_icon(0x25, 0x63, 0xeb);
+            let (h, owned) = create_mic_icon(0x25, 0x63, 0xeb);
             assert!(!h.is_null(), "mic icon must create cleanly");
+            assert!(owned, "custom mic icon should be owned");
             DestroyIcon(h);
         }
     }

@@ -90,35 +90,64 @@ pub fn unprotect(stored: &str) -> String {
     let slice = unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) };
     let text = String::from_utf8(slice.to_vec()).unwrap_or_default();
     unsafe {
+        for i in 0..(output.cbData as usize) {
+            ptr::write_volatile(output.pbData.add(i), 0);
+        }
         LocalFree(output.pbData as _);
     }
     text
 }
 
+#[cfg(windows)]
+pub fn protect_for(_account: &str, value: &str) -> Result<String, String> {
+    protect(value)
+}
+
 #[cfg(target_os = "macos")]
 pub fn protect_named(account: &str, value: &str) -> Result<String, String> {
-    use std::process::Command;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
 
     if value.is_empty() {
         return Ok(String::new());
     }
-    let st = Command::new("/usr/bin/security")
-        .args([
-            "add-generic-password",
-            "-U",
-            "-s",
-            "OnseiMan",
-            "-a",
-            account,
-            "-w",
-            value,
-        ])
-        .status()
+    let safe_account: String = account
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    let safe_account = if safe_account.is_empty() {
+        "default".to_string()
+    } else {
+        safe_account
+    };
+    let hex_val: String = value
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let mut child = Command::new("/usr/bin/security")
+        .arg("-i")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Keychain への保存に失敗しました: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let cmd = format!("add-generic-password -U -s OnseiMan -a {safe_account} -X {hex_val}\n");
+        let _ = stdin.write_all(cmd.as_bytes());
+    }
+    let st = child
+        .wait()
         .map_err(|e| format!("Keychain への保存に失敗しました: {e}"))?;
     if !st.success() {
         return Err("Keychain への保存に失敗しました".into());
     }
-    Ok(format!("{KEYCHAIN_PREFIX}{account}"))
+    Ok(format!("{KEYCHAIN_PREFIX}{safe_account}"))
+}
+
+#[cfg(target_os = "macos")]
+pub fn protect_for(account: &str, value: &str) -> Result<String, String> {
+    protect_named(account, value)
 }
 
 #[cfg(target_os = "macos")]
@@ -157,6 +186,11 @@ pub fn unprotect(stored: &str) -> String {
 #[cfg(not(any(windows, target_os = "macos")))]
 pub fn protect(_value: &str) -> Result<String, String> {
     Err("この OS では API キーの暗号化保存に未対応です".into())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn protect_for(_account: &str, value: &str) -> Result<String, String> {
+    protect(value)
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]

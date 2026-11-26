@@ -11,7 +11,7 @@ mod imp {
         OpenClipboard, SetClipboardData,
     };
     use windows_sys::Win32::System::Memory::{
-        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+        GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
     };
 
     const CF_UNICODETEXT: u32 = 13;
@@ -43,8 +43,9 @@ mod imp {
                 if ptr.is_null() {
                     None
                 } else {
+                    let max_u16 = GlobalSize(h) / std::mem::size_of::<u16>();
                     let mut len = 0usize;
-                    while *ptr.add(len) != 0 {
+                    while len < max_u16 && *ptr.add(len) != 0 {
                         len += 1;
                     }
                     let slice = std::slice::from_raw_parts(ptr, len);

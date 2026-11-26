@@ -16,6 +16,9 @@ on:
       - ".github/workflows/rust.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -54,10 +57,10 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Build release binaries
-        run: cargo build --release -p onseiman-server -p onseiman-app
+        run: cargo build --release --locked -p onseiman-server -p onseiman-app
 
       - name: Package artifacts & SHA-256
         shell: bash

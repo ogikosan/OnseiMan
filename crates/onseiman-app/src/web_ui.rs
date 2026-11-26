@@ -20,10 +20,12 @@ use onseiman_core::dict_format::valid_name;
 use onseiman_core::dictionary::CustomDictionary;
 use onseiman_core::fillers::DEFAULT_FILLERS;
 use onseiman_core::history::HistoryStore;
+use onseiman_core::learner::{CandidateStore, LearningCandidate};
 use onseiman_core::llm_refine::{LlmRefiner, TEST_TEXT};
 use onseiman_core::normalize::BUILTIN_TERMS;
 use onseiman_platform::binding::parse_binding;
 use onseiman_platform::clipboard;
+use onseiman_platform::hotkey::{GlobalHotkey, HotkeyConfig};
 use onseiman_platform::recorder::list_input_devices;
 use onseiman_platform::secret_store;
 use onseiman_platform::startup;
@@ -75,6 +77,7 @@ pub struct AppContext {
     pub config: Mutex<ClientConfig>,
     pub dict: Mutex<CustomDictionary>,
     pub history: Mutex<HistoryStore>,
+    pub candidates: Mutex<CandidateStore>,
     pub transcriber: Arc<HybridTranscriber>,
     pub pending_tab: Mutex<String>,
     pub latest_update: Mutex<Option<Value>>,
@@ -90,6 +93,7 @@ impl AppContext {
         let cfg = ClientConfig::load(&config_path);
         let dict = CustomDictionary::load(&dict_path);
         let history = HistoryStore::open(&logs_dir, 200);
+        let candidates = CandidateStore::open(&logs_dir);
         let transcriber = Arc::new(HybridTranscriber::new(root_dir.clone()));
         Self {
             root_dir,
@@ -101,6 +105,7 @@ impl AppContext {
             config: Mutex::new(cfg),
             dict: Mutex::new(dict),
             history: Mutex::new(history),
+            candidates: Mutex::new(candidates),
             transcriber,
             pending_tab: Mutex::new(String::new()),
             latest_update: Mutex::new(None),
@@ -141,10 +146,15 @@ pub fn router(ctx: Arc<AppContext>) -> Router {
         .route("/api/retranscribe", post(post_retranscribe))
         .route("/api/retry", post(post_retry))
         .route("/api/find_servers", post(post_find_servers))
-        .route("/api/candidates/approve", post(post_ok_stub))
-        .route("/api/candidates/reject", post(post_ok_stub))
-        .route("/api/candidates/restore", post(post_ok_stub))
+        .route("/api/candidates/approve", post(post_candidates_approve))
+        .route("/api/candidates/reject", post(post_candidates_reject))
+        .route("/api/candidates/restore", post(post_candidates_restore))
         .route("/api/learn_manual", post(post_learn_manual))
+        .route("/api/capture_hotkey", post(post_capture_hotkey))
+        .route("/api/capture_extra_hotkey", post(post_capture_extra_hotkey))
+        .route("/api/clear_extra_hotkey", post(post_clear_extra_hotkey))
+        .route("/api/capture_ai_hotkey", post(post_capture_ai_hotkey))
+        .route("/api/clear_ai_hotkey", post(post_clear_ai_hotkey))
         .route("/api/dict-sync/now", post(post_dict_sync_now))
         .route("/api/update/check", post(post_update_check))
         .route("/api/update/run", post(post_update_run))
@@ -308,6 +318,10 @@ async fn get_state(State(ctx): State<Arc<AppContext>>) -> Response {
     };
     let hotkey_info = format!("{} ({})", cfg.hotkey, mode_label);
 
+    let (cands, dism) = {
+        let cs = ctx.candidates.lock().unwrap();
+        (cs.candidates().to_vec(), cs.dismissed().to_vec())
+    };
     json_no_store(
         StatusCode::OK,
         json!({
@@ -319,8 +333,8 @@ async fn get_state(State(ctx): State<Arc<AppContext>>) -> Response {
             "hotkey_extra": cfg.hotkey_extra,
             "history": history_entries,
             "stats": stats,
-            "candidates": [],
-            "dismissed": [],
+            "candidates": cands,
+            "dismissed": dism,
             "update": ctx.latest_update.lock().ok().and_then(|g| g.clone()).unwrap_or(Value::Null),
             "version": env!("CARGO_PKG_VERSION"),
             "ui_theme": cfg.ui_theme,
@@ -446,22 +460,25 @@ async fn get_mic_test() -> Response {
     json_no_store(StatusCode::OK, json!({ "state": "idle" }))
 }
 
-async fn get_audio(
-    State(ctx): State<Arc<AppContext>>,
-    Path(name): Path<String>,
-    req: Request,
-) -> Response {
+/// `audio_dir` 配下の単一 `.wav` ファイル名だけを許可し、正規化済みパスを返す。
+fn resolve_safe_wav_path(audio_dir: &FsPath, name: &str) -> Result<PathBuf, StatusCode> {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
-        return StatusCode::NOT_FOUND.into_response();
+        return Err(StatusCode::NOT_FOUND);
     }
-    let Ok(base) = ctx.audio_dir.canonicalize() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(target) = base.join(&name).canonicalize() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
+    let mut comps = FsPath::new(name).components();
+    match (comps.next(), comps.next()) {
+        (Some(std::path::Component::Normal(_)), None) => {}
+        _ => return Err(StatusCode::NOT_FOUND),
+    }
+    let base = audio_dir
+        .canonicalize()
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let target = base
+        .join(name)
+        .canonicalize()
+        .map_err(|_| StatusCode::NOT_FOUND)?;
     if !target.starts_with(&base) {
-        return StatusCode::FORBIDDEN.into_response();
+        return Err(StatusCode::FORBIDDEN);
     }
     if target
         .extension()
@@ -470,40 +487,55 @@ async fn get_audio(
         != Some("wav".into())
         || !target.is_file()
     {
-        return StatusCode::NOT_FOUND.into_response();
+        return Err(StatusCode::NOT_FOUND);
     }
+    Ok(target)
+}
+
+async fn get_audio(
+    State(ctx): State<Arc<AppContext>>,
+    Path(name): Path<String>,
+    req: Request,
+) -> Response {
+    let target = match resolve_safe_wav_path(&ctx.audio_dir, &name) {
+        Ok(p) => p,
+        Err(st) => return st.into_response(),
+    };
     let Ok(data) = std::fs::read(&target) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let total = data.len();
-    if let Some(rng) = req
-        .headers()
-        .get(header::RANGE)
-        .and_then(|v| v.to_str().ok())
-    {
-        if let Some(rest) = rng.strip_prefix("bytes=") {
-            let part = rest.split(',').next().unwrap_or("").trim();
-            if let Some((s_str, e_str)) = part.split_once('-') {
-                let start = s_str
-                    .parse::<usize>()
-                    .unwrap_or(0)
-                    .min(total.saturating_sub(1));
-                let end = e_str
-                    .parse::<usize>()
-                    .unwrap_or(total.saturating_sub(1))
-                    .clamp(start, total.saturating_sub(1));
-                let chunk = data[start..=end].to_vec();
-                return Response::builder()
-                    .status(StatusCode::PARTIAL_CONTENT)
-                    .header(header::CONTENT_TYPE, "audio/wav")
-                    .header(header::ACCEPT_RANGES, "bytes")
-                    .header(
-                        header::CONTENT_RANGE,
-                        format!("bytes {start}-{end}/{total}"),
-                    )
-                    .header(header::CONTENT_LENGTH, chunk.len())
-                    .body(Body::from(chunk))
-                    .unwrap();
+    if total > 0 {
+        if let Some(rng) = req
+            .headers()
+            .get(header::RANGE)
+            .and_then(|v| v.to_str().ok())
+        {
+            if let Some(rest) = rng.strip_prefix("bytes=") {
+                let part = rest.split(',').next().unwrap_or("").trim();
+                if let Some((s_str, e_str)) = part.split_once('-') {
+                    let start = s_str
+                        .parse::<usize>()
+                        .unwrap_or(0)
+                        .min(total.saturating_sub(1));
+                    let end = e_str
+                        .parse::<usize>()
+                        .unwrap_or(total.saturating_sub(1))
+                        .clamp(start, total.saturating_sub(1));
+                    let chunk = data[start..=end].to_vec();
+                    return Response::builder()
+                        .status(StatusCode::PARTIAL_CONTENT)
+                        .header(header::CONTENT_TYPE, "audio/wav")
+                        .header(header::ACCEPT_RANGES, "bytes")
+                        .header(header::CACHE_CONTROL, "no-store")
+                        .header(
+                            header::CONTENT_RANGE,
+                            format!("bytes {start}-{end}/{total}"),
+                        )
+                        .header(header::CONTENT_LENGTH, chunk.len())
+                        .body(Body::from(chunk))
+                        .unwrap();
+                }
             }
         }
     }
@@ -963,7 +995,7 @@ async fn post_settings(State(ctx): State<Arc<AppContext>>, Json(body): Json<Valu
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            match secret_store::protect(new_key) {
+            match secret_store::protect_for(&llm_provider, new_key) {
                 Ok(enc) => {
                     cfg.llm_api_keys.insert(llm_provider.clone(), enc);
                 }
@@ -1009,14 +1041,19 @@ fn refiner_from_body(ctx: &AppContext, body: &Value) -> Result<LlmRefiner, Strin
         .unwrap_or("")
         .trim()
         .to_string();
+    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    let base_url = body.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
     let key = if !inline_key.is_empty() {
         inline_key
+    } else if provider == "ollama"
+        && base_url.trim().trim_end_matches('/') != cfg.llm_base_url.trim().trim_end_matches('/')
+    {
+        // 保存済みの Ollama/独自互換 API キーは、保存済みの URL と一致するときだけ送る
+        String::new()
     } else {
         let stored = cfg.llm_api_keys.get(&provider).cloned().unwrap_or_default();
         secret_store::unprotect(&stored)
     };
-    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
-    let base_url = body.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
     LlmRefiner::new(&provider, model, &key, base_url, 20.0)
 }
 
@@ -1070,14 +1107,8 @@ async fn post_find_servers(State(ctx): State<Arc<AppContext>>) -> Response {
 }
 
 fn retranscribe_audio_file(ctx: &Arc<AppContext>, audio_name: &str) -> Result<String, String> {
-    if audio_name.is_empty()
-        || audio_name.contains('/')
-        || audio_name.contains('\\')
-        || audio_name.contains("..")
-    {
-        return Err("音声ファイル名が不正です".into());
-    }
-    let path = ctx.audio_dir.join(audio_name);
+    let path = resolve_safe_wav_path(&ctx.audio_dir, audio_name)
+        .map_err(|_| "音声ファイル名が不正、または見つかりませんでした".to_string())?;
     let wav = std::fs::read(&path).map_err(|_| "音声ファイルが見つかりませんでした".to_string())?;
     let cfg = ctx.config.lock().unwrap().clone();
     let dict = ctx.dict.lock().unwrap().clone();
@@ -1147,8 +1178,198 @@ async fn post_retry(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>)
     }
 }
 
-async fn post_learn_manual() -> Response {
-    json_no_store(StatusCode::OK, json!({ "ok": true, "added": 0 }))
+fn sync_hotkey_from_config(cfg: &ClientConfig) {
+    if let Ok(primary) = parse_binding(&cfg.hotkey) {
+        let extra = if cfg.hotkey_extra.trim().is_empty() {
+            None
+        } else {
+            parse_binding(&cfg.hotkey_extra).ok()
+        };
+        let ai = if cfg.ai_hotkey.trim().is_empty() {
+            None
+        } else {
+            parse_binding(&cfg.ai_hotkey).ok()
+        };
+        let cancel = if cfg.cancel_key.trim().is_empty() {
+            None
+        } else {
+            parse_binding(&cfg.cancel_key).ok()
+        };
+        GlobalHotkey::update_config(HotkeyConfig {
+            primary,
+            extra,
+            ai,
+            cancel,
+            suppress: cfg.suppress_hotkey,
+        });
+    }
+}
+
+async fn post_learn_manual(
+    State(ctx): State<Arc<AppContext>>,
+    Json(body): Json<Value>,
+) -> Response {
+    let before = body.get("before").and_then(|v| v.as_str()).unwrap_or("");
+    let after = body.get("after").and_then(|v| v.as_str()).unwrap_or("");
+    let added = ctx.candidates.lock().unwrap().record_edit(before, after);
+    json_no_store(StatusCode::OK, json!({ "ok": true, "added": added }))
+}
+
+async fn post_candidates_approve(
+    State(ctx): State<Arc<AppContext>>,
+    Json(body): Json<Value>,
+) -> Response {
+    let src = body
+        .get("src")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let dst = body
+        .get("dst")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !src.is_empty() && !dst.is_empty() {
+        let mut data = read_json_obj(&ctx.dict_path);
+        let reps = data
+            .entry("replacements".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(m) = reps.as_object_mut() {
+            m.insert(src.clone(), Value::String(dst.clone()));
+        }
+        let hws = data
+            .entry("hotwords".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(a) = hws.as_array_mut() {
+            if !a.iter().any(|v| v.as_str() == Some(dst.as_str())) {
+                a.push(Value::String(dst.clone()));
+            }
+        }
+        let _ = write_json_obj(&ctx.dict_path, &data);
+        ctx.reload_dict();
+        ctx.candidates.lock().unwrap().approve(&src, &dst);
+    }
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
+}
+
+async fn post_candidates_reject(
+    State(ctx): State<Arc<AppContext>>,
+    Json(body): Json<Value>,
+) -> Response {
+    let src = body
+        .get("src")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let dst = body
+        .get("dst")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if !src.is_empty() && !dst.is_empty() {
+        ctx.candidates.lock().unwrap().reject(src, dst);
+    }
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
+}
+
+async fn post_candidates_restore(
+    State(ctx): State<Arc<AppContext>>,
+    Json(body): Json<Value>,
+) -> Response {
+    let src = body
+        .get("src")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let dst = body
+        .get("dst")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !src.is_empty() && !dst.is_empty() {
+        let item = LearningCandidate {
+            src,
+            dst,
+            count: body.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            example_before: body
+                .get("example_before")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            example_after: body
+                .get("example_after")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        };
+        ctx.candidates.lock().unwrap().restore(item);
+    }
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
+}
+
+fn start_capture_for(ctx: Arc<AppContext>, field: &'static str) {
+    GlobalHotkey::capture_next(move |captured| {
+        let Some(key) = captured else {
+            return;
+        };
+        if parse_binding(&key).is_err() {
+            return;
+        }
+        let mut cfg = ClientConfig::load(&ctx.config_path);
+        match field {
+            "hotkey" => cfg.hotkey = key,
+            "hotkey_extra" => cfg.hotkey_extra = key,
+            "ai_hotkey" => cfg.ai_hotkey = key,
+            _ => return,
+        }
+        if cfg.save(&ctx.config_path).is_ok() {
+            sync_hotkey_from_config(&cfg);
+            if let Ok(mut g) = ctx.config.lock() {
+                *g = cfg;
+            }
+        }
+    });
+}
+
+async fn post_capture_hotkey(State(ctx): State<Arc<AppContext>>) -> Response {
+    start_capture_for(ctx, "hotkey");
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
+}
+
+async fn post_capture_extra_hotkey(State(ctx): State<Arc<AppContext>>) -> Response {
+    start_capture_for(ctx, "hotkey_extra");
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
+}
+
+async fn post_clear_extra_hotkey(State(ctx): State<Arc<AppContext>>) -> Response {
+    let mut cfg = ClientConfig::load(&ctx.config_path);
+    cfg.hotkey_extra.clear();
+    let _ = cfg.save(&ctx.config_path);
+    sync_hotkey_from_config(&cfg);
+    if let Ok(mut g) = ctx.config.lock() {
+        *g = cfg;
+    }
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
+}
+
+async fn post_capture_ai_hotkey(State(ctx): State<Arc<AppContext>>) -> Response {
+    start_capture_for(ctx, "ai_hotkey");
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
+}
+
+async fn post_clear_ai_hotkey(State(ctx): State<Arc<AppContext>>) -> Response {
+    let mut cfg = ClientConfig::load(&ctx.config_path);
+    cfg.ai_hotkey.clear();
+    let _ = cfg.save(&ctx.config_path);
+    sync_hotkey_from_config(&cfg);
+    if let Ok(mut g) = ctx.config.lock() {
+        *g = cfg;
+    }
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
 }
 
 async fn post_dict_sync_now() -> Response {
@@ -1235,24 +1456,31 @@ async fn post_update_run(State(ctx): State<Arc<AppContext>>) -> Response {
     #[cfg(windows)]
     {
         let root = ctx.root_dir.clone();
-        let script = format!(
-            "$root='{}'; $exe=Join-Path $root 'onseiman.exe'; \
+        let pid = std::process::id().to_string();
+        let script = "$root=$env:ONSEIMAN_ROOT; $exe=Join-Path $root 'onseiman.exe'; \
              $base='https://github.com/ogikosan/OnseiMan/releases/latest/download'; \
              [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; \
              Invoke-WebRequest -Uri \"$base/onseiman-windows-x64.exe\" -OutFile \"$exe.new\" -UseBasicParsing; \
              Invoke-WebRequest -Uri \"$base/SHA256SUMS-windows-x64.txt\" -OutFile \"$exe.sha256\" -UseBasicParsing; \
-             $exp=(Select-String -Path \"$exe.sha256\" -Pattern '([0-9a-fA-F]{{64}})\\s+\\*?onseiman-windows-x64\\.exe').Matches[0].Groups[1].Value.ToLower(); \
+             $m=Select-String -Path \"$exe.sha256\" -Pattern '^([0-9a-fA-F]{64})\\s+\\*?onseiman-windows-x64\\.exe$' | Select-Object -First 1; \
+             $exp=if ($m) { $m.Matches[0].Groups[1].Value.ToLower() } else { '' }; \
              $act=(Get-FileHash -LiteralPath \"$exe.new\" -Algorithm SHA256).Hash.ToLower(); \
-             Remove-Item \"$exe.sha256\" -Force -ErrorAction SilentlyContinue; \
-             if ($exp -and $exp -eq $act) {{ \
-               Stop-Process -Name onseiman -Force -ErrorAction SilentlyContinue; \
+             Remove-Item -LiteralPath \"$exe.sha256\" -Force -ErrorAction SilentlyContinue; \
+             if ($exp -and $exp -eq $act) { \
+               Stop-Process -Id ([int]$env:ONSEIMAN_PID) -Force -ErrorAction SilentlyContinue; \
                Start-Sleep -Milliseconds 600; \
                Move-Item -LiteralPath \"$exe.new\" -Destination $exe -Force; \
                Start-Process -FilePath $exe -WorkingDirectory $root; \
-             }} else {{ Remove-Item \"$exe.new\" -Force -ErrorAction SilentlyContinue }}",
-            root.display().to_string().replace('\'', "''")
-        );
-        let _ = Command::new("powershell")
+             } else { Remove-Item -LiteralPath \"$exe.new\" -Force -ErrorAction SilentlyContinue }";
+        let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        let ps_exe = PathBuf::from(sys_root)
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        let _ = Command::new(ps_exe)
+            .env("ONSEIMAN_ROOT", &root)
+            .env("ONSEIMAN_PID", &pid)
             .args([
                 "-NoProfile",
                 "-ExecutionPolicy",
@@ -1260,7 +1488,7 @@ async fn post_update_run(State(ctx): State<Arc<AppContext>>) -> Response {
                 "-WindowStyle",
                 "Hidden",
                 "-Command",
-                &script,
+                script,
             ])
             .spawn();
         json_no_store(StatusCode::OK, json!({ "ok": true }))
@@ -1300,6 +1528,19 @@ async fn post_ok_stub() -> Response {
 
 /// 管理画面をブラウザで開く（Windows: Edge --app、macOS: `open`）。
 pub fn open_browser(url: &str, profile_dir: Option<&FsPath>) {
+    let valid_local = (url.starts_with("http://127.0.0.1:")
+        || url.starts_with("http://localhost:"))
+        && !url.chars().any(|c| {
+            c.is_control()
+                || c.is_whitespace()
+                || matches!(
+                    c,
+                    '&' | '|' | '^' | '%' | '<' | '>' | '"' | '\'' | '`' | ';'
+                )
+        });
+    if !valid_local {
+        return;
+    }
     #[cfg(windows)]
     {
         let candidates = [

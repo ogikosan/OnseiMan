@@ -125,8 +125,20 @@ pub fn host_allowed(host: &str, server_name: &str) -> bool {
     if name.parse::<IpAddr>().is_ok() || name == "localhost" {
         return true;
     }
-    let own = server_name.to_lowercase();
-    name.split('.').next() == own.split('.').next()
+    let own = server_name.trim().to_lowercase();
+    let own_label = own.split('.').next().unwrap_or("");
+    if own_label.is_empty() {
+        return false;
+    }
+    if name == own || name == own_label || name == format!("{own_label}.local") {
+        return true;
+    }
+    if let Some(rest) = name.strip_prefix(&format!("{own_label}.")) {
+        if let Some(tailnet) = rest.strip_suffix(".ts.net") {
+            return !tailnet.is_empty() && !tailnet.contains('.');
+        }
+    }
+    false
 }
 
 async fn guard_host(State(st): State<Shared>, req: Request, next: Next) -> Response {
@@ -137,6 +149,31 @@ async fn guard_host(State(st): State<Shared>, req: Request, next: Next) -> Respo
         .unwrap_or("");
     if !host_allowed(host, &st.cfg.server_name) {
         return fail(StatusCode::FORBIDDEN, "Forbidden host");
+    }
+    if let Some(sfs) = req
+        .headers()
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok())
+    {
+        if sfs != "same-origin" && sfs != "none" {
+            return fail(StatusCode::FORBIDDEN, "Forbidden cross-site request");
+        }
+    }
+    if let Some(origin) = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let origin_host = origin
+            .strip_prefix("http://")
+            .or_else(|| origin.strip_prefix("https://"))
+            .map(|s| s.split('/').next().unwrap_or(""));
+        match origin_host {
+            Some(oh) if !oh.is_empty() && host_allowed(oh, &st.cfg.server_name) => {}
+            _ => return fail(StatusCode::FORBIDDEN, "Forbidden origin"),
+        }
     }
     next.run(req).await
 }
@@ -640,6 +677,9 @@ mod tests {
         for ng in [
             "evil.example.com:8765",
             "evil.example.com",
+            "mac.evil.example.com:8765",
+            "mac.evil.example.com",
+            "mac.a.b.ts.net",
             "macx.local",
             "192.168.1.50.evil.com",
         ] {

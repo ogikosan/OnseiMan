@@ -9,6 +9,7 @@ pub mod dictionary;
 pub mod fillers;
 pub mod history;
 pub mod kana;
+pub mod learner;
 pub mod llm_refine;
 pub mod normalize;
 pub mod segmenter;

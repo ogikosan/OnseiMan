@@ -39,17 +39,33 @@ mod imp {
         WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
     };
 
-    use crate::binding::MouseButton;
+    use crate::binding::{format_vk_name, MouseButton};
+
+    type CaptureCb = Box<dyn FnOnce(Option<String>) + Send>;
 
     struct HookState {
         cfg: HotkeyConfig,
         primary_down: bool,
         ai_down: bool,
         tx: Sender<HotkeyEvent>,
+        capture: Option<CaptureCb>,
     }
 
     impl HookState {
         fn handle_binding(&mut self, b: Binding, is_down: bool, is_up: bool) -> bool {
+            if is_down && self.capture.is_some() {
+                if let Some(cb) = self.capture.take() {
+                    let name = match b {
+                        Binding::Key(0x1B) => None, // Esc cancels capture
+                        Binding::Key(vk) => Some(format_vk_name(vk)),
+                        Binding::Mouse(MouseButton::X1) => Some("mouse_x1".into()),
+                        Binding::Mouse(MouseButton::X2) => Some("mouse_x2".into()),
+                        Binding::Mouse(MouseButton::Middle) => Some("mouse_middle".into()),
+                    };
+                    std::thread::spawn(move || cb(name));
+                }
+                return true;
+            }
             let is_primary = self.cfg.primary == b || self.cfg.extra == Some(b);
             if is_primary {
                 if is_down && !self.primary_down {
@@ -144,17 +160,13 @@ mod imp {
 
     impl GlobalHotkey {
         pub fn start(cfg: HotkeyConfig, tx: Sender<HotkeyEvent>) -> Result<Self, String> {
-            let needs_mouse = matches!(cfg.primary, Binding::Mouse(_))
-                || matches!(cfg.extra, Some(Binding::Mouse(_)))
-                || matches!(cfg.ai, Some(Binding::Mouse(_)))
-                || matches!(cfg.cancel, Some(Binding::Mouse(_)));
-
             let lock = STATE.get_or_init(|| Mutex::new(None));
             *lock.lock().map_err(|_| "lock poisoned")? = Some(HookState {
                 cfg,
                 primary_down: false,
                 ai_down: false,
                 tx,
+                capture: None,
             });
             let (tid_tx, tid_rx) = std::sync::mpsc::channel();
             let join = thread::spawn(move || unsafe {
@@ -165,11 +177,8 @@ mod imp {
                 if kbd_hook.is_null() {
                     return;
                 }
-                let mouse_hook = if needs_mouse {
-                    SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), ptr::null_mut(), 0)
-                } else {
-                    ptr::null_mut()
-                };
+                let mouse_hook =
+                    SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), ptr::null_mut(), 0);
                 let mut msg: MSG = std::mem::zeroed();
                 while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
                     TranslateMessage(&msg);
@@ -187,6 +196,28 @@ mod imp {
                 thread_id,
                 join: Some(join),
             })
+        }
+
+        pub fn update_config(cfg: HotkeyConfig) {
+            if let Some(lock) = STATE.get() {
+                if let Ok(mut g) = lock.lock() {
+                    if let Some(st) = g.as_mut() {
+                        st.cfg = cfg;
+                        st.primary_down = false;
+                        st.ai_down = false;
+                    }
+                }
+            }
+        }
+
+        pub fn capture_next<F: FnOnce(Option<String>) + Send + 'static>(cb: F) {
+            if let Some(lock) = STATE.get() {
+                if let Ok(mut g) = lock.lock() {
+                    if let Some(st) = g.as_mut() {
+                        st.capture = Some(Box::new(cb));
+                    }
+                }
+            }
         }
     }
 
@@ -272,6 +303,7 @@ mod imp {
         fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
         fn CFRunLoopRun();
         fn CFRunLoopStop(rl: CFRunLoopRef);
+        fn CFRetain(cf: *const c_void) -> *const c_void;
         fn CFRelease(cf: *const c_void);
     }
 
@@ -419,7 +451,15 @@ mod imp {
                     return;
                 }
                 let src = CFMachPortCreateRunLoopSource(ptr::null(), tap, 0);
+                if src.is_null() {
+                    CFRelease(tap);
+                    let _ = rl_tx.send(Err(
+                        "macOS ホットキーの RunLoopSource 作成に失敗しました".into()
+                    ));
+                    return;
+                }
                 let rl = CFRunLoopGetCurrent();
+                CFRetain(rl as *const c_void);
                 CFRunLoopAddSource(rl, src, kCFRunLoopCommonModes);
                 CGEventTapEnable(tap, true);
                 let _ = rl_tx.send(Ok(rl as usize));
@@ -435,6 +475,20 @@ mod imp {
                 join: Some(join),
             })
         }
+
+        pub fn update_config(cfg: HotkeyConfig) {
+            if let Some(lock) = MAC_STATE.get() {
+                if let Ok(mut g) = lock.lock() {
+                    if let Some(st) = g.as_mut() {
+                        st.cfg = cfg;
+                        st.primary_down = false;
+                        st.ai_down = false;
+                    }
+                }
+            }
+        }
+
+        pub fn capture_next<F: FnOnce(Option<String>) + Send + 'static>(_cb: F) {}
     }
 
     impl Drop for GlobalHotkey {
@@ -446,6 +500,12 @@ mod imp {
             }
             if let Some(j) = self.join.take() {
                 let _ = j.join();
+            }
+            if self.run_loop != 0 {
+                unsafe {
+                    CFRelease(self.run_loop as *const c_void);
+                }
+                self.run_loop = 0;
             }
             if let Some(lock) = MAC_STATE.get() {
                 if let Ok(mut g) = lock.lock() {
@@ -467,6 +527,8 @@ mod imp {
         pub fn start(_cfg: HotkeyConfig, _tx: Sender<HotkeyEvent>) -> Result<Self, String> {
             Err("この OS ではグローバルホットキー監視に未対応です".into())
         }
+        pub fn update_config(_cfg: HotkeyConfig) {}
+        pub fn capture_next<F: FnOnce(Option<String>) + Send + 'static>(_cb: F) {}
     }
 }
 

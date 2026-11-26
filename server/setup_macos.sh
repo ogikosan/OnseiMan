@@ -120,7 +120,9 @@ else
     fi
   fi
   if command -v ollama >/dev/null 2>&1; then
-    # 同じネットワークから使えるよう OLLAMA_HOST=0.0.0.0 で起動
+    # 既定ではローカル専用（127.0.0.1:11434）。LAN 公開が必要な場合のみ環境変数 OLLAMA_BIND_HOST で明示指定する
+    OLLAMA_BIND_HOST="${OLLAMA_BIND_HOST:-127.0.0.1:11434}"
+    OLLAMA_BIND_HOST_XML="$(xml_esc "$OLLAMA_BIND_HOST")"
     OLLAMA_BIN="$(command -v ollama)"
     OLLAMA_BIN_XML="$(xml_esc "$OLLAMA_BIN")"
     mkdir -p "$HOME/Library/LaunchAgents" "$BASE_DIR/logs"
@@ -137,7 +139,7 @@ else
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>OLLAMA_HOST</key><string>0.0.0.0:11434</string>
+    <key>OLLAMA_HOST</key><string>${OLLAMA_BIND_HOST_XML}</string>
     <key>OLLAMA_KEEP_ALIVE</key><string>30m</string>
   </dict>
   <key>RunAtLoad</key><true/>

@@ -60,7 +60,7 @@ mod imp {
         match msg {
             WM_MOUSEACTIVATE => return MA_NOACTIVATE,
             WM_OVERLAY_UPDATE => {
-                let st = *CURRENT.lock().unwrap();
+                let st = *CURRENT.lock().unwrap_or_else(|e| e.into_inner());
                 match st {
                     OverlayState::Hidden => {
                         ShowWindow(hwnd, SW_HIDE);
@@ -73,7 +73,7 @@ mod imp {
                 return 0;
             }
             WM_PAINT => {
-                let st = *CURRENT.lock().unwrap();
+                let st = *CURRENT.lock().unwrap_or_else(|e| e.into_inner());
                 let mut ps: PAINTSTRUCT = std::mem::zeroed();
                 let hdc = BeginPaint(hwnd, &mut ps);
                 let full = RECT {
@@ -245,7 +245,9 @@ mod imp {
                 }
                 // カプセル型に切り抜いて角の黒枠を完全になくす
                 let rgn = CreateRoundRectRgn(0, 0, PILL_W + 1, PILL_H + 1, PILL_H, PILL_H);
-                SetWindowRgn(hwnd, rgn, 1);
+                if !rgn.is_null() && SetWindowRgn(hwnd, rgn, 1) == 0 {
+                    DeleteObject(rgn);
+                }
                 SetLayeredWindowAttributes(hwnd, 0, 240, LWA_ALPHA);
                 if let Ok(mut g) = hwnd_bg.lock() {
                     *g = hwnd as isize;

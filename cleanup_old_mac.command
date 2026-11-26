@@ -71,21 +71,22 @@ else
     if [ "$will_fetch" -eq 1 ]; then
       echo "Rust 版サーバーを GitHub Releases から取得しています..."
       BASE_URL="https://github.com/$REPO/releases/latest/download"
-      if ! curl -fsSL -o onseiman-server.download "$BASE_URL/onseiman-server-macos-arm64" || \
-         ! curl -fsSL -o onseiman-server.sha256 "$BASE_URL/SHA256SUMS-macos-arm64.txt"; then
-        rm -f onseiman-server.download onseiman-server.sha256
+      TMP_DIR="$(mktemp -d)"
+      if ! curl --proto '=https' --tlsv1.2 -fsSL -o "$TMP_DIR/onseiman-server" "$BASE_URL/onseiman-server-macos-arm64" || \
+         ! curl --proto '=https' --tlsv1.2 -fsSL -o "$TMP_DIR/SHA256SUMS.txt" "$BASE_URL/SHA256SUMS-macos-arm64.txt"; then
+        rm -rf "$TMP_DIR"
         echo "ダウンロードに失敗しました。旧環境はそのまま残して終了します。"
         exit 1
       fi
-      expected="$(awk '/onseiman-server-macos-arm64/{print $1; exit}' onseiman-server.sha256)"
-      actual="$(shasum -a 256 onseiman-server.download | awk '{print $1}')"
-      rm -f onseiman-server.sha256
+      expected="$(awk '($2 == "onseiman-server-macos-arm64" || $2 == "*onseiman-server-macos-arm64") && $1 ~ /^[0-9a-fA-F]{64}$/ {print tolower($1); exit}' "$TMP_DIR/SHA256SUMS.txt")"
+      actual="$(shasum -a 256 "$TMP_DIR/onseiman-server" | awk '{print tolower($1)}')"
       if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
-        rm -f onseiman-server.download
+        rm -rf "$TMP_DIR"
         echo "SHA-256 の検証に失敗しました。旧環境はそのまま残して終了します。"
         exit 1
       fi
-      mv -f onseiman-server.download onseiman-server
+      mv -f "$TMP_DIR/onseiman-server" onseiman-server
+      rm -rf "$TMP_DIR"
       chmod +x onseiman-server
       xattr -d com.apple.quarantine onseiman-server 2>/dev/null || true
       echo "Rust 版サーバーを配置しました（SHA-256 確認 OK）。launchd を切り替えます..."
