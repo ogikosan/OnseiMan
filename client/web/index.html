@@ -440,7 +440,7 @@
               <label class="switch"><input type="checkbox" id="set-normalize"><span class="track"></span><span>数字と略語を読みやすくする（五千九十 → 5090）</span></label>
               <label class="switch"><input type="checkbox" id="set-voice-cmd"><span class="track"></span><span>声で改行や記号を入れる（「改行」「はてなマーク」）</span></label>
               <label class="switch"><input type="checkbox" id="set-undo-cmd"><span class="track"></span><span>「今のなし」で直前の入力を消す</span></label>
-              <label class="switch"><input type="checkbox" id="set-app-rules"><span class="track"></span><span>チャットアプリでだけ文末の「。」を消す</span></label>
+              <label class="switch" id="app-rules-row"><input type="checkbox" id="set-app-rules"><span class="track"></span><span>チャットアプリでだけ文末の「。」を消す（「文末の「。」をつけない」がオフのときだけ出ます）</span></label>
             </div>
 
             <div class="setting-card" data-sec="view">
@@ -560,7 +560,7 @@
 
           <h3 class="hp-h">声で言えること</h3>
           <div class="hp-cmds">
-            <div><b>「改行」</b><span>改行</span></div>
+            <div><b>「改行」</b><span>改行（下の 3 つも、設定の「文の仕上げ」でオンにしたとき）</span></div>
             <div><b>「かぎかっこ」〜「閉じ」</b><span>「 」</span></div>
             <div><b>「はてなマーク」</b><span>？</span></div>
             <div><b>「びっくりマーク」</b><span>！</span></div>

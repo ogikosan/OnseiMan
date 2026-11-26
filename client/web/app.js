@@ -1150,6 +1150,7 @@
     $$('input[name="overlay_place"]').forEach((r) => { r.checked = r.value === (s.overlay_place || "bottom"); });
     $("#set-overlay-pin").disabled = !s.overlay_pinned;
     $("#set-app-rules").checked = !!s.app_specific_rules;
+    $("#app-rules-row").hidden = !!s.strip_trailing_period;
     $("#set-learn-edits").checked = !!s.learn_from_edits;
     $("#set-auto-learn").value = s.auto_learn_after_count;
     $("#set-restore-cb").checked = !!s.restore_clipboard;
@@ -1360,6 +1361,8 @@
   }
   $("#view-settings").addEventListener("change", (e) => {
     if (settingsLoading) return;
+    // 「文末の「。」をつけない」がオンなら、チャットアプリだけの設定は意味がないので出さない
+    if (e.target.id === "set-strip-period") $("#app-rules-row").hidden = e.target.checked;
     // サーバーの一覧・名前・アドレスの欄は、それぞれ自分で保存している
     if (e.target.closest("#found-servers") || e.target.id === "set-servers") return;
     // 同期フォルダを選んだのに、置く場所がまだ空なら、決まるまで待つ

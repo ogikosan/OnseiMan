@@ -828,7 +828,7 @@ class WebUIServer:
         cfg.microphone = None if mic == DEFAULT_MIC_LABEL else mic
         cfg.remove_fillers = bool(body.get("remove_fillers", True))
         cfg.normalize_text = bool(body.get("normalize_text", False))
-        cfg.voice_commands = bool(body.get("voice_commands", True))
+        cfg.voice_commands = bool(body.get("voice_commands", False))
         cfg.undo_voice_command = bool(body.get("undo_voice_command", False))
         cfg.keep_mic_open = bool(body.get("keep_mic_open", True))
         cfg.mute_other_audio = bool(body.get("mute_other_audio", True))
