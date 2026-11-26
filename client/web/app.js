@@ -71,10 +71,12 @@
   }
 
   // ---- Theme ----
+  let themeLoadedFromServer = false;
   $("#theme-btn").addEventListener("click", () => {
     const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
     try { localStorage.setItem("onseiman.theme", next); } catch {}
+    api("/api/theme", { theme: next }).catch(() => {});
     applyHelpImages();
   });
 
@@ -502,6 +504,12 @@
   async function loadState(force = false) {
     try {
       state = await api("/api/state");
+      if (!themeLoadedFromServer && (state.ui_theme === "dark" || state.ui_theme === "light")) {
+        themeLoadedFromServer = true;
+        document.documentElement.dataset.theme = state.ui_theme;
+        try { localStorage.setItem("onseiman.theme", state.ui_theme); } catch {}
+        applyHelpImages();
+      }
       renderHeader(state);
       renderStats(state.stats || {});
       const sig = JSON.stringify([state.history, state.candidates, state.dismissed]);

@@ -148,6 +148,7 @@ pub fn router(ctx: Arc<AppContext>) -> Router {
         .route("/api/dict-sync/now", post(post_dict_sync_now))
         .route("/api/update/check", post(post_update_check))
         .route("/api/update/run", post(post_update_run))
+        .route("/api/theme", post(post_theme))
         .route("/api/mic_test/start", post(post_ok_stub))
         .route("/", get(get_index))
         .route("/{*path}", get(get_static))
@@ -322,6 +323,7 @@ async fn get_state(State(ctx): State<Arc<AppContext>>) -> Response {
             "dismissed": [],
             "update": ctx.latest_update.lock().ok().and_then(|g| g.clone()).unwrap_or(Value::Null),
             "version": env!("CARGO_PKG_VERSION"),
+            "ui_theme": cfg.ui_theme,
             "server_outdated": [],
         }),
     )
@@ -1270,6 +1272,26 @@ async fn post_update_run(State(ctx): State<Arc<AppContext>>) -> Response {
             json!({ "ok": false, "error": "自動更新は Windows のみ対応しています" }),
         )
     }
+}
+
+async fn post_theme(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>) -> Response {
+    let theme = match body.get("theme").and_then(|v| v.as_str()).unwrap_or("") {
+        "dark" => "dark",
+        "light" => "light",
+        _ => "",
+    };
+    let mut cfg = ClientConfig::load(&ctx.config_path);
+    cfg.ui_theme = theme.to_string();
+    if let Err(e) = cfg.save(&ctx.config_path) {
+        return json_no_store(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "error": e.to_string() }),
+        );
+    }
+    if let Ok(mut g) = ctx.config.lock() {
+        g.ui_theme = theme.to_string();
+    }
+    json_no_store(StatusCode::OK, json!({ "ok": true, "theme": theme }))
 }
 
 async fn post_ok_stub() -> Response {

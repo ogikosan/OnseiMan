@@ -211,6 +211,8 @@ pub struct ClientConfig {
     pub overlay_place: String,
     #[serde(default = "d_true")]
     pub beep_enabled: bool,
+    #[serde(default)]
+    pub ui_theme: String,
 }
 
 impl Default for ClientConfig {
