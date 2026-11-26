@@ -79,9 +79,9 @@ class ClientConfig:
     server_names: Dict[str, str] = field(default_factory=dict)
     # いつも使うサーバー（server_urls のどれか）。止まっているときだけ、ほかのサーバーを使う。空なら最後に成功したもの
     preferred_server: str = ""
-    # NVIDIA の GPU があるパソコンでは、ほかのパソコンの声も GPU で文字にできるよう、裏で自動で準備する。
-    # 動画を作る AI などで GPU の記憶を使い切るパソコンでは false にする（画面には出さない）
-    gpu_host_auto: bool = True
+    # NVIDIA の GPU があるパソコンで、GPU 版の認識役（WSL2 と約 10GB）を裏で自動で準備するか。
+    # speech.cpp の Haas-ja が CPU でも速いので、はじめは切。使う人は true にするか、server_gpu.bat で入れる
+    gpu_host_auto: bool = False
     # このパソコンで聞き取るときの仕組み。haas = speech.cpp の Haas-ja（聞き間違いが少ない。部品は起動したときに裏で用意する）、
     # funasr = これまでの Fun-ASR Nano。haas の部品がまだ無いときは funasr を使う
     local_engine: str = "haas"

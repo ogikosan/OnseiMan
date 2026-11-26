@@ -1,76 +1,88 @@
 # OnseiMan
 
 話した言葉を、カーソルのある場所に文字で入れる Windows 用の音声入力アプリです。
-声を文字にする処理は、このパソコンの中だけで行います（音声をインターネットに送りません）。
+声を文字にする処理は、このパソコンの中（または家にある別のパソコン）だけで行います。音声をインターネットに送りません。
 
-- 右Alt を押して話し、もう一度押すと、カーソルの場所に文字が入ります
-- 長く話しても、話しながら区切って文字にするので消えません
-- 「えーと」などの言いよどみを消し、数字や略語を読みやすくします（五千九十 → 5090）
+- 右Alt を押して話し、もう一度押すと、カーソルの場所に文字が入ります（キーは変えられます。2 つ目のキーやマウスのボタンも使えます）
+- 聞き取りには、聞き間違いの少ない日本語の AI **Haas-ja** を使います。GPU は要らず、ふつうのパソコンの CPU で 1 回 1 秒以内です
+- 「。」「、」が付き、「えーと」などの言いよどみを消し、数字や略語を読みやすくします（五千九十 → 5090、cpu → CPU）
 - 辞書（よく間違える言葉）と定型文（合言葉で決まった文を入れる）。何台かのパソコンで自動で合わせられます
 - 家にある別のパソコン（Mac / Windows）に、声を文字にする役を任せることもできます
+- 新しい版が出ると画面に知らせが出て、「今すぐ更新」で入れ替えられます（設定・辞書・履歴はそのまま）
 
-認識には [Fun-ASR Nano](https://github.com/FunAudioLLM/Fun-ASR)（[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 版）を使います。
+## 入れ方
 
-## どれを取ってくればいい？
+右の「Releases」から、どちらかを取ってきます。
 
-右の「Releases」から、使うパソコンに合わせて 1 つ取ってきて展開します。
-
-| 取ってくるもの | 中身 |
+| 取ってくるもの | 入れ方 |
 |---|---|
-| `OnseiMan-<版>-Windows.zip` | Windows で使うアプリ。別の Windows を認識役にするときもこれ |
-| `OnseiMan-<版>-Mac.zip` | Mac を認識役（声を文字にする役）にするものだけ。Mac で文字を入れるアプリではありません |
+| `OnseiMan-Setup-<版>.exe`（いちばん簡単） | ダブルクリックして「インストール」。スタートメニューに「OnseiMan」ができます。消すときは Windows の「アプリ」から |
+| `OnseiMan-<版>-Windows.zip` | 好きな場所に展開して、`start_client.bat` をダブルクリック |
 
-「Code」→「Download ZIP」で全部入りを取ってきても、同じように使えます。
+- Windows 10 / 11（64 ビット）で動きます。Python などを自分で入れる必要はありません。必要なものは、そのフォルダの中に自動で用意します（パソコン全体には何も入れません）
+- はじめて起動したとき、聞き取りの部品（約 0.7GB）を裏で用意します。用意できるまでは、これまでの聞き取り（Fun-ASR、約 840MB）で動きます
+- インストーラーは、まだデジタル署名をしていません。「PC を保護しました」と出たら「詳細情報」→「実行」で進めてください
 
-## ダブルクリックするもの
+## 使い方
 
-Python などを自分で入れる必要はありません。必要なものは、そのフォルダの中に自動で用意します（パソコン全体には何も入れません）。
+1. 文字を入れたい場所をクリック
+2. **右Alt** を押して話す
+3. もう一度 **右Alt** → 文字が入ります
 
-| やりたいこと | ダブルクリックするもの |
-|---|---|
-| Windows で使う（はじめて） | `install_client.bat` → `start_client.bat` |
-| Windows で使う（2 回目から） | `start_client.bat` |
-| 新しい版にする（Windows） | OnseiMan を終了してから `update.bat` |
-| 別の Windows を認識役にする | その Windows で `server_windows.bat`（使うあいだは窓を開いたまま） |
-| Mac を認識役にする | その Mac で `server_mac.command`（一度済めば、Mac を起動するたびに自動で動く） |
-| Mac の認識役をやめる | `server_mac_remove.command` |
+うまく録れているかは、設定の「マイク」の「試す（5 秒）」で確かめられます。
+聞き間違える言葉は、辞書の「言葉」に登録します。カタカナで書いた言い方を横に足すと、聞き取るときのヒント（読み）にもなります
+（例: くっきり版 ← クッキリバン）。
 
-- Windows 10 / 11（64ビット）で動きます。初回だけ、認識用のデータ（約840MB）を自動でダウンロードします
-- 認識役は、なくても使えます。ふだんのパソコンが遅いときに、家の別のパソコンに任せると速くなります。
-  認識役のパソコンの準備は、そのパソコンの前で、そのパソコンを使っている人がします（こちらから勝手に入れることはしません）
-- Mac で「開けません」と出たら、`server_mac.command` を右クリック→「開く」。
-  それでも開けないときは「システム設定」→「プライバシーとセキュリティ」の「このまま開く」
-- 認識役の Mac には、iPhone のショートカットから声を送って、文字にしてもらうこともできます（[はじめに.md（Mac）](packaging/mac/はじめに.md)）
-- 新しい版にしても、設定・辞書・履歴はそのまま残ります（前の版は `backup\` に残ります）
-
-くわしくは [はじめに.md（Windows）](packaging/friend/はじめに.md)・[はじめに.md（Mac）](packaging/mac/はじめに.md) を見てください。
+くわしくは [はじめに.md（Windows）](packaging/friend/はじめに.md) を見てください。
 AI に入れてもらう場合は、[AGENTS.md（入れ方）](packaging/friend/AGENTS.md) を渡して「これを読んで入れて」と頼めます。
 何が変わったかは [変更点.md](packaging/friend/変更点.md) にあります。
 
+## 別のパソコンに任せる（なくても大丈夫）
+
+声を文字にする役を、家の別のパソコンに任せられます。アプリの「設定」→「声を文字にする場所」で「別のパソコン」を選ぶと、
+家のネットワークと Tailscale から自動で探します。任せる側のパソコンの準備は、そのパソコンの前で、そのパソコンを使っている人がします
+（こちらから勝手に入れることはしません）。
+
+| 任せる側 | 準備 |
+|---|---|
+| Mac（Apple のチップ） | `OnseiMan-<版>-Mac.zip` を展開して `server_mac.command` をダブルクリック。Apple の GPU で、1 回 0.1 秒ほど。Mac を起動するたびに自動で動きます（やめるときは `server_mac_remove.command`） |
+| Windows | Windows 用の zip を展開して `server_windows.bat` をダブルクリック |
+
+- Mac で「開けません」と出たら、`server_mac.command` を右クリック→「開く」。それでも開けないときは「システム設定」→「プライバシーとセキュリティ」の「このまま開く」
+- 認識役の Mac には、iPhone のショートカットから声を送って、文字にしてもらうこともできます（[はじめに.md（Mac）](packaging/mac/はじめに.md)）
+- NVIDIA の GPU と WSL2 がある Windows では、`server_gpu.bat` で NVIDIA の GPU を使う版も入れられます（約 10GB。ふつうは要りません）
+
 ## 開発
 
-- 作業の決まり: [AGENTS.md](AGENTS.md)、詳細仕様: [docs/src/spec.md](docs/src/spec.md)、概要: [docs/index.html](docs/index.html)
+- 作業の決まり: [AGENTS.md](AGENTS.md)、詳細仕様: [docs/src/spec.md](docs/src/spec.md)
 - テスト: `.venv\Scripts\python.exe -m unittest discover -s tests`
 - 配る zip（Windows 用・Mac 用）を作る: `python packaging\make_friend_package.py`（`build_dist\` にできる）
+- インストーラーを作る: `python packaging\installer\build_installer.py`（Inno Setup 6 が要る）
 
 | 場所 | 中身 |
 |---|---|
 | `client/` | Windows のアプリ（録音・貼り付け・表示・設定画面 `client/web/`） |
-| `shared/` | 認識エンジン・辞書・文の整え方など、アプリとサーバーで共通の部品 |
-| `server/` | 認識サーバー（Mac の準備: `setup_macos.sh` / Windows: `start_server.bat`。直下のダブルクリック用から呼ばれる） |
-| `tools/` | 準備（`install.ps1`）と更新（`update.ps1`） |
+| `shared/` | 聞き取り（`speechcpp_engine.py` = Haas-ja、`asr_engine.py` = Fun-ASR）・辞書・文の整え方など、アプリと認識役で共通の部品 |
+| `server/` | 認識役（Mac の準備: `setup_macos.sh` / Windows: `start_server.bat`。直下のダブルクリック用から呼ばれる） |
+| `tools/` | 準備（`install.ps1`）と更新（`update.ps1`）など |
 | `tests/` | 自動テスト |
-| `packaging/` | 配る説明（`friend/` は Windows 用、`mac/` は Mac 用）と zip の作り方。`exe-installer/` は今は使っていない |
+| `packaging/` | 配る説明（`friend/` は Windows 用、`mac/` は Mac 用）と、zip・インストーラー（`installer/`）の作り方。`exe-installer/` は今は使っていない |
 
 `config.json`・`dict.json`・`logs/`（設定・辞書・履歴と録音）は利用者のデータなので、リポジトリには入れません。
 
 ## セキュリティ
 
 守り方と、問題を見つけたときの知らせ方は [SECURITY.md](SECURITY.md) にあります。
-認識サーバー（任意）は合言葉なしで使えるので、信頼できるネットワーク（家の Wi-Fi・Tailscale）の中でだけ動かしてください。
+認識役（任意）は合言葉なしで使えるので、信頼できるネットワーク（家の Wi-Fi・Tailscale）の中でだけ動かしてください。
+
+## 使わせてもらっているもの
+
+- [Haas-ja-v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0)（Third Intelligence、Apache-2.0）: 日本語の聞き取りの AI
+- [speech.cpp](https://github.com/nyosegawa/speech.cpp)（MIT）: Haas-ja を Python も GPU もなしで動かす道具
+- [Fun-ASR Nano](https://github.com/FunAudioLLM/Fun-ASR)（[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 版）: これまでの聞き取り（予備）
 
 ## ライセンス
 
 [Apache License 2.0](LICENSE)　Copyright 2026 ogikosan
 
-認識モデル（Fun-ASR Nano）と、使っているライブラリ（sherpa-onnx など）は、それぞれのライセンスに従います。
+聞き取りの AI と、使っているライブラリは、それぞれのライセンスに従います。

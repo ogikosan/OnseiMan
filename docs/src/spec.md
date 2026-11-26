@@ -61,6 +61,8 @@
 ## このパソコンを認識役にする（裏で自動。`client/host_setup.py`、`client/main.py: _auto_gpu_host`）
 
 - 設定画面には出さない（話す側の「声を文字にする場所」と混ざって分かりにくかった。頼まれる側の準備は必ず要るので、自動でやる）。
+- **はじめは切**（`gpu_host_auto: false`、1.2.25 から）。speech.cpp の Haas-ja が CPU でも速いので、GPU のパソコンに
+  WSL2 と約 10GB を勝手に入れない。true にしたときだけ、次の動きをする。
 - NVIDIA の GPU（ドライバー 580 以上）があるパソコンで起動すると、45 秒後に GPU 版の準備を始める（未準備のときだけ）。
   失敗したら 24 時間はやり直さない（`logs/gpu_host_auto.json`）。切るのは `config.json` の `gpu_host_auto: false` か、
   フォルダに `gpu_host_off`（古い版が設定を保存し直しても消えない）。

@@ -171,10 +171,11 @@ class TestAutoChoice(unittest.TestCase):
         self.assertEqual(got[0]["url"], "http://100.83.113.30:8765")
         self.assertFalse(got[-1]["ready"])   # 準備中は後ろ
 
-    def test_gpu_host_auto_is_on_by_default(self) -> None:
+    def test_gpu_host_auto_is_off_by_default(self) -> None:
+        # speech.cpp の Haas-ja が CPU でも速いので、GPU のパソコンに 10GB を勝手に入れない
         from client.config import ClientConfig
 
-        self.assertTrue(ClientConfig().gpu_host_auto)
+        self.assertFalse(ClientConfig().gpu_host_auto)
 
     def test_settings_screen_has_no_host_card(self) -> None:
         # 「頼まれる側」になる準備は裏で自動でやる。設定の画面には出さない（話す側が迷うため）
