@@ -209,7 +209,7 @@ if ($hasRustBin -and (Test-Path -LiteralPath $rustExe) -and (-not $isGitRepo)) {
         Write-Host "自動起動を Rust 版（onseiman.exe）へ更新しました。"
     }
     Write-Host "Rust 版 OnseiMan を起動します..."
-    Start-Process -FilePath $rustExe -WorkingDirectory $Root
+    Start-Process -FilePath $rustExe -WorkingDirectory $Root -WindowStyle Hidden
 }
 
 Write-Host "おわりました。"

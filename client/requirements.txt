@@ -1,8 +1,0 @@
-# Keep this file ASCII-only: pip on Japanese Windows reads it as cp932 and fails on UTF-8 text.
-numpy>=1.26.0
-sounddevice>=0.5.0
-requests>=2.32.0
-pystray>=0.19.5
-Pillow>=10.4.0
-uiautomation>=2.0.20
-pycaw>=20240316

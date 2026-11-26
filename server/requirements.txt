@@ -1,6 +1,0 @@
-# Keep this file ASCII-only: pip on Japanese Windows reads it as cp932 and fails on UTF-8 text.
-fastapi>=0.115.0
-uvicorn>=0.32.0
-python-multipart>=0.0.12
-numpy>=1.26.0
-soundfile>=0.12.1

@@ -1,18 +1,10 @@
 @echo off
-rem Start OnseiMan. Keep this file ASCII-only.
-rem tools\install.ps1 writes .venv\onseiman-ready.txt when everything is installed and importable.
-rem If it is missing, set up first (no pause), then start. Pause only when the setup fails.
+rem Start OnseiMan (Rust edition). Keep this file ASCII-only.
 cd /d "%~dp0"
 if exist "onseiman.exe" (
     start "" "%~dp0onseiman.exe"
     exit /b 0
 )
-if exist ".venv\onseiman-ready.txt" goto run
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\install.ps1" -Target client -Starting
-if errorlevel 1 goto failed
-:run
-if exist ".venv\Scripts\pythonw.exe" start "" ".venv\Scripts\pythonw.exe" "client\main.py"
-exit /b 0
-:failed
+echo onseiman.exe not found. Run cleanup_old.bat or download from GitHub Releases.
 pause
 exit /b 1

@@ -1,3 +1,4 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 //! OnseiMan クライアント起動入口（Rust 版）。
 
 use std::net::SocketAddr;
