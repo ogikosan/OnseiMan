@@ -243,3 +243,21 @@ class TestPackages(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestInstaller(unittest.TestCase):
+    """インストーラー（Inno Setup）の決まり。"""
+
+    def test_iss(self) -> None:
+        raw = (ROOT / "packaging" / "installer" / "onseiman_setup.iss").read_bytes()
+        self.assertTrue(raw.startswith(b"\xef\xbb\xbf"), "BOM がありません（日本語を読み違える）")
+        text = raw.decode("utf-8-sig")
+        # 守り（RedirectionGuard）が子の手順に引き継がれると、uv が Python を用意できない（os error 448）
+        self.assertRegex(text, r"(?m)^RedirectionGuard=no")
+        self.assertRegex(text, r"(?m)^PrivilegesRequired=lowest")   # 管理者の権限なしで入れる
+        self.assertIn("installer_run.ps1", text)
+        self.assertNotIn("\t", text)   # \t の書き損じ
+        # 設定・辞書・履歴は消さない
+        for keep in ("config.json", "dict.json", "{app}\logs\"", "server_data"):
+            self.assertNotIn(keep, text.split("[UninstallDelete]")[1].split("[Code]")[0])
+        self.assertTrue((ROOT / "packaging" / "installer" / "onseiman.ico").exists())

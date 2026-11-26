@@ -44,3 +44,7 @@ backup/
 # install が用意する道具と専用の Python
 tools/bin/
 tools/python/
+
+# インストーラーの署名の設定（Azure の情報）
+packaging/installer/signing.json
+packaging/installer/signing-metadata.json

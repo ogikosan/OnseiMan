@@ -28,4 +28,4 @@ lin = "/mnt/" & LCase(Left(root, 1)) & Replace(Mid(root, 3), "\", "/")
 
 cmd = "cmd.exe /c " & Q & "wsl.exe -d onseiman-gpu -u root -- bash " & Q & lin & "/server/wsl/run_haas.sh" & Q & " " & Q & lin & Q & " > " & Q & logFile & Q & " 2>&1" & Q
 shell.Run cmd, 0, False
-shell.Run Q & relayPy & Q & " " & Q & root & "\server\relay.py" & Q, 0, False
+shell.Run Q & relayPy & Q & " " & Q & root & "\server\relay.py" & Q & " --wsl-distro onseiman-gpu", 0, False

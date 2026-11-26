@@ -227,6 +227,11 @@ class OnseiManApp:
         self.web_ui.on_clear_extra_hotkey = self._clear_extra_hotkey
         self.web_ui.on_run_update = self._run_github_update
         self.web_ui.on_check_update = lambda: self._check_github_update(manual=True)
+        # このパソコンを「声を文字にする役」にする（設定画面から。Windows でソースのまま動かしているときだけ）
+        if os.name == "nt" and not FROZEN:
+            from client.host_setup import HostSetup
+
+            self.web_ui.host_setup = HostSetup(ROOT_DIR)
         # GitHub に出ている新しい版（なければ None）
         self.update_info: Optional[dict] = None
         self._update_notified = ""

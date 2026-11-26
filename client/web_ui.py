@@ -385,6 +385,9 @@ class WebUIServer:
                         self._send_json({"tab": tab})
                     elif path == "/api/dict-sync":
                         self._send_json(owner.get_dict_sync_payload())
+                    elif path == "/api/host":
+                        host = getattr(owner, "host_setup", None)
+                        self._send_json(host.status() if host else {"supported": False})
                     elif path.startswith("/api/audio/"):
                         self._serve_audio(path[len("/api/audio/") :])
                     else:
@@ -458,6 +461,23 @@ class WebUIServer:
                         if fn_chk:
                             fn_chk()
                         self._send_json({"ok": True, "update": fn_upd() if fn_upd else None})
+                    elif path.startswith("/api/host/"):
+                        # このパソコンを「声を文字にする役」にする（設定画面の操作）
+                        host = getattr(owner, "host_setup", None)
+                        if host is None:
+                            raise ValueError("このパソコンでは使えません")
+                        action = path[len("/api/host/"):]
+                        if action == "start":
+                            host.start_server(str(body.get("kind", "")))
+                        elif action == "stop":
+                            host.stop_server(remove_gpu=bool(body.get("remove_gpu")))
+                        elif action == "firewall":
+                            host.allow_network()
+                        elif action == "tailscale":
+                            host.tailscale_action(str(body.get("action", "")))
+                        else:
+                            raise ValueError("できない操作です")
+                        self._send_json({"ok": True, **host.status()})
                     elif path == "/api/candidates/restore":
                         if owner.on_restore_candidate and str(body.get("src", "")).strip() and str(body.get("dst", "")).strip():
                             owner.on_restore_candidate(body)

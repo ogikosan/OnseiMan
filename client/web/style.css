@@ -486,3 +486,23 @@ details.adv summary { cursor: pointer; font-size: 13px; color: var(--muted); fon
   .ver-pill { font-size: 0; }
   .ver-pill b { font-size: 12px; }
 }
+
+/* ---- このパソコンを「声を文字にする役」にする（左に題名と説明、右に操作。1 行ずつ） ---- */
+.host-rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.host-row {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px; flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+}
+.host-row:first-child { border-top: 0; }
+.host-text { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.host-text b { font-size: 14px; }
+.host-text small { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.host-text small.ok { color: #1f9d55; }
+.host-text small.warn { color: var(--warn); }
+.host-ctl { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; flex-wrap: wrap; }
+.host-ctl select.inp { width: auto; height: 32px; padding-top: 0; padding-bottom: 0; line-height: 30px; font-size: 12.5px; }
+.host-note { margin: 0; padding: 0 14px 10px; font-size: 12.5px; }
+.host-note:empty { display: none; }
+.host-progress { padding: 0 14px 12px; }
+.host-progress-title { font-size: 13px; margin-bottom: 6px; }
+.host-progress pre { max-height: 180px; overflow: auto; margin: 0; font-size: 12px; white-space: pre-wrap; }

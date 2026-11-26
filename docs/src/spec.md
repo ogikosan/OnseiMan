@@ -43,6 +43,21 @@
 - 部品の版は固定（Haas-ASR のコミット、モデルのリビジョン、uv の版と SHA-256。`setup_haas.sh`）。
 - アプリは、使っている認識役が `engine: haas` なら区切りの上限をその `max_segment_sec` にする（`_max_segment_sec`）。
 
+## このパソコンを認識役にする（設定画面。`client/host_setup.py`）
+
+- T3 Code（pingdotgg/t3code）の「共有とアクセス」にならい、自分では入れず、決まった手順を裏で動かして状態を読む。
+- `GET /api/host` → 状態（すぐ返す。GPU・ファイアウォール・アドレス・Tailscale・認識役の返事は裏のスレッドで確かめて覚えておく）。
+  `POST /api/host/start {kind}`（`tools/installer_run.ps1 -Server cpu|gpu -NoPause` を窓なしで。記録は `logs/host_setup.log`。
+  記録は cp932 と UTF-8 が混ざるので 1 行ずつ見分けて読む）、`/stop {remove_gpu}`（`tools/stop_host_server.ps1`）、
+  `/firewall`（`tools/admin_setup.ps1 -Firewall` を管理者で。tools\python の Python に、ポート 8765・プライベートだけ許可。
+  自動でできた「止める」は消す）、`/tailscale {action: install|login}`。
+- `installer_run.ps1` は、切り替えのときに前の役を止めてから始める。GPU 版で WSL2 を入れたら 3010（再起動のあと RunOnce で続き）。
+- アドレスの一覧は、仮のネットワーク（vEthernet・WSL・Docker・VMware・VirtualBox など）を外し、Tailscale を先にする。
+- インストーラー（`packaging/installer/`、Inno Setup 6）はアプリだけを入れる。`RedirectionGuard=no` が要る
+  （有効だと子の手順にも引き継がれ、uv が Python のジャンクションを作れず os error 448 で失敗する）。
+- GPU 版の中継は、127.0.0.1:8766 で届かなければ Linux のアドレス（`hostname -I`）に渡す（WSL の転送が不安定なパソコンがある。
+  T3 Code も同じ扱い）。そのため Linux の中では 0.0.0.0:8766 で受ける。
+
 ## 量の上限（重要）
 
 Fun-ASR Nano は一度に扱える量（音声 + 辞書のヒント + 出力）に上限があり、超えると文が欠けるか空になる。実測：
