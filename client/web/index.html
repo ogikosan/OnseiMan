@@ -162,7 +162,8 @@
           </div>
           <div class="dg">
             <b>それでも間違うとき</b>
-            <span>同じ間違い方をくり返すときだけ、その言い方を横に足す。必ず直ります</span>
+            <span>同じ間違い方をくり返すときだけ、その言い方を横に足す。必ず直ります。
+            カタカナで足した言い方は、聞き取るときのヒント（読み）にもなります</span>
             <em>例: LAN ← ランク</em>
           </div>
           <div class="dg ng">
@@ -280,6 +281,12 @@
             <div class="form-row">
               <label class="lbl">マイク</label>
               <select id="set-mic" class="inp"></select>
+              <button type="button" class="btn sm" id="btn-mic-test" title="5 秒だけ録って、声の大きさと聞き取った文を見せます" style="flex:none">試す（5 秒）</button>
+            </div>
+            <div class="mic-test" id="mic-test" hidden>
+              <div class="mic-test-head"><span id="mt-state"></span><span class="mt-meter"><i id="mt-level"></i></span></div>
+              <div class="mt-verdict" id="mt-verdict"></div>
+              <div class="mt-text" id="mt-text"></div>
             </div>
             <div class="form-row">
               <label class="lbl">表示の場所</label>

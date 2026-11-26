@@ -412,6 +412,39 @@
     $("#server-old-banner").hidden = true;
   });
 
+  // ---- マイクテスト（設定の「マイク」の「試す」） ----
+  let micTimer = null;
+  function renderMicTest(t) {
+    const box = $("#mic-test");
+    box.hidden = !t || t.state === "idle";
+    if (box.hidden) return;
+    const st = { recording: `話してください…（あと ${Math.ceil(t.left || 0)} 秒）`, recognizing: "文字にしています…", done: "結果", error: "うまくいきませんでした" };
+    $("#mt-state").textContent = st[t.state] || "";
+    $("#mt-level").style.width = `${Math.round((t.state === "recording" ? t.level || 0 : 0) * 100)}%`;
+    $("#mt-level").parentElement.hidden = t.state !== "recording";
+    const v = $("#mt-verdict");
+    v.textContent = t.verdict || "";
+    v.className = `mt-verdict ${t.verdict_kind || ""}`;
+    $("#mt-text").textContent = t.state === "done"
+      ? (t.text ? `聞き取った文: ${t.text}${t.backend ? `（${t.backend}）` : ""}` : (t.verdict_kind === "ng" ? "" : `聞き取れる言葉がありませんでした${t.backend ? `（${t.backend}）` : ""}`))
+      : "";
+    $("#btn-mic-test").disabled = t.state === "recording" || t.state === "recognizing";
+  }
+  async function pollMicTest() {
+    clearTimeout(micTimer);
+    try {
+      const t = await api("/api/mic_test");
+      renderMicTest(t);
+      if (t.state === "recording" || t.state === "recognizing") micTimer = setTimeout(pollMicTest, 150);
+    } catch { /* 古い版 */ }
+  }
+  $("#btn-mic-test").addEventListener("click", async () => {
+    try {
+      await api("/api/mic_test/start", {});
+      pollMicTest();
+    } catch (e) { toast(e.message, "err"); }
+  });
+
   // ---- Navigation ----
   function switchTab(tab) {
     $$("nav .seg-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === tab)));

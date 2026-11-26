@@ -98,14 +98,16 @@ class HaasEngine:
                 torch.cuda.memory_reserved() / 2**20,
             )
 
-    def _vocabulary(self, hotwords: str):
+    def _vocabulary(self, hotwords: str, readings: Optional[dict] = None):
         words = [w.strip() for w in hotwords.split(",") if w.strip()]
-        key = "\n".join(words)
+        readings = readings or {}
+        vocab = {w: [r for r in readings.get(w, []) if r] for w in words}
+        key = repr(sorted(vocab.items()))
         if key != self._vocab_key:
             import haas_asr
 
             try:
-                self._vocab = haas_asr.Vocabulary(words) if words else None
+                self._vocab = haas_asr.Vocabulary(vocab) if vocab else None
             except Exception as exc:  # 使えない言葉が混ざっていても、聞き取りは止めない
                 logger.warning("優先語を使えませんでした: %s", exc)
                 self._vocab = None
@@ -119,6 +121,7 @@ class HaasEngine:
         hotwords: str = "",
         language: Optional[str] = None,
         itn: Optional[bool] = None,
+        readings: Optional[dict] = None,
     ) -> Tuple[str, float]:
         """16kHz 以外は直してから聞き取る。戻り値は (文, ミリ秒)。language・itn は使わない（日本語専用）。"""
         if self._model is None:
@@ -131,7 +134,7 @@ class HaasEngine:
         with self._lock:
             import haas_asr
 
-            vocab = self._vocabulary(hotwords)
+            vocab = self._vocabulary(hotwords, readings)
             if vocab:
                 out = haas_asr.transcribe(self._model, [samples], vocabulary=vocab)[0]
             else:

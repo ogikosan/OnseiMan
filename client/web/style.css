@@ -511,3 +511,13 @@ details.adv summary { cursor: pointer; font-size: 13px; color: var(--muted); fon
 .host-progress { padding: 0 14px 12px; }
 .host-progress-title { font-size: 13px; margin-bottom: 6px; }
 .host-progress pre { max-height: 180px; overflow: auto; margin: 0; font-size: 12px; white-space: pre-wrap; }
+
+/* ---- マイクテスト ---- */
+.mic-test { margin: -4px 0 6px 160px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.mic-test-head { display: flex; align-items: center; gap: 10px; }
+.mt-meter { flex: 1; height: 8px; border-radius: 4px; background: rgba(126, 140, 168, .25); overflow: hidden; }
+.mt-meter[hidden] { display: none; }
+.mt-meter i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .1s; }
+.mt-verdict.ok { color: #1f9d55; } .mt-verdict.warn { color: var(--warn); } .mt-verdict.ng { color: var(--danger); }
+.mt-text { overflow-wrap: anywhere; }
+@media (max-width: 640px) { .mic-test { margin-left: 0; } }

@@ -129,3 +129,42 @@ class TestServerAuto(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReadings(unittest.TestCase):
+    def test_kana_misheard_forms_become_readings(self) -> None:
+        import json as _json
+
+        from shared.dictionary import CustomDictionary
+
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            p = tmp / "dict.json"
+            p.write_text(_json.dumps({
+                "hotwords": ["GitHub", "くっきり版"],
+                "replacements": {"ギットハブ": "GitHub", "ぎっとはぶ": "GitHub", "ランク": "LAN", "ギット はぶ": "GitHub",
+                                 "クッキリバン": "くっきり版", "git hub": "GitHub"},
+            }, ensure_ascii=False), encoding="utf-8")
+            d = CustomDictionary(p)
+            r = d.keyword_readings()
+            self.assertEqual(sorted(r["GitHub"]), ["ぎっとはぶ", "ギットハブ"])   # カナだけのもの
+            self.assertEqual(r["くっきり版"], ["クッキリバン"])
+            self.assertEqual(r["LAN"], ["ランク"])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_keyword_lines(self) -> None:
+        from shared.speechcpp_engine import keyword_lines
+
+        self.assertEqual(keyword_lines("GitHub, LAN,", {"GitHub": ["ギットハブ", "ぎっとはぶ"], "LAN": ["だめ,な"]}),
+                         ["GitHub=ギットハブ,ぎっとはぶ", "LAN"])
+        self.assertEqual(keyword_lines("a=b,ok"), ["ok"])   # 書き方に = が入るものは渡さない
+
+    def test_server_parses_readings_safely(self) -> None:
+        try:
+            from server import app as srv
+        except Exception:
+            self.skipTest("サーバー用の部品が無い")
+        self.assertEqual(srv.parse_readings('{"GitHub": ["ギットハブ"]}'), {"GitHub": ["ギットハブ"]})
+        for bad in ("", "壊れた", "[]", '{"x": "y"}', '{"x": [1, 2]}', "{" + '"a":["b"],' * 5000 + "}"):
+            self.assertEqual(srv.parse_readings(bad), {})

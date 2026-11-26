@@ -385,6 +385,9 @@ class WebUIServer:
                         self._send_json({"tab": tab})
                     elif path == "/api/dict-sync":
                         self._send_json(owner.get_dict_sync_payload())
+                    elif path == "/api/mic_test":
+                        fn_mt = getattr(owner, "get_mic_test_fn", None)
+                        self._send_json(fn_mt() if fn_mt else {"state": "idle"})
                     elif path == "/api/host":
                         host = getattr(owner, "host_setup", None)
                         self._send_json(host.status() if host else {"supported": False})
@@ -478,6 +481,12 @@ class WebUIServer:
                         else:
                             raise ValueError("できない操作です")
                         self._send_json({"ok": True, **host.status()})
+                    elif path == "/api/mic_test/start":
+                        fn_start = getattr(owner, "on_mic_test_start", None)
+                        if not fn_start:
+                            raise ValueError("この版では使えません")
+                        fn_start()
+                        self._send_json({"ok": True})
                     elif path == "/api/candidates/restore":
                         if owner.on_restore_candidate and str(body.get("src", "")).strip() and str(body.get("dst", "")).strip():
                             owner.on_restore_candidate(body)

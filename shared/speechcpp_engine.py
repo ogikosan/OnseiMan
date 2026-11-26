@@ -41,6 +41,18 @@ def default_device() -> str:
     return "gpu" if sys.platform == "darwin" else "cpu"
 
 
+def keyword_lines(hotwords: str, readings: Optional[dict] = None) -> list:
+    """speech.cpp の keywords（1 行に 1 語。「書き方=読み,読み」）にする。"""
+    readings = readings or {}
+    out = []
+    for w in (x.strip() for x in hotwords.split(",")):
+        if not w or "=" in w or "\n" in w:
+            continue
+        rs = [r.strip() for r in readings.get(w, []) if r and r.strip() and "," not in r and "=" not in r and "\n" not in r]
+        out.append(f"{w}={','.join(rs)}" if rs else w)
+    return out
+
+
 class SpeechCppEngine:
     def __init__(self, root: Path, device: str = "", threads: int = 0, command: Optional[list] = None) -> None:
         self.root = Path(root)
@@ -126,13 +138,15 @@ class SpeechCppEngine:
         hotwords: str = "",
         language: Optional[str] = None,
         itn: Optional[bool] = None,
+        readings: Optional[dict] = None,
     ) -> Tuple[str, float]:
-        """戻り値は (文, ミリ秒)。language・itn は使わない（日本語専用）。"""
+        """戻り値は (文, ミリ秒)。language・itn は使わない（日本語専用）。
+        readings: {書き方: [読み, ...]}（優先語の読み。聞き取る段階でその言葉にしやすくなる）。"""
         samples = np.asarray(samples, dtype=np.float32)
         if samples.ndim > 1:
             samples = samples.mean(axis=1)
         pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).round().astype("<i2").tobytes()
-        words = [w.strip() for w in hotwords.split(",") if w.strip()]
+        words = keyword_lines(hotwords, readings)
         t0 = time.perf_counter()
         with self._lock:
             for attempt in range(3):

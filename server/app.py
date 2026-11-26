@@ -135,6 +135,25 @@ def segment_max_sec(hotwords: str) -> float:
     return max(6.0, min(18.0, 25.0 - 0.4 * n))
 
 
+def parse_readings(raw: str) -> dict:
+    """優先語の読み（JSON の {書き方: [読み, ...]}）。おかしなものや大きすぎるものは使わない。"""
+    if not raw or len(raw) > MAX_HOTWORDS_CHARS * 2:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for k, v in list(data.items())[:200]:
+        if isinstance(k, str) and isinstance(v, list) and 0 < len(k) <= 60:
+            rs = [r for r in v if isinstance(r, str) and 0 < len(r) <= 60][:5]
+            if rs:
+                out[k] = rs
+    return out
+
+
 def is_m4a(raw: bytes) -> bool:
     """M4A（iPhone のショートカットで録音した音声など）。先頭 4〜8 バイトが ftyp。"""
     return len(raw) >= 12 and raw[4:8] == b"ftyp"
@@ -202,6 +221,7 @@ async def _limit_body(request, call_next):
 async def transcribe(
     audio: UploadFile = File(...),
     hotwords: str = Form(default=""),
+    keywords: str = Form(default=""),
     language: str = Form(default=""),
     itn: bool = Form(default=True),
 ) -> dict:
@@ -216,6 +236,7 @@ async def transcribe(
         raise HTTPException(status_code=413, detail="Audio too large")
     if len(hotwords) > MAX_HOTWORDS_CHARS:
         hotwords = hotwords[:MAX_HOTWORDS_CHARS]
+    readings = parse_readings(keywords)
 
     # WAV と M4A だけを受け付ける（ほかの形式の読み取り処理に、外からのデータを渡さない）
     if is_m4a(raw_bytes):
@@ -243,7 +264,8 @@ async def transcribe(
         parts = [samples]
     texts, elapsed_ms = [], 0.0
     for part in parts:
-        t, ms = engine.transcribe(samples=part, sample_rate=sr, hotwords=hotwords, language=language, itn=itn)
+        extra = {"readings": readings} if (readings and ENGINE_KIND in ("speechcpp", "haas")) else {}
+        t, ms = engine.transcribe(samples=part, sample_rate=sr, hotwords=hotwords, language=language, itn=itn, **extra)
         texts.append(t)
         elapsed_ms += ms
     text = join_texts(texts)

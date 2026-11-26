@@ -228,6 +228,10 @@ class OnseiManApp:
         self.web_ui.on_clear_extra_hotkey = self._clear_extra_hotkey
         self.web_ui.on_run_update = self._run_github_update
         self.web_ui.on_check_update = lambda: self._check_github_update(manual=True)
+        # マイクテスト（設定の「マイク」の「試す」）
+        self._mic_test: dict = {"state": "idle"}
+        self.web_ui.on_mic_test_start = self._mic_test_start
+        self.web_ui.get_mic_test_fn = lambda: dict(self._mic_test)
         # このパソコンを「声を文字にする役」にする（設定画面から。Windows でソースのまま動かしているときだけ）
         if os.name == "nt" and not FROZEN:
             from client.host_setup import HostSetup
@@ -378,7 +382,12 @@ class OnseiManApp:
         モデルは一度に扱える量に上限があり、ヒントが多いと文の後半が消えることがある。
         区切りの長さで防いでいるが、念のため結果を確かめて、話したことを捨てないようにする。
         """
-        res = self.transcriber.transcribe(samples=samples, sample_rate=sample_rate, hotwords_csv=hotwords)
+        try:
+            readings = self.dictionary.keyword_readings() if hotwords else {}
+        except Exception:
+            readings = {}
+        extra = {"readings": readings} if readings else {}
+        res = self.transcriber.transcribe(samples=samples, sample_rate=sample_rate, hotwords_csv=hotwords, **extra)
         dur = len(samples) / float(max(sample_rate, 1))
         text = getattr(res, "text", "") or ""
         if hotwords and dur >= 5.0 and len(text) < dur * 1.0 and self._had_voice(samples, dur):
@@ -1430,6 +1439,74 @@ class OnseiManApp:
                 self.ui.show_status("✓ 聞き間違いの少ない Haas-ja で聞き取るようになりました", bg="#065f46", auto_hide_ms=4000)
         if self.config.recognition_place == "local" or self.config.local_fallback:
             self.transcriber.preload_local()
+
+    MIC_TEST_SEC = 5.0
+
+    def _mic_test_start(self) -> None:
+        """設定の「試す」: 5 秒だけ録って、声の大きさと聞き取った文を見せる（ふだんの録音とは別に録る）。"""
+        if self.recorder.is_recording or self._processing:
+            raise ValueError("録音中・文字にしている途中は試せません")
+        if self._mic_test.get("state") in ("recording", "recognizing"):
+            return
+        self._mic_test = {"state": "recording", "level": 0.0, "peak": 0.0, "left": self.MIC_TEST_SEC,
+                          "text": "", "verdict": "", "verdict_kind": "", "backend": ""}
+        threading.Thread(target=self._mic_test_run, name="mic-test", daemon=True).start()
+
+    @staticmethod
+    def mic_verdict(peak: float) -> tuple:
+        """いちばん大きかった音の大きさ（0〜1）から、分かる言葉の判定を作る。(文, 種類)"""
+        if peak < 0.01:
+            return ("音がほとんど入っていません。マイクの選び方と、Windows の「設定」→「プライバシー」→「マイク」で"
+                    "アプリがマイクを使えるか、マイクの音量を確かめてください", "ng")
+        if peak < 0.06:
+            return "声が小さいです。マイクに近づくか、Windows のマイクの音量を上げてください", "warn"
+        if peak > 0.98:
+            return "音が大きすぎて割れています。Windows のマイクの音量を下げてください", "warn"
+        return "ちょうどよい大きさです", "ok"
+
+    def _mic_test_run(self) -> None:
+        import sounddevice as sd
+
+        from client.recorder import resolve_input_device
+
+        st = self._mic_test
+        sr = int(self.config.sample_rate)
+        frames: list = []
+
+        def cb(indata, _n, _t, _status) -> None:
+            x = indata[:, 0].copy()
+            frames.append(x)
+            if len(x):
+                st["level"] = min(1.0, float(np.sqrt(np.mean(x * x))) * 10.0)
+                st["peak"] = max(st["peak"], float(np.abs(x).max()))
+
+        try:
+            dev = resolve_input_device(self.config.microphone)
+            with sd.InputStream(samplerate=sr, channels=1, dtype="float32", device=dev, callback=cb, blocksize=1024):
+                t0 = time.monotonic()
+                while not self._stop_event.is_set():
+                    left = self.MIC_TEST_SEC - (time.monotonic() - t0)
+                    if left <= 0:
+                        break
+                    st["left"] = round(left, 1)
+                    time.sleep(0.1)
+        except Exception as exc:
+            logger.warning("マイクテストでマイクを開けませんでした: %s", exc)
+            st.update(state="error", verdict=f"マイクを開けませんでした（{exc}）。マイクの選び方を確かめてください", verdict_kind="ng")
+            return
+        audio = np.concatenate(frames).astype(np.float32) if frames else np.zeros(0, dtype=np.float32)
+        verdict, kind = self.mic_verdict(st["peak"])
+        st.update(state="recognizing", level=0.0, left=0, verdict=verdict, verdict_kind=kind)
+        if kind == "ng" or not len(audio):
+            st["state"] = "done"
+            return
+        try:
+            res = self._recognize_safely(audio, sr, self.dictionary.hotwords_csv)
+            st.update(state="done", text=(getattr(res, "text", "") or "").strip(),
+                      backend=self.friendly_backend(self.transcriber.last_backend_status))
+        except Exception as exc:
+            logger.warning("マイクテストで文字にできませんでした: %s", exc)
+            st.update(state="done", text="", backend=f"文字にできませんでした（{exc}）")
 
     GPU_HOST_RETRY_SEC = 24 * 3600
 

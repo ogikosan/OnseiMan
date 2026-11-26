@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
@@ -237,13 +238,15 @@ class HybridTranscriber:
             self._local_engine.load()
         return self._local_engine
 
-    def _post(self, url: str, wav_bytes: bytes, hotwords_csv: str) -> requests.Response:
+    def _post(self, url: str, wav_bytes: bytes, hotwords_csv: str, readings: Optional[dict] = None) -> requests.Response:
         def once() -> requests.Response:
             return self._session().post(
                 url,
                 files={"audio": ("audio.wav", wav_bytes, "audio/wav")},
                 data={
                     "hotwords": hotwords_csv,
+                    # 優先語の読み（新しい認識役だけが使う。古い認識役は知らない項目として無視する）
+                    "keywords": json.dumps(readings or {}, ensure_ascii=False),
                     "language": self.config.language,
                     "itn": "true" if self.config.itn else "false",
                 },
@@ -267,6 +270,7 @@ class HybridTranscriber:
         samples: np.ndarray,
         sample_rate: int = 16000,
         hotwords_csv: str = "",
+        readings: Optional[dict] = None,
     ) -> TranscriptionResult:
         wav_bytes = samples_to_wav_bytes(samples, sample_rate)
 
@@ -275,7 +279,7 @@ class HybridTranscriber:
             url = f"{base}/transcribe"
             t0 = time.perf_counter()
             try:
-                resp = self._post(url, wav_bytes, hotwords_csv)
+                resp = self._post(url, wav_bytes, hotwords_csv, readings)
                 resp.raise_for_status()
                 payload = resp.json()
                 text = clean_asr_text(payload.get("text") or "")
@@ -298,6 +302,7 @@ class HybridTranscriber:
             engine = self._get_local_engine()
         local_label = "Local-Haas" if type(engine).__name__ == "SpeechCppEngine" else "Local-CPU"
         logger.info("このパソコンで聞き取ります (%s)", local_label)
+        extra = {"readings": readings} if (readings and local_label == "Local-Haas") else {}
         with self._local_lock:
             text, elapsed_ms = engine.transcribe(
             samples=samples,
@@ -305,6 +310,7 @@ class HybridTranscriber:
             hotwords=hotwords_csv,
             language=self.config.language,
             itn=self.config.itn,
+            **extra,
         )
         text = clean_asr_text(text)
         self.last_backend_status = "Local Haas" if local_label == "Local-Haas" else "Local CPU"

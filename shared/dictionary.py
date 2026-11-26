@@ -17,6 +17,11 @@ _KATA_CHARS = "ァ-ヺー"
 logger = logging.getLogger("onseiman.dictionary")
 
 
+def _is_kana(s: str) -> bool:
+    """ひらがな・カタカナ（と長音・中黒）だけでできているか。"""
+    return all("\u3041" <= c <= "\u30ff" or c in "ー・" for c in s)
+
+
 class CustomDictionary:
     """Loads hotwords and post-ASR replacement rules from dict.json with auto hot-reload."""
 
@@ -129,6 +134,25 @@ class CustomDictionary:
     @property
     def hotwords_csv(self) -> str:
         return ",".join(self.active_hotwords())
+
+    MAX_READINGS = 5
+
+    def keyword_readings(self) -> dict:
+        """優先語の「読み」: 聞き間違えた言い方のうち、カナだけで書いたもの（例: GitHub ← ギットハブ）。
+
+        Haas-ja（speech.cpp・NeMo）は、言葉の書き方と読みを渡すと、聞き取る段階でその言葉にしやすくなる。
+        Fun-ASR は使わない（置き換えはこれまでどおり効く）。
+        """
+        active = set(self.active_hotwords())
+        out: dict = {}
+        for src, dst in self._replacements:
+            src, dst = str(src).strip(), str(dst).strip()
+            if dst not in active or src == dst or len(src) < 2 or not _is_kana(src):
+                continue
+            lst = out.setdefault(dst, [])
+            if src not in lst and len(lst) < self.MAX_READINGS:
+                lst.append(src)
+        return out
 
     def _compile_rules(self) -> None:
         """置き換えルールを作る。

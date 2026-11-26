@@ -182,3 +182,59 @@ class TestAutoChoice(unittest.TestCase):
         self.assertNotIn('id="host-card"', html)
         js = (ROOT / "client" / "web" / "app.js").read_text(encoding="utf-8")
         self.assertNotIn("#host-card", js)
+
+
+class TestMicTest(unittest.TestCase):
+    """設定の「マイク」の「試す」。本物のマイクの代わりに、作り物の音を流し込む。"""
+
+    def _run(self, amplitude: float, text: str = "テストです"):
+        import threading
+        import types
+
+        import numpy as np
+
+        from client import main as m
+
+        class FakeStream:
+            def __init__(self, samplerate, channels, dtype, device, callback, blocksize):
+                self.cb, self.n = callback, blocksize
+
+            def __enter__(self):
+                t = np.arange(self.n) / 16000.0
+                for _ in range(5):
+                    self.cb((amplitude * np.sin(2 * np.pi * 220 * t)).astype(np.float32).reshape(-1, 1), self.n, None, None)
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        app = types.SimpleNamespace(
+            config=types.SimpleNamespace(sample_rate=16000, microphone=None),
+            _stop_event=threading.Event(), MIC_TEST_SEC=0.2,
+            dictionary=types.SimpleNamespace(hotwords_csv=""),
+            transcriber=types.SimpleNamespace(last_backend_status="Local Haas"),
+            _recognize_safely=lambda audio, sr, hw: types.SimpleNamespace(text=text),
+        )
+        app.mic_verdict = m.OnseiManApp.mic_verdict
+        app.friendly_backend = m.OnseiManApp.friendly_backend
+        app._mic_test = {"state": "recording", "level": 0.0, "peak": 0.0, "left": 0.2, "text": "", "verdict": "", "verdict_kind": "", "backend": ""}
+        import sounddevice
+        with mock.patch.object(sounddevice, "InputStream", FakeStream):
+            m.OnseiManApp._mic_test_run(app)
+        return app._mic_test
+
+    def test_good_level_shows_text(self) -> None:
+        st = self._run(0.3)
+        self.assertEqual(st["state"], "done")
+        self.assertEqual(st["verdict_kind"], "ok")
+        self.assertEqual(st["text"], "テストです")
+        self.assertEqual(st["backend"], "このパソコンで認識")
+
+    def test_silence_is_reported(self) -> None:
+        st = self._run(0.0)
+        self.assertEqual(st["verdict_kind"], "ng")
+        self.assertEqual(st["text"], "")
+
+    def test_quiet_and_clipping(self) -> None:
+        self.assertEqual(self._run(0.03)["verdict_kind"], "warn")
+        self.assertEqual(self._run(1.0)["verdict_kind"], "warn")
