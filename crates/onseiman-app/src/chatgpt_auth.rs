@@ -313,6 +313,16 @@ pub fn list_models(root: &Path) -> Result<Vec<String>, String> {
 
 /// Responses API（`store: false`, `stream: true`）で話した文を整える。
 pub fn refine_dictation(root: &Path, model: &str, spoken_text: &str) -> Result<LlmResult, String> {
+    refine_dictation_with_context(root, model, spoken_text, "")
+}
+
+/// 辞書ヒントや貼り付け先文脈付きで Responses API を呼び出す（低遅延のため `reasoning.effort = "minimal"` を優先）。
+pub fn refine_dictation_with_context(
+    root: &Path,
+    model: &str,
+    spoken_text: &str,
+    extra_instructions: &str,
+) -> Result<LlmResult, String> {
     let t0 = Instant::now();
     let token = access_token(root)?;
     let resolved_model = if model.trim().is_empty() {
@@ -320,25 +330,49 @@ pub fn refine_dictation(root: &Path, model: &str, spoken_text: &str) -> Result<L
     } else {
         model.trim()
     };
-    let body = serde_json::json!({
-        "model": resolved_model,
-        "instructions": REFINE_SYSTEM_PROMPT,
-        "input": [{"role": "user", "content": spoken_text}],
-        "store": false,
-        "stream": true,
-    });
-    let resp = agent(Duration::from_secs(35))
-        .post(&format!("{API}/responses"))
-        .set("Authorization", &format!("Bearer {token}"))
-        .send_json(body);
-    let resp = match resp {
-        Ok(r) => r,
-        Err(ureq::Error::Status(code, r)) => {
-            let v: serde_json::Value = r.into_json().unwrap_or_default();
-            let err_code = v["error"]["code"].as_str().unwrap_or("");
-            return Err(explain_error(code, err_code));
+    let instructions = if extra_instructions.trim().is_empty() {
+        REFINE_SYSTEM_PROMPT.to_string()
+    } else {
+        format!("{REFINE_SYSTEM_PROMPT}\n{extra_instructions}")
+    };
+    let send = |with_minimal_reasoning: bool| -> Result<ureq::Response, Box<ureq::Error>> {
+        let mut body = serde_json::json!({
+            "model": resolved_model,
+            "instructions": instructions,
+            "input": [{"role": "user", "content": spoken_text}],
+            "store": false,
+            "stream": true,
+        });
+        if with_minimal_reasoning {
+            body["reasoning"] = serde_json::json!({ "effort": "minimal" });
         }
-        Err(e) => return Err(format!("ChatGPT につながりませんでした: {e}")),
+        agent(Duration::from_secs(35))
+            .post(&format!("{API}/responses"))
+            .set("Authorization", &format!("Bearer {token}"))
+            .send_json(body)
+            .map_err(Box::new)
+    };
+    let resp = match send(true) {
+        Ok(r) => r,
+        Err(e) => match *e {
+            ureq::Error::Status(400, _) => match send(false) {
+                Ok(r) => r,
+                Err(e2) => match *e2 {
+                    ureq::Error::Status(code, r) => {
+                        let v: serde_json::Value = r.into_json().unwrap_or_default();
+                        let err_code = v["error"]["code"].as_str().unwrap_or("");
+                        return Err(explain_error(code, err_code));
+                    }
+                    other => return Err(format!("ChatGPT につながりませんでした: {other}")),
+                },
+            },
+            ureq::Error::Status(code, r) => {
+                let v: serde_json::Value = r.into_json().unwrap_or_default();
+                let err_code = v["error"]["code"].as_str().unwrap_or("");
+                return Err(explain_error(code, err_code));
+            }
+            other => return Err(format!("ChatGPT につながりませんでした: {other}")),
+        },
     };
     let text = read_sse_stream(resp.into_reader())?;
     Ok(LlmResult {

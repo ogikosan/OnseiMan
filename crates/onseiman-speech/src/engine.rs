@@ -346,6 +346,8 @@ fn request(
     let mut req = json!({"type": "transcribe", "id": rid, "sample_rate": sample_rate});
     if !words.is_empty() {
         req["keywords"] = Value::String(words.join("\n"));
+        // 辞書語を丸ごと含む変更だけを採用し、無関係な語の誤変換を防ぐ
+        req["keywords_guard"] = Value::Bool(true);
     }
     worker.send(&req).map_err(died)?;
     worker.stdin.flush().map_err(died)?;

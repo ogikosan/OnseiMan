@@ -143,6 +143,10 @@ impl CustomDictionary {
         &self.hotwords
     }
 
+    pub fn replacements(&self) -> &[(String, String)] {
+        &self.replacements
+    }
+
     /// 音声認識へ渡す優先語（新しく登録したものから上限 `MAX_HOTWORDS` 件）。
     /// ひらがなだけ・1 文字の言葉は枠を使わない。
     pub fn active_hotwords(&self) -> Vec<String> {

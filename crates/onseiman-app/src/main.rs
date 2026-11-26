@@ -46,13 +46,14 @@ fn default_root() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 use onseiman_core::audio::{encode_wav, normalize_voice_dynamics};
+use onseiman_core::segmenter::AdaptiveSegmenter;
 use onseiman_platform::audio_mute::AudioMuteGuard;
 use onseiman_platform::binding::parse_binding;
 use onseiman_platform::hotkey::{
     heartbeat as hook_heartbeat, GlobalHotkey, HotkeyConfig, HotkeyEvent,
 };
 use onseiman_platform::overlay::{OverlayState, RecordingOverlay};
-use onseiman_platform::paste::{capture_paste_target, paste_text};
+use onseiman_platform::paste::{capture_paste_target, paste_text, target_process_name};
 use onseiman_platform::recorder::{
     list_input_devices, start_recording_ex, warm_mic, RecordingHandle,
 };
@@ -64,7 +65,7 @@ use tokio::sync::Notify;
 
 use onseiman_app::chatgpt_auth;
 use onseiman_app::live_session::{LiveTranscription, SegmentRecognition};
-use onseiman_app::pipeline::format_utterance_with_root;
+use onseiman_app::pipeline::format_utterance_full;
 use onseiman_app::web_ui::{
     open_browser, open_or_focus_browser, retranscribe_latest, router, sync_hotkey_from_config,
     AppContext,
@@ -327,9 +328,11 @@ struct ActiveSession {
     handle: RecordingHandle,
     _mute_guard: Option<AudioMuteGuard>,
     target: isize,
+    target_app: Option<String>,
     use_ai: bool,
     silence_triggered: Arc<AtomicBool>,
     live: Option<LiveTranscription>,
+    adaptive_seg: Option<AdaptiveSegmenter>,
     submitted_samples: Vec<f32>,
 }
 
@@ -515,13 +518,21 @@ fn start_hotkey_loop(
                     } else {
                         None
                     };
+                    let target_app = target_process_name(target);
+                    let adaptive_seg = if live.is_some() {
+                        Some(AdaptiveSegmenter::new(16_000, 9.0))
+                    } else {
+                        None
+                    };
                     *slot = Some(ActiveSession {
                         handle,
                         _mute_guard: mute_guard,
                         target,
+                        target_app,
                         use_ai,
                         silence_triggered,
                         live,
+                        adaptive_seg,
                         submitted_samples: Vec::new(),
                     });
                     eprintln!("録音開始 (ai={use_ai})");
@@ -564,8 +575,10 @@ fn start_hotkey_loop(
             let watcher_job = Arc::clone(&uia_watcher);
             let ov_gen_job = Arc::clone(&overlay_gen);
             let target = sess.target;
+            let target_app = sess.target_app.take();
             let use_ai = sess.use_ai;
             let live_opt = sess.live.take();
+            let mut adaptive_seg = sess.adaptive_seg.take();
             thread::spawn(move || {
                 let norm_samples = normalize_voice_dynamics(&all_samples, 16_000);
                 let wav = encode_wav(&norm_samples, 16_000);
@@ -581,7 +594,14 @@ fn start_hotkey_loop(
 
                 let rec_res: Result<(String, String, f64), String> = match live_opt {
                     Some(live) if live.segment_count() > 0 => {
-                        if tail_samples.len() >= 1600 {
+                        if let Some(ref mut seg) = adaptive_seg {
+                            for c in seg.push(&tail_samples) {
+                                live.submit(c);
+                            }
+                            if let Some(c) = seg.flush() {
+                                live.submit(c);
+                            }
+                        } else if tail_samples.len() >= 1600 {
                             live.submit(tail_samples);
                         }
                         live.finish()
@@ -603,12 +623,13 @@ fn start_hotkey_loop(
                 let mut showed_done = false;
                 match rec_res {
                     Ok((raw_text, backend, elapsed_ms)) => {
-                        let formatted = format_utterance_with_root(
+                        let formatted = format_utterance_full(
                             &raw_text,
                             &cfg,
                             &dict,
                             use_ai,
                             Some(&ctx_job.root_dir),
+                            target_app.as_deref(),
                         );
                         if !formatted.text.is_empty() {
                             let pr = paste_text(
@@ -778,14 +799,18 @@ fn start_hotkey_loop(
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // 長めの録音中（8.5 秒以上）なら裏でライブ分割して先行文字起こし
+                    // 適応型ノイズフロア＋末尾 200ms 余白のセグメンタで自然な無音区切りごとに先行文字起こし
                     if let Some(sess) = active.as_mut() {
-                        if sess.live.is_some() && sess.handle.elapsed_sec() >= 8.5 {
+                        if sess.live.is_some() && sess.handle.elapsed_sec() >= 0.4 {
                             let chunk = sess.handle.drain_16k();
                             if !chunk.is_empty() {
                                 sess.submitted_samples.extend_from_slice(&chunk);
-                                if let Some(ref live) = sess.live {
-                                    live.submit(chunk);
+                                if let Some(ref mut seg) = sess.adaptive_seg {
+                                    for ready_seg in seg.push(&chunk) {
+                                        if let Some(ref live) = sess.live {
+                                            live.submit(ready_seg);
+                                        }
+                                    }
                                 }
                             }
                         }

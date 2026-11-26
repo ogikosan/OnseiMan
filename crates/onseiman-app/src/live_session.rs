@@ -191,9 +191,26 @@ fn text_so_far_inner(state: &Arc<Mutex<SharedState>>) -> String {
     join_texts(&done)
 }
 
+/// 直前と今回の認識結果で一致している先頭部分だけを返す（コンセンサス表示用）。
+pub fn stable_prefix(prev: &str, curr: &str) -> String {
+    prev.chars()
+        .zip(curr.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stable_prefix_finds_common_head() {
+        assert_eq!(
+            stable_prefix("明日の会議は", "明日の会議について"),
+            "明日の会議"
+        );
+    }
 
     #[test]
     fn live_transcription_joins_segments_in_order() {

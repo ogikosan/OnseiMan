@@ -23,6 +23,57 @@ pub fn format_utterance(
     format_utterance_with_root(raw, cfg, dict, force_llm, None)
 }
 
+const CHAT_APPS: &[&str] = &[
+    "slack.exe",
+    "discord.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "line.exe",
+    "chatwork.exe",
+    "mattermost.exe",
+    "telegram.exe",
+];
+
+fn is_chat_app(app: Option<&str>) -> bool {
+    app.map(|a| {
+        let lower = a.to_ascii_lowercase();
+        CHAT_APPS.iter().any(|&c| c == lower)
+    })
+    .unwrap_or(false)
+}
+
+fn build_llm_context_hint(dict: &CustomDictionary, target_app: Option<&str>) -> String {
+    let mut parts = Vec::new();
+    let mut terms: Vec<String> = Vec::new();
+    for w in dict.active_hotwords() {
+        if !w.is_empty() && !terms.contains(&w) {
+            terms.push(w);
+        }
+        if terms.len() >= 40 {
+            break;
+        }
+    }
+    for (_, v) in dict.replacements() {
+        let t = v.trim().to_string();
+        if !t.is_empty() && !terms.contains(&t) {
+            terms.push(t);
+        }
+        if terms.len() >= 60 {
+            break;
+        }
+    }
+    if !terms.is_empty() {
+        parts.push(format!(
+            "以下の用語・固有名詞は、文脈に合う場合この表記を優先してください: {}",
+            terms.join("、")
+        ));
+    }
+    if is_chat_app(target_app) {
+        parts.push("チャットアプリ向けの自然な短文にし、文末の「。」は省いてください。".into());
+    }
+    parts.join("\n")
+}
+
 /// 1 発話のテキストを設定と辞書に従って整形する（ChatGPT サインイン利用時は `root_dir` を渡す）。
 pub fn format_utterance_with_root(
     raw: &str,
@@ -30,6 +81,18 @@ pub fn format_utterance_with_root(
     dict: &CustomDictionary,
     force_llm: bool,
     root_dir: Option<&std::path::Path>,
+) -> FormatOutput {
+    format_utterance_full(raw, cfg, dict, force_llm, root_dir, None)
+}
+
+/// 1 発話のテキストを設定・辞書・貼り付け先アプリ情報に従って整形する。
+pub fn format_utterance_full(
+    raw: &str,
+    cfg: &ClientConfig,
+    dict: &CustomDictionary,
+    force_llm: bool,
+    root_dir: Option<&std::path::Path>,
+    target_app: Option<&str>,
 ) -> FormatOutput {
     let mut text = raw.trim().to_string();
     if text.is_empty() {
@@ -57,7 +120,7 @@ pub fn format_utterance_with_root(
         text = apply_voice_commands(&text);
     }
 
-    if cfg.strip_trailing_period {
+    if cfg.strip_trailing_period || (cfg.app_specific_rules && is_chat_app(target_app)) {
         text = strip_trailing_period(&text);
     }
 
@@ -65,9 +128,15 @@ pub fn format_utterance_with_root(
     let mut llm_error = None;
     let want_llm = (force_llm || cfg.llm_auto_refine) && !cfg.llm_provider.trim().is_empty();
     if want_llm && !text.trim().is_empty() {
+        let context_hint = build_llm_context_hint(dict, target_app);
         if cfg.llm_provider == "chatgpt" {
             if let Some(root) = root_dir {
-                match crate::chatgpt_auth::refine_dictation(root, &cfg.llm_model, &text) {
+                match crate::chatgpt_auth::refine_dictation_with_context(
+                    root,
+                    &cfg.llm_model,
+                    &text,
+                    &context_hint,
+                ) {
                     Ok(res) if !res.text.trim().is_empty() => {
                         text = res.text;
                         used_llm = true;
@@ -92,7 +161,7 @@ pub fn format_utterance_with_root(
                 &cfg.llm_base_url,
                 20.0,
             ) {
-                Ok(refiner) => match refiner.refine_dictation(&text) {
+                Ok(refiner) => match refiner.refine_dictation_with_context(&text, &context_hint) {
                     Ok(res) if !res.text.trim().is_empty() => {
                         text = res.text;
                         used_llm = true;

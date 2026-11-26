@@ -238,6 +238,152 @@ pub fn join_texts<S: AsRef<str>>(texts: &[S]) -> String {
     out
 }
 
+/// 動的ノイズフロア学習＋末尾 200ms 余白付きの適応型セグメンタ（`OpenHinoVoice` 方式）。
+///
+/// 固定しきい値ではなく冒頭 200ms と無音フレームから背景雑音（`noise_floor`）を常時学習し、
+/// `noise_floor * 3.0`（下限 0.006）が 3 フレーム連続したら発話開始、600ms 無音で 200ms の
+/// 末尾余白を残して区切る。上限（既定 9 秒）到達時は直近 3.5 秒の最静寂フレームで切る。
+pub struct AdaptiveSegmenter {
+    frame_len: usize,
+    calib_frames: usize,
+    silence_close_frames: usize,
+    max_frames: usize,
+    cut_search_frames: usize,
+    tail_frames: usize,
+    noise_floor: f32,
+    frames_seen: usize,
+    speech_run: usize,
+    silent_run: usize,
+    in_speech: bool,
+    pending: Vec<f32>,
+    open: Vec<f32>,
+    open_rms: Vec<f32>,
+}
+
+impl AdaptiveSegmenter {
+    pub fn new(sample_rate: u32, max_sec: f64) -> Self {
+        let frame_len = ((sample_rate as f64) * FRAME_SEC).round().max(1.0) as usize;
+        Self {
+            frame_len,
+            calib_frames: frames_of(0.2),
+            silence_close_frames: frames_of(0.6),
+            max_frames: frames_of(max_sec).max(1),
+            cut_search_frames: frames_of(3.5),
+            tail_frames: frames_of(0.2),
+            noise_floor: 0.003,
+            frames_seen: 0,
+            speech_run: 0,
+            silent_run: 0,
+            in_speech: false,
+            pending: Vec::new(),
+            open: Vec::new(),
+            open_rms: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, samples: &[f32]) -> Vec<Vec<f32>> {
+        self.pending.extend_from_slice(samples);
+        let mut ready = Vec::new();
+        while self.pending.len() >= self.frame_len {
+            let frame: Vec<f32> = self.pending.drain(..self.frame_len).collect();
+            let r = rms_of(&frame);
+            self.frames_seen += 1;
+
+            let thresh = (self.noise_floor * 3.0).max(0.006);
+            if r < thresh && r < 0.02 {
+                // 背景雑音をゆっくり追従学習
+                let alpha = if self.frames_seen <= self.calib_frames {
+                    0.25
+                } else {
+                    0.03
+                };
+                self.noise_floor = self.noise_floor * (1.0 - alpha) + r * alpha;
+            }
+
+            if !self.in_speech {
+                if r >= thresh {
+                    self.speech_run += 1;
+                    self.open.extend_from_slice(&frame);
+                    self.open_rms.push(r);
+                    if self.speech_run >= 3 {
+                        self.in_speech = true;
+                        self.silent_run = 0;
+                    }
+                } else {
+                    self.speech_run = 0;
+                    // 発話開始直前の 1〜2 フレームだけ残す
+                    if self.open_rms.len() > 2 {
+                        let drop_n = self.open_rms.len() - 2;
+                        self.open.drain(..drop_n * self.frame_len);
+                        self.open_rms.drain(..drop_n);
+                    }
+                    self.open.extend_from_slice(&frame);
+                    self.open_rms.push(r);
+                }
+                continue;
+            }
+
+            self.open.extend_from_slice(&frame);
+            self.open_rms.push(r);
+            if r < thresh {
+                self.silent_run += 1;
+            } else {
+                self.silent_run = 0;
+            }
+
+            if self.silent_run >= self.silence_close_frames {
+                let keep_frames = self
+                    .open_rms
+                    .len()
+                    .saturating_sub(self.silent_run.saturating_sub(self.tail_frames));
+                let cut_samples = (keep_frames * self.frame_len).min(self.open.len());
+                if cut_samples >= self.frame_len * 10 {
+                    ready.push(self.open[..cut_samples].to_vec());
+                }
+                self.open.clear();
+                self.open_rms.clear();
+                self.in_speech = false;
+                self.speech_run = 0;
+                self.silent_run = 0;
+            } else if self.open_rms.len() >= self.max_frames {
+                // 上限到達時は直近 cut_search_frames の最静寂フレームで切る
+                let total = self.open_rms.len();
+                let lo = total.saturating_sub(self.cut_search_frames);
+                let mut best_idx = total - 1;
+                let mut best_val = f32::MAX;
+                for (off, &val) in self.open_rms[lo..].iter().enumerate() {
+                    if val < best_val {
+                        best_val = val;
+                        best_idx = lo + off;
+                    }
+                }
+                let cut_frames = (best_idx + 1).max(1);
+                let cut_samples = (cut_frames * self.frame_len).min(self.open.len());
+                ready.push(self.open[..cut_samples].to_vec());
+                self.open.drain(..cut_samples);
+                self.open_rms.drain(..cut_frames.min(self.open_rms.len()));
+                self.silent_run = 0;
+            }
+        }
+        ready
+    }
+
+    pub fn flush(&mut self) -> Option<Vec<f32>> {
+        if !self.pending.is_empty() {
+            self.open.append(&mut self.pending);
+        }
+        if self.in_speech && self.open.len() >= self.frame_len * 5 {
+            self.in_speech = false;
+            self.open_rms.clear();
+            Some(std::mem::take(&mut self.open))
+        } else {
+            self.open.clear();
+            self.open_rms.clear();
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -47,6 +47,42 @@ mod imp {
         unsafe { GetForegroundWindow() as isize }
     }
 
+    /// キャプチャ済みウィンドウハンドルから実行ファイル名（例: `slack.exe`）を取得する。
+    pub fn target_process_name(target_hwnd: isize) -> Option<String> {
+        use windows_sys::Win32::Foundation::{CloseHandle, HWND};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+        if target_hwnd == 0 {
+            return None;
+        }
+        unsafe {
+            let mut pid: u32 = 0;
+            GetWindowThreadProcessId(target_hwnd as HWND, &mut pid);
+            if pid == 0 {
+                return None;
+            }
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let mut buf = vec![0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0;
+            CloseHandle(h);
+            if !ok || len == 0 {
+                return None;
+            }
+            let full = String::from_utf16_lossy(&buf[..len as usize]);
+            full.rsplit(['\\', '/'])
+                .next()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_lowercase())
+        }
+    }
+
     fn release_stuck_modifiers() {
         let mods = [VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT, VK_LWIN, VK_RWIN];
         let mut ups = Vec::new();
@@ -174,6 +210,10 @@ mod imp {
         0
     }
 
+    pub fn target_process_name(_target_hwnd: isize) -> Option<String> {
+        None
+    }
+
     pub fn send_paste_shortcut() -> bool {
         Command::new("/usr/bin/osascript")
             .args([
@@ -251,6 +291,9 @@ mod imp {
     pub fn capture_paste_target() -> isize {
         0
     }
+    pub fn target_process_name(_target_hwnd: isize) -> Option<String> {
+        None
+    }
     pub fn send_paste_shortcut() -> bool {
         false
     }
@@ -270,4 +313,4 @@ mod imp {
     }
 }
 
-pub use imp::{capture_paste_target, paste_text, send_paste_shortcut};
+pub use imp::{capture_paste_target, paste_text, send_paste_shortcut, target_process_name};

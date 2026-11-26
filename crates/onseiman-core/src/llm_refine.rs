@@ -154,6 +154,19 @@ impl LlmRefiner {
         self.chat(REFINE_SYSTEM_PROMPT, spoken_text)
     }
 
+    /// 辞書ヒントや貼り付け先アプリの文脈を追加して音声入力文を整える。
+    pub fn refine_dictation_with_context(
+        &self,
+        spoken_text: &str,
+        extra_instructions: &str,
+    ) -> Result<LlmResult, String> {
+        if extra_instructions.trim().is_empty() {
+            return self.chat(REFINE_SYSTEM_PROMPT, spoken_text);
+        }
+        let sys = format!("{REFINE_SYSTEM_PROMPT}\n{extra_instructions}");
+        self.chat(&sys, spoken_text)
+    }
+
     pub fn rewrite_selection(
         &self,
         selected_text: &str,
@@ -250,6 +263,7 @@ impl LlmRefiner {
                         json!({
                             "model": model,
                             "stream": false,
+                            "think": false,
                             "keep_alive": "30m",
                             "messages": messages,
                             "options": {"temperature": 0.1}
@@ -268,7 +282,12 @@ impl LlmRefiner {
                     };
                     let data = self.post_json(
                         &format!("{v1}/chat/completions"),
-                        json!({"model": model, "temperature": 0.2, "messages": messages}),
+                        json!({
+                            "model": model,
+                            "temperature": 0.2,
+                            "messages": messages,
+                            "chat_template_kwargs": { "enable_thinking": false }
+                        }),
                         &hdrs,
                     )?;
                     data["choices"][0]["message"]["content"]
