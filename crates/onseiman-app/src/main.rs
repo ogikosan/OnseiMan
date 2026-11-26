@@ -28,7 +28,17 @@ fn append_log(root: &Path, msg: &str) {
 fn default_root() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            if dir.join("config.json").is_file() || dir.join("client").join("web").is_dir() {
+            // cargo target/(debug|release) 直下で実行した開発時以外は exe と同じフォルダを基準にする
+            let in_cargo_target = dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n == "debug" || n == "release")
+                && dir
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    == Some("target");
+            if !in_cargo_target {
                 return dir.to_path_buf();
             }
         }

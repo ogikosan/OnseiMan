@@ -18,9 +18,9 @@
 
 | 取ってくるもの | 使い方 |
 |---|---|
-| `onseiman-windows-x64.exe`（Windows クライアント） | 任意のフォルダに `onseiman.exe` として配置し、`client/web/` と一緒にして起動 |
-| `onseiman-server-windows-x64.exe`（Windows 認識サーバー） | 別 PC で音声認識を担当させたい場合に起動（`server_windows.bat`） |
-| `onseiman-server-macos-arm64`（Mac 認識サーバー） | Apple Silicon Mac で `server_mac.command` から自動起動登録 |
+| `onseiman-windows-x64.exe`（Windows 単体・いちばん簡単） | 好きなフォルダに置いてダブルクリックするだけ（管理画面も exe に内蔵済み） |
+| `OnseiMan-windows-x64.zip`（Windows 一式） | 展開して `onseiman.exe` を起動（Windows 認識サーバーも同梱） |
+| `OnseiMan-macos-arm64.zip`（Mac 認識サーバー） | Apple Silicon Mac で展開し `server_mac.command` を実行 |
 
 - Windows 10 / 11（64 ビット）・macOS（Apple Silicon）で単体バイナリとして動きます。Python などのランタイムは不要です
 - はじめて起動したとき、聞き取りの部品（約 0.7GB）を自動でダウンロードします（SHA-256 検証付き）

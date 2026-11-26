@@ -68,6 +68,20 @@ jobs:
           mkdir -p dist
           cp "target/release/onseiman-server${{ matrix.ext }}" "dist/onseiman-server-${{ matrix.suffix }}${{ matrix.ext }}"
           cp "target/release/onseiman${{ matrix.ext }}" "dist/onseiman-${{ matrix.suffix }}${{ matrix.ext }}"
+          if [ "${{ matrix.suffix }}" = "windows-x64" ]; then
+            mkdir -p stage_win
+            cp "target/release/onseiman.exe" stage_win/onseiman.exe
+            cp "target/release/onseiman-server.exe" stage_win/onseiman-server.exe
+            cp README.md LICENSE server_windows.bat stage_win/
+            powershell -NoProfile -Command "Compress-Archive -Path stage_win\* -DestinationPath dist\OnseiMan-windows-x64.zip -Force"
+          else
+            mkdir -p stage_mac/server stage_mac/packaging/mac
+            cp "target/release/onseiman-server" stage_mac/onseiman-server
+            cp server_mac.command server_mac_remove.command LICENSE stage_mac/
+            cp server/setup_macos.sh stage_mac/server/
+            cp "packaging/mac/はじめに.md" stage_mac/packaging/mac/
+            (cd stage_mac && zip -r ../dist/OnseiMan-macos-arm64.zip .)
+          fi
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum * > "SHA256SUMS-${{ matrix.suffix }}.txt")
           else

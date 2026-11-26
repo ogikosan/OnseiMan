@@ -728,47 +728,104 @@ async fn get_static(State(ctx): State<Arc<AppContext>>, Path(path): Path<String>
     serve_static(&ctx.web_dir, &path)
 }
 
+fn embedded_web_asset(rel: &str) -> Option<(&'static [u8], &'static str)> {
+    match rel {
+        "index.html" => Some((
+            include_bytes!("../../../client/web/index.html"),
+            "text/html; charset=utf-8",
+        )),
+        "style.css" => Some((
+            include_bytes!("../../../client/web/style.css"),
+            "text/css; charset=utf-8",
+        )),
+        "app.js" => Some((
+            include_bytes!("../../../client/web/app.js"),
+            "application/javascript; charset=utf-8",
+        )),
+        "theme.js" => Some((
+            include_bytes!("../../../client/web/theme.js"),
+            "application/javascript; charset=utf-8",
+        )),
+        "bg.jpg" => Some((include_bytes!("../../../client/web/bg.jpg"), "image/jpeg")),
+        "bg-dark.jpg" => Some((
+            include_bytes!("../../../client/web/bg-dark.jpg"),
+            "image/jpeg",
+        )),
+        "img/pill_rec.png" => Some((
+            include_bytes!("../../../client/web/img/pill_rec.png"),
+            "image/png",
+        )),
+        "img/pill_rec_dark.png" => Some((
+            include_bytes!("../../../client/web/img/pill_rec_dark.png"),
+            "image/png",
+        )),
+        "img/pill_busy.png" => Some((
+            include_bytes!("../../../client/web/img/pill_busy.png"),
+            "image/png",
+        )),
+        "img/pill_busy_dark.png" => Some((
+            include_bytes!("../../../client/web/img/pill_busy_dark.png"),
+            "image/png",
+        )),
+        "img/pill_done.png" => Some((
+            include_bytes!("../../../client/web/img/pill_done.png"),
+            "image/png",
+        )),
+        "img/pill_done_dark.png" => Some((
+            include_bytes!("../../../client/web/img/pill_done_dark.png"),
+            "image/png",
+        )),
+        _ => None,
+    }
+}
+
 fn serve_static(web_dir: &FsPath, rel: &str) -> Response {
     let rel = rel.trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
-    let Ok(base) = web_dir.canonicalize() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(target) = base.join(rel).canonicalize() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if !target.starts_with(&base) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    if !target.is_file() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let Ok(data) = std::fs::read(&target) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let ctype = match target.extension().and_then(|e| e.to_str()).unwrap_or("") {
-        "html" => "text/html; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "js" => "application/javascript; charset=utf-8",
-        "json" => "application/json; charset=utf-8",
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "ico" => "image/x-icon",
-        _ => "application/octet-stream",
-    };
     let cache = if rel.ends_with(".jpg") {
         "public, max-age=86400"
     } else {
         "no-cache"
     };
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, ctype)
-        .header(header::CACHE_CONTROL, cache)
-        .header(header::CONTENT_LENGTH, data.len())
-        .body(Body::from(data))
-        .unwrap()
+    if let Ok(base) = web_dir.canonicalize() {
+        if let Ok(target) = base.join(rel).canonicalize() {
+            if !target.starts_with(&base) {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            if target.is_file() {
+                if let Ok(data) = std::fs::read(&target) {
+                    let ctype = match target.extension().and_then(|e| e.to_str()).unwrap_or("") {
+                        "html" => "text/html; charset=utf-8",
+                        "css" => "text/css; charset=utf-8",
+                        "js" => "application/javascript; charset=utf-8",
+                        "json" => "application/json; charset=utf-8",
+                        "svg" => "image/svg+xml",
+                        "png" => "image/png",
+                        "jpg" | "jpeg" => "image/jpeg",
+                        "ico" => "image/x-icon",
+                        _ => "application/octet-stream",
+                    };
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, ctype)
+                        .header(header::CACHE_CONTROL, cache)
+                        .header(header::CONTENT_LENGTH, data.len())
+                        .body(Body::from(data))
+                        .unwrap();
+                }
+            }
+        }
+    }
+    if let Some((bytes, ctype)) = embedded_web_asset(rel) {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, ctype)
+            .header(header::CACHE_CONTROL, cache)
+            .header(header::CONTENT_LENGTH, bytes.len())
+            .body(Body::from(bytes))
+            .unwrap();
+    }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 // -------------------- POST Handlers --------------------
