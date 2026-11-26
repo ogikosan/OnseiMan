@@ -42,17 +42,39 @@ $paths = @(
 # Rust 版（2.0.0〜）が入っている場合は、旧 Python 環境も不要になる
 $hasRustBin = (Test-Path -LiteralPath (Join-Path $Root "onseiman.exe")) -or
               (Test-Path -LiteralPath (Join-Path $Root "onseiman-server.exe"))
+$isGitRepo = Test-Path -LiteralPath (Join-Path $Root ".git")
 $pythonPaths = @(
     ".venv",
     ".venv_server",
     "tools\python",
     "tools\bin",
+    "__pycache__",
     "client\__pycache__",
     "shared\__pycache__",
     "server\__pycache__"
 )
 if ($hasRustBin) {
     $paths += $pythonPaths
+    # 開発リポジトリ（.git あり）でなければ、Rust 版で不要になった旧フォルダ・Mac 用ファイルも整理対象に含める
+    if (-not $isGitRepo) {
+        $paths += @(
+            "shared",
+            "server",
+            "tests",
+            "docs",
+            "packaging",
+            "backup",
+            "install_client.bat",
+            "server_mac.command",
+            "server_mac_remove.command",
+            "cleanup_old_mac.command",
+            ".gitattributes",
+            ".gitignore",
+            "CLAUDE.md",
+            "AGENTS.md",
+            "SECURITY.md"
+        )
+    }
 }
 
 function Get-SizeText([string]$p) {
