@@ -5,9 +5,12 @@
 ## 構成
 
 - **クライアント（Windows・必須）**: `client/main.py`。録音・貼り付け・画面（タスクトレイ常駐、右Alt で録音）。
-  既定では **このパソコンで認識** する（`config.json` の `recognition_place: "local"`）。モデルは初回起動時に自動取得。
+  既定では **このパソコンで認識** する（`config.json` の `recognition_place: "local"`）。聞き取りは Haas-ja を
+  speech.cpp で動かす（`local_engine: "haas"`、CPU で 1 回 1 秒以内。部品 約 0.7GB は起動後に裏で取得して `tools/speech`・
+  `models/haas-ja` に置く）。揃うまでは Fun-ASR Nano（約 840MB、初回起動時に取得）で聞き取る。
 - **認識サーバー（任意）**: `server/app.py`。別のパソコン（Mac / Windows）で動かすと速くなる。
-  FastAPI で `:8765` に `GET /health` と `POST /transcribe` を公開。モデルは Fun-ASR Nano（sherpa-onnx, int8, 約 840MB）。
+  FastAPI で `:8765` に `GET /health` と `POST /transcribe` を公開。`--engine auto`（はじめの値）で、speech.cpp の
+  Haas-ja があればそれ（Mac は Apple の GPU）、なければ Fun-ASR Nano（sherpa-onnx, int8, 約 840MB）。準備の手順が両方を用意する。
 - クライアントとサーバーは同じ LAN か Tailscale で通信する。クライアントの「サーバーをさがす」は
   Tailscale の相手と同じ /24 のホストの `:8765/health` を調べて見つける。
 
@@ -18,7 +21,9 @@
 2. リポジトリ直下で `install_client.bat` を実行（`.venv` に `client/requirements.txt` を入れ、最後に読み込みを確かめる）。
    「準備できました」と出れば成功。失敗したら画面の内容を読む（インターネット接続が必要）。
 3. `start_client.bat` で起動（`pythonw client\main.py`）。初回に `config.json` と `dict.json` を作り、
-   このパソコンで認識するためのモデル（約 840MB）を、進み具合の画面を出してダウンロードする。
+   このパソコンで認識するためのモデル（Fun-ASR、約 840MB）を、進み具合の画面を出してダウンロードする。
+   起動後は裏で Haas-ja の部品（約 0.7GB）も取得し、揃ったら Haas-ja で聞き取る（ログに「Haas-ja の部品を用意しました」）。
+   インストーラー（`OnseiMan-Setup-<版>.exe`）で入れた場合は、1〜2 は済んでいる。
 4. 動作確認: 何かの入力欄をクリック → 右Alt を押して話す → もう一度右Alt → 文字が入る。ログは `logs/onseiman.log`。
 
 ここまでで使える。サーバーは、利用者が「速くしたい」「別のパソコンで動かしたい」と言ったときだけ入れる。
