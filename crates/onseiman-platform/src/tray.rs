@@ -19,12 +19,72 @@ mod imp {
         Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-        DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW, PostMessageW, PostQuitMessage,
-        RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, IDI_APPLICATION,
-        MF_SEPARATOR, MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, WM_APP, WM_CLOSE, WM_COMMAND,
-        WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
+        AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+        DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
+        LoadIconW, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
+        TrackPopupMenu, TranslateMessage, HICON, IDI_APPLICATION, LR_DEFAULTCOLOR, MF_SEPARATOR,
+        MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY,
+        WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
     };
+
+    const ICON_BYTES: &[u8] = include_bytes!("../assets/onseiman.ico");
+
+    unsafe fn load_embedded_icon() -> HICON {
+        // ICO ヘッダ (6 bytes) + ICONDIRENTRY (16 bytes * count) から 32px 以上（なければ最大）を選ぶ
+        if ICON_BYTES.len() >= 22 {
+            let count = u16::from_le_bytes([ICON_BYTES[4], ICON_BYTES[5]]) as usize;
+            let mut best: Option<(usize, usize, u32)> = None;
+            for i in 0..count {
+                let off = 6 + i * 16;
+                if off + 16 > ICON_BYTES.len() {
+                    break;
+                }
+                let w = if ICON_BYTES[off] == 0 {
+                    256u32
+                } else {
+                    ICON_BYTES[off] as u32
+                };
+                let size = u32::from_le_bytes([
+                    ICON_BYTES[off + 8],
+                    ICON_BYTES[off + 9],
+                    ICON_BYTES[off + 10],
+                    ICON_BYTES[off + 11],
+                ]) as usize;
+                let img_off = u32::from_le_bytes([
+                    ICON_BYTES[off + 12],
+                    ICON_BYTES[off + 13],
+                    ICON_BYTES[off + 14],
+                    ICON_BYTES[off + 15],
+                ]) as usize;
+                if img_off + size <= ICON_BYTES.len() {
+                    let take = match best {
+                        None => true,
+                        Some((_, _, bw)) => {
+                            (w == 32) || (bw != 32 && w > bw && w <= 64) || (bw < 32 && w > bw)
+                        }
+                    };
+                    if take {
+                        best = Some((img_off, size, w));
+                    }
+                }
+            }
+            if let Some((img_off, size, _)) = best {
+                let h = CreateIconFromResourceEx(
+                    ICON_BYTES.as_ptr().add(img_off),
+                    size as u32,
+                    1,
+                    0x0003_0000,
+                    32,
+                    32,
+                    LR_DEFAULTCOLOR,
+                );
+                if !h.is_null() {
+                    return h;
+                }
+            }
+        }
+        LoadIconW(ptr::null_mut(), IDI_APPLICATION)
+    }
 
     const WM_TRAY_ICON: u32 = WM_APP + 20;
     const CMD_OPEN_UI: usize = 1001;
@@ -157,13 +217,14 @@ mod imp {
                     *g = hwnd as isize;
                 }
 
+                let custom_icon = load_embedded_icon();
                 let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
                 nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
                 nid.hWnd = hwnd;
                 nid.uID = 1;
                 nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
                 nid.uCallbackMessage = WM_TRAY_ICON;
-                nid.hIcon = LoadIconW(ptr::null_mut(), IDI_APPLICATION);
+                nid.hIcon = custom_icon;
                 let tip_u16: Vec<u16> = tip_owned.encode_utf16().take(127).collect();
                 for (i, ch) in tip_u16.into_iter().enumerate() {
                     nid.szTip[i] = ch;
@@ -176,6 +237,9 @@ mod imp {
                     DispatchMessageW(&msg);
                 }
                 Shell_NotifyIconW(NIM_DELETE, &nid);
+                if !custom_icon.is_null() {
+                    DestroyIcon(custom_icon);
+                }
             });
 
             Self {
