@@ -142,15 +142,19 @@
 
 - `onseiman-platform`（Windows x64 / macOS arm64 共通クレート）:
   - `binding.rs`（キー・マウスサイドボタン設定パーサー）
-  - `hotkey.rs`（Windows `WH_KEYBOARD_LL` / `WH_MOUSE_LL` グローバルフック＋Primary / Extra / AI / Cancel 対応）
-  - `recorder.rs`（`cpal` による Windows WASAPI / macOS CoreAudio 共通マイク録音＋16kHz 線形リサンプリング）
+  - `hotkey.rs`（Windows `WH_KEYBOARD_LL` / `WH_MOUSE_LL`・macOS `CGEventTap` グローバルフック＋Primary / Extra / AI / Cancel 対応）
+  - `recorder.rs`（`cpal` による Windows WASAPI / macOS CoreAudio 共通マイク録音＋16kHz 線形リサンプリング＋リアルタイム音量レベル通知）
+  - `audio_mute.rs`（録音中の他アプリ音量一時ミュート＋自動復元：Windows WASAPI `ISimpleAudioVolume` / macOS `osascript`）
+  - `overlay.rs`（Windows 非アクティブ最前面カプセルオーバーレイ：録音中・AI 録音中・認識中＋音量バー）
+  - `tray.rs`（Windows `Shell_NotifyIconW` システムトレイアイコン＋右クリックメニュー）
   - `clipboard.rs`・`paste.rs`（Win32 `CF_UNICODETEXT`＋`SendInput` Ctrl+V／macOS `pbcopy`＋`osascript` Cmd+V）
   - `secret_store.rs`（Windows DPAPI `dpapi:` 互換／macOS Keychain `keychain:`）
   - `startup.rs`（Windows `HKCU\...\Run`／macOS `LaunchAgent` plist）
 - `onseiman-app`（Rust クライアント本体 `onseiman`）:
   - `transcriber.rs`（LAN `onseiman-server` 優先＋ローカル `onseiman-speech` フォールバック）
+  - `discovery.rs`（LAN `/24` 並列 `/health` 探索）
   - `pipeline.rs`（言いよどみ除去・辞書置換・正規化・定型文・音声コマンド・文末「。」削り・LLM 仕上げ）
-  - `web_ui.rs`（Axum ローカル Web UI サーバー：`client/web/` 配信＋Host/Origin/Sec-Fetch-Site/JSON 限定 POST/CSP 守り＋各種 `/api/*`）
-  - `main.rs`（ホットキー録音 → 認識 → 貼り付け → 履歴保存＋`--check` 診断モード）
+  - `web_ui.rs`（Axum ローカル Web UI サーバー：`client/web/` 配信＋Host/Origin/Sec-Fetch-Site/JSON 限定 POST/CSP 守り＋`/api/find_servers`・`/api/retranscribe`・`/api/retry` を含む各種 `/api/*`）
+  - `main.rs`（トレイ・オーバーレイ・他アプリミュート・無音自動停止・ホットキー録音 → 認識 → 貼り付け → 履歴保存＋`--check` 診断モード）
+- `server/setup_macos.sh`: Rust 版 `onseiman-server` バイナリがあれば Python / uv なしでそのまま `launchd` 登録するよう対応。
 - CI（`.github/workflows/rust.yml`）: `windows-latest`（x64）と `macos-15`（arm64）の両方で `fmt` / `clippy -D warnings` / `test` / `onseiman-server` + `onseiman` リリースビルド＋`SHA256SUMS` 生成を自動化。
-- 残り（仕上げ）: macOS `CGEventTap` ホットキー実装・録音中カプセル／トレイアイコン・サーバー自動探索・`server_mac.command` 等の Rust バイナリ切り替え・リリース移行。

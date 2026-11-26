@@ -1084,6 +1084,7 @@ version = "2.0.0"
 dependencies = [
  "base64",
  "cpal",
+ "windows",
  "windows-sys 0.59.0",
 ]
 

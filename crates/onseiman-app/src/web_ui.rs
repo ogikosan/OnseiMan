@@ -58,6 +58,8 @@ fn write_json_obj(path: &FsPath, obj: &Map<String, Value>) -> Result<(), String>
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
+use crate::discovery::find_servers;
+use crate::pipeline::format_utterance;
 use crate::transcriber::HybridTranscriber;
 
 pub const DEFAULT_MIC_LABEL: &str = "既定のマイク";
@@ -134,8 +136,8 @@ pub fn router(ctx: Arc<AppContext>) -> Router {
         .route("/api/quick_dict", post(post_quick_dict))
         .route("/api/llm/test", post(post_llm_test))
         .route("/api/llm/models", post(post_llm_models))
-        .route("/api/retranscribe", post(post_ok_stub))
-        .route("/api/retry", post(post_ok_stub))
+        .route("/api/retranscribe", post(post_retranscribe))
+        .route("/api/retry", post(post_retry))
         .route("/api/find_servers", post(post_find_servers))
         .route("/api/candidates/approve", post(post_ok_stub))
         .route("/api/candidates/reject", post(post_ok_stub))
@@ -1054,8 +1056,90 @@ async fn post_llm_models(State(ctx): State<Arc<AppContext>>, Json(body): Json<Va
     json_no_store(StatusCode::OK, json!({ "ok": true, "models": models }))
 }
 
-async fn post_find_servers() -> Response {
-    json_no_store(StatusCode::OK, json!({ "servers": [] }))
+async fn post_find_servers(State(ctx): State<Arc<AppContext>>) -> Response {
+    let urls = ctx.config.lock().unwrap().server_urls.clone();
+    let servers = tokio::task::spawn_blocking(move || find_servers(&urls))
+        .await
+        .unwrap_or_default();
+    json_no_store(StatusCode::OK, json!({ "servers": servers }))
+}
+
+fn retranscribe_audio_file(ctx: &Arc<AppContext>, audio_name: &str) -> Result<String, String> {
+    if audio_name.is_empty()
+        || audio_name.contains('/')
+        || audio_name.contains('\\')
+        || audio_name.contains("..")
+    {
+        return Err("音声ファイル名が不正です".into());
+    }
+    let path = ctx.audio_dir.join(audio_name);
+    let wav = std::fs::read(&path).map_err(|_| "音声ファイルが見つかりませんでした".to_string())?;
+    let cfg = ctx.config.lock().unwrap().clone();
+    let dict = ctx.dict.lock().unwrap().clone();
+    let hotwords = dict.active_hotwords();
+    let readings = dict.readings();
+    let res = ctx
+        .transcriber
+        .transcribe_wav(&cfg, &wav, &hotwords, &readings)?;
+    let formatted = format_utterance(&res.text, &cfg, &dict, false);
+    if !formatted.text.is_empty() {
+        let _ = clipboard::set_text(&formatted.text);
+        let dur_sec = (wav.len().saturating_sub(44) as f64) / (16_000.0 * 2.0);
+        if let Ok(mut h) = ctx.history.lock() {
+            h.record_transcription(
+                &res.backend,
+                res.elapsed_ms,
+                dur_sec,
+                &res.text,
+                &formatted.text,
+                audio_name,
+                "",
+            );
+        }
+    }
+    Ok(formatted.text)
+}
+
+async fn post_retranscribe(State(ctx): State<Arc<AppContext>>) -> Response {
+    let latest_audio = {
+        let h = ctx.history.lock().unwrap();
+        h.get_history()
+            .into_iter()
+            .find(|e| !e.audio.is_empty())
+            .map(|e| e.audio)
+    };
+    let Some(name) = latest_audio else {
+        return json_no_store(
+            StatusCode::BAD_REQUEST,
+            json!({ "ok": false, "error": "再認識できる録音がありません" }),
+        );
+    };
+    let ctx_bg = ctx.clone();
+    match tokio::task::spawn_blocking(move || retranscribe_audio_file(&ctx_bg, &name)).await {
+        Ok(Ok(text)) => json_no_store(StatusCode::OK, json!({ "ok": true, "text": text })),
+        Ok(Err(e)) => json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e })),
+        Err(e) => json_no_store(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "error": e.to_string() }),
+        ),
+    }
+}
+
+async fn post_retry(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>) -> Response {
+    let name = body
+        .get("audio")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let ctx_bg = ctx.clone();
+    match tokio::task::spawn_blocking(move || retranscribe_audio_file(&ctx_bg, &name)).await {
+        Ok(Ok(text)) => json_no_store(StatusCode::OK, json!({ "ok": true, "text": text })),
+        Ok(Err(e)) => json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e })),
+        Err(e) => json_no_store(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "error": e.to_string() }),
+        ),
+    }
 }
 
 async fn post_learn_manual() -> Response {

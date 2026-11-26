@@ -2,17 +2,22 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use chrono::Local;
 use onseiman_core::audio::encode_wav;
+use onseiman_platform::audio_mute::AudioMuteGuard;
 use onseiman_platform::binding::parse_binding;
 use onseiman_platform::hotkey::{GlobalHotkey, HotkeyConfig, HotkeyEvent};
+use onseiman_platform::overlay::{OverlayState, RecordingOverlay};
 use onseiman_platform::paste::{capture_paste_target, paste_text};
 use onseiman_platform::recorder::{list_input_devices, start_recording, RecordingHandle};
+use onseiman_platform::tray::{TrayEvent, TrayIcon};
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
 
 use onseiman_app::pipeline::format_utterance;
 use onseiman_app::web_ui::{open_browser, router, AppContext};
@@ -97,6 +102,31 @@ async fn main() {
     let url = format!("http://127.0.0.1:{actual_port}");
     eprintln!("OnseiMan v{} 管理画面: {url}", env!("CARGO_PKG_VERSION"));
 
+    let shutdown = Arc::new(Notify::new());
+
+    // システムトレイアイコン（左クリックで管理画面、右クリックで終了）
+    let (tray_tx, tray_rx) = mpsc::channel();
+    let _tray = TrayIcon::start(&format!("OnseiMan v{}", env!("CARGO_PKG_VERSION")), tray_tx);
+    {
+        let url_tray = url.clone();
+        let profile = ctx.root_dir.join("logs").join("browser_profile");
+        let shutdown_tray = Arc::clone(&shutdown);
+        thread::spawn(move || {
+            while let Ok(ev) = tray_rx.recv() {
+                match ev {
+                    TrayEvent::OpenUi => open_browser(&url_tray, Some(&profile)),
+                    TrayEvent::Quit => {
+                        shutdown_tray.notify_one();
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    // 非アクティブ・最前面カプセルオーバーレイ
+    let overlay = Arc::new(RecordingOverlay::start());
+
     // バックグラウンドでサーバーの生死確認
     {
         let ctx_health = ctx.clone();
@@ -107,7 +137,7 @@ async fn main() {
     }
 
     // グローバルホットキー＋録音・認識・貼り付けループ
-    let _hotkey_guard = start_hotkey_loop(ctx.clone());
+    let _hotkey_guard = start_hotkey_loop(ctx.clone(), Arc::clone(&overlay));
 
     if args.open_ui {
         let profile = ctx.root_dir.join("logs").join("browser_profile");
@@ -116,14 +146,25 @@ async fn main() {
 
     let app = router(ctx);
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = shutdown.notified() => {}
+            }
         })
         .await
         .expect("Web UI サーバーでエラーが起きました");
 }
 
-fn start_hotkey_loop(ctx: Arc<AppContext>) -> Option<GlobalHotkey> {
+struct ActiveSession {
+    handle: RecordingHandle,
+    _mute_guard: Option<AudioMuteGuard>,
+    target: isize,
+    use_ai: bool,
+    silence_triggered: Arc<AtomicBool>,
+}
+
+fn start_hotkey_loop(ctx: Arc<AppContext>, overlay: Arc<RecordingOverlay>) -> Option<GlobalHotkey> {
     let cfg = ctx.config.lock().unwrap().clone();
     let primary = parse_binding(&cfg.hotkey).ok()?;
     let extra = if cfg.hotkey_extra.trim().is_empty() {
@@ -143,6 +184,7 @@ fn start_hotkey_loop(ctx: Arc<AppContext>) -> Option<GlobalHotkey> {
     };
 
     let (tx, rx) = mpsc::channel();
+    let tx_auto = tx.clone();
     let hk = match GlobalHotkey::start(
         HotkeyConfig {
             primary,
@@ -161,42 +203,107 @@ fn start_hotkey_loop(ctx: Arc<AppContext>) -> Option<GlobalHotkey> {
     };
 
     thread::spawn(move || {
-        let mut active_recorder: Option<RecordingHandle> = None;
-        let mut active_target: isize = 0;
-        let mut active_ai = false;
+        let mut active: Option<ActiveSession> = None;
 
         let start_rec = |ctx: &Arc<AppContext>,
-                         rec: &mut Option<RecordingHandle>,
-                         target: &mut isize,
-                         ai_flag: &mut bool,
+                         ov: &Arc<RecordingOverlay>,
+                         slot: &mut Option<ActiveSession>,
                          use_ai: bool| {
             let cfg = ctx.config.lock().unwrap().clone();
-            *target = capture_paste_target();
-            *ai_flag = use_ai;
+            let target = capture_paste_target();
+            let mute_guard = if cfg.mute_other_audio {
+                Some(AudioMuteGuard::mute_others())
+            } else {
+                None
+            };
             let mic_name = cfg.microphone.as_ref().and_then(|v| v.as_str());
-            match start_recording(mic_name, None) {
-                Ok(r) => {
-                    *rec = Some(r);
+            let show_ov = cfg.show_overlay;
+            let auto_stop = cfg.auto_stop_on_silence;
+            let silence_sec = cfg.silence_stop_sec.max(0.3);
+            let silence_rms = cfg.silence_rms_threshold as f32;
+            let ov_cb = Arc::clone(ov);
+            let tx_cb = tx_auto.clone();
+            let heard_speech = Arc::new(AtomicBool::new(false));
+            let silence_triggered = Arc::new(AtomicBool::new(false));
+            let last_sound = Arc::new(Mutex::new(Instant::now()));
+            let last_paint = Arc::new(Mutex::new(Instant::now()));
+            let silence_triggered_cb = Arc::clone(&silence_triggered);
+
+            let on_level: Arc<dyn Fn(f32) + Send + Sync> = Arc::new(move |rms: f32| {
+                if show_ov {
+                    if let Ok(mut lp) = last_paint.lock() {
+                        if lp.elapsed() >= Duration::from_millis(60) {
+                            *lp = Instant::now();
+                            ov_cb.set_state(OverlayState::Recording {
+                                ai: use_ai,
+                                level: rms,
+                            });
+                        }
+                    }
+                }
+                if auto_stop && !silence_triggered_cb.load(Ordering::Relaxed) {
+                    if rms >= silence_rms {
+                        heard_speech.store(true, Ordering::Relaxed);
+                        if let Ok(mut ls) = last_sound.lock() {
+                            *ls = Instant::now();
+                        }
+                    } else if heard_speech.load(Ordering::Relaxed) {
+                        if let Ok(ls) = last_sound.lock() {
+                            if ls.elapsed().as_secs_f64() >= silence_sec {
+                                silence_triggered_cb.store(true, Ordering::Relaxed);
+                                let _ = tx_cb.send(HotkeyEvent::PrimaryRelease);
+                            }
+                        }
+                    }
+                }
+            });
+
+            match start_recording(mic_name, Some(on_level)) {
+                Ok(handle) => {
+                    if show_ov {
+                        ov.set_state(OverlayState::Recording {
+                            ai: use_ai,
+                            level: 0.0,
+                        });
+                    }
+                    *slot = Some(ActiveSession {
+                        handle,
+                        _mute_guard: mute_guard,
+                        target,
+                        use_ai,
+                        silence_triggered,
+                    });
                     eprintln!("録音開始 (ai={use_ai})");
                 }
-                Err(e) => eprintln!("録音開始エラー: {e}"),
+                Err(e) => {
+                    drop(mute_guard);
+                    eprintln!("録音開始エラー: {e}");
+                }
             }
         };
 
         let finish_rec = |ctx: &Arc<AppContext>,
-                          rec: &mut Option<RecordingHandle>,
-                          target: isize,
-                          use_ai: bool| {
-            let Some(r) = rec.take() else {
+                          ov: &Arc<RecordingOverlay>,
+                          slot: &mut Option<ActiveSession>| {
+            let Some(sess) = slot.take() else {
                 return;
             };
-            let samples = r.stop();
+            let samples = sess.handle.stop();
+            drop(sess._mute_guard); // 録音終了と同時に他アプリの音を戻す
             let duration_sec = samples.len() as f64 / 16_000.0;
             if duration_sec < 0.15 {
+                ov.set_state(OverlayState::Hidden);
                 eprintln!("録音が短すぎるためスキップ ({duration_sec:.2}s)");
                 return;
             }
+            let show_ov = ctx.config.lock().map(|c| c.show_overlay).unwrap_or(true);
+            if show_ov {
+                ov.set_state(OverlayState::Transcribing);
+            }
             let ctx_job = ctx.clone();
+            let ov_job = Arc::clone(ov);
+            let target = sess.target;
+            let use_ai = sess.use_ai;
             thread::spawn(move || {
                 let wav = encode_wav(&samples, 16_000);
                 let ts = Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -242,8 +349,12 @@ fn start_hotkey_loop(ctx: Arc<AppContext>) -> Option<GlobalHotkey> {
                     }
                     Err(e) => {
                         eprintln!("認識エラー: {e}");
+                        if let Ok(mut h) = ctx_job.history.lock() {
+                            h.record_failure(&e, duration_sec, &audio_name, "");
+                        }
                     }
                 }
+                ov_job.set_state(OverlayState::Hidden);
             });
         };
 
@@ -256,63 +367,45 @@ fn start_hotkey_loop(ctx: Arc<AppContext>) -> Option<GlobalHotkey> {
             match ev {
                 HotkeyEvent::PrimaryPress => {
                     if is_hold {
-                        if active_recorder.is_none() {
-                            start_rec(
-                                &ctx,
-                                &mut active_recorder,
-                                &mut active_target,
-                                &mut active_ai,
-                                false,
-                            );
+                        if active.is_none() {
+                            start_rec(&ctx, &overlay, &mut active, false);
                         }
-                    } else if active_recorder.is_none() {
-                        start_rec(
-                            &ctx,
-                            &mut active_recorder,
-                            &mut active_target,
-                            &mut active_ai,
-                            false,
-                        );
+                    } else if active.is_none() {
+                        start_rec(&ctx, &overlay, &mut active, false);
                     } else {
-                        finish_rec(&ctx, &mut active_recorder, active_target, active_ai);
+                        finish_rec(&ctx, &overlay, &mut active);
                     }
                 }
                 HotkeyEvent::PrimaryRelease => {
-                    if is_hold && active_recorder.is_some() {
-                        finish_rec(&ctx, &mut active_recorder, active_target, active_ai);
+                    let triggered = active
+                        .as_ref()
+                        .map(|s| s.silence_triggered.load(Ordering::Relaxed))
+                        .unwrap_or(false);
+                    if (is_hold || triggered) && active.is_some() {
+                        finish_rec(&ctx, &overlay, &mut active);
                     }
                 }
                 HotkeyEvent::AiPress => {
                     if is_hold {
-                        if active_recorder.is_none() {
-                            start_rec(
-                                &ctx,
-                                &mut active_recorder,
-                                &mut active_target,
-                                &mut active_ai,
-                                true,
-                            );
+                        if active.is_none() {
+                            start_rec(&ctx, &overlay, &mut active, true);
                         }
-                    } else if active_recorder.is_none() {
-                        start_rec(
-                            &ctx,
-                            &mut active_recorder,
-                            &mut active_target,
-                            &mut active_ai,
-                            true,
-                        );
+                    } else if active.is_none() {
+                        start_rec(&ctx, &overlay, &mut active, true);
                     } else {
-                        finish_rec(&ctx, &mut active_recorder, active_target, active_ai);
+                        finish_rec(&ctx, &overlay, &mut active);
                     }
                 }
                 HotkeyEvent::AiRelease => {
-                    if is_hold && active_recorder.is_some() {
-                        finish_rec(&ctx, &mut active_recorder, active_target, active_ai);
+                    if is_hold && active.is_some() {
+                        finish_rec(&ctx, &overlay, &mut active);
                     }
                 }
                 HotkeyEvent::Cancel => {
-                    if let Some(r) = active_recorder.take() {
-                        let _ = r.stop();
+                    if let Some(sess) = active.take() {
+                        let _ = sess.handle.stop();
+                        drop(sess._mute_guard);
+                        overlay.set_state(OverlayState::Hidden);
                         eprintln!("録音をキャンセルしました");
                     }
                 }
