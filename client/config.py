@@ -79,6 +79,9 @@ class ClientConfig:
     server_names: Dict[str, str] = field(default_factory=dict)
     # いつも使うサーバー（server_urls のどれか）。止まっているときだけ、ほかのサーバーを使う。空なら最後に成功したもの
     preferred_server: str = ""
+    # NVIDIA の GPU があるパソコンでは、ほかのパソコンの声も GPU で文字にできるよう、裏で自動で準備する。
+    # 動画を作る AI などで GPU の記憶を使い切るパソコンでは false にする（画面には出さない）
+    gpu_host_auto: bool = True
     server_connect_timeout_sec: float = 1.5
     # 辞書をほかのパソコンと合わせる: ""（合わせない）/ "server"（認識役のパソコンに預ける）/ "folder"（同期フォルダに置く）
     dict_share: str = ""

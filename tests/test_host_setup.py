@@ -155,3 +155,30 @@ class TestRelayFallback(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAutoChoice(unittest.TestCase):
+    def test_gpu_server_comes_first(self) -> None:
+        # 返事が少し遅くても、GPU で聞き取るパソコン（聞き間違いが少ない）を先にする
+        from client.discovery import merge_same_machines
+
+        found = [
+            {"url": "http://100.99.44.124:8765", "via": "Tailscale", "ready": True, "ms": 20, "engine": "funasr", "id": "a"},
+            {"url": "http://100.83.113.30:8765", "via": "Tailscale", "ready": True, "ms": 60, "engine": "haas", "id": "b"},
+            {"url": "http://100.79.230.25:8765", "via": "Tailscale", "ready": False, "ms": 5, "engine": "haas", "id": "c"},
+        ]
+        got = merge_same_machines(found, [])
+        self.assertEqual(got[0]["url"], "http://100.83.113.30:8765")
+        self.assertFalse(got[-1]["ready"])   # 準備中は後ろ
+
+    def test_gpu_host_auto_is_on_by_default(self) -> None:
+        from client.config import ClientConfig
+
+        self.assertTrue(ClientConfig().gpu_host_auto)
+
+    def test_settings_screen_has_no_host_card(self) -> None:
+        # 「頼まれる側」になる準備は裏で自動でやる。設定の画面には出さない（話す側が迷うため）
+        html = (ROOT / "client" / "web" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn('id="host-card"', html)
+        js = (ROOT / "client" / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn("#host-card", js)

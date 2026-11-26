@@ -258,7 +258,9 @@
       for (const s of list) if (s.ready && !lines.includes(s.url)) lines.push(s.url);
       for (const s of list) if (!serverNames[s.url]) serverNames[s.url] = s.name;
       if (!preferredServer || !lines.includes(preferredServer)) {
-        const fastest = list.filter((s) => s.ready).sort((a, b) => (a.ms || 0) - (b.ms || 0))[0];
+        // GPU で聞き取るパソコン（聞き間違いが少ない）を先に。同じなら返事の速いほう
+        const fastest = list.filter((s) => s.ready)
+          .sort((a, b) => ((a.engine === "haas") ? 0 : 1) - ((b.engine === "haas") ? 0 : 1) || (a.ms || 0) - (b.ms || 0))[0];
         preferredServer = fastest ? fastest.url : "";
       }
       $("#set-servers").value = lines.join("\n");
@@ -410,165 +412,12 @@
     $("#server-old-banner").hidden = true;
   });
 
-  // ---- このパソコンを「声を文字にする役」にする（T3 Code の「共有とアクセス」のように、切り替えるだけ） ----
-  let hostKindTouched = false;
-  let hostLast = null;
-  let hostOpenedOnce = false;
-  const ENGINE_LABEL = { haas: "GPU で聞き取る版", funasr: "CPU で聞き取る版" };
-
-  function setHostText(sel, text, cls = "") {
-    const el = $(sel);
-    el.textContent = text;
-    el.className = cls;
-  }
-
-  function renderHost(h) {
-    const card = $("#host-card");
-    // 頼まれる側になる意味があるのは、GPU があるパソコン（聞き間違いの少ない GPU 版が使える）か、すでに頼まれる側のパソコンだけ。
-    // GPU がないパソコン（ふだん話す側）に出すと「4070 に頼むのに、なぜ自分のパソコンが？」と迷うので出さない
-    const job0 = (h && h.job) || {};
-    const relevant = h && h.supported && ((h.gpu && h.gpu.ok) || h.registered || h.running || job0.running);
-    if (!relevant) { card.hidden = true; if (h) hostLast = h; return; }
-    card.hidden = false;
-    hostLast = h;
-    $("#host-computer").textContent = h.computer ? `（${h.computer}）` : "";
-    const job = h.job || {};
-    const runningKind = h.running ? (h.running_engine === "haas" ? "gpu" : "cpu") : "";
-    const kindNow = h.registered || runningKind;
-
-    // 一覧に出す（頼まれる側）
-    let summary;
-    if (job.running) { setHostText("#host-state", job.title || "準備しています…"); summary = "準備しています…"; }
-    else if (h.running) {
-      const label = ENGINE_LABEL[h.running_engine] || "CPU で聞き取る版";
-      setHostText("#host-state", `出しています（${label}・${h.running_version || "-"}）。ほかのパソコンの声を、このパソコンで文字にしています`
-        + (h.registered ? "。ログインしたときに、窓を出さずに自動で動きます" : ""), "ok");
-      summary = `出しています（${label}）`;
-    }
-    else if (h.loading) { setHostText("#host-state", "起動しています（読み込み中）…"); summary = "起動しています…"; }
-    else if (h.registered) {
-      setHostText("#host-state", "ログインしたときに動く設定ですが、いまは止まっています。「始める」で起動し直せます", "warn");
-      summary = "止まっています";
-    }
-    else { setHostText("#host-state", "出していません"); summary = "出していません"; }
-    $("#host-summary").textContent = `— ${summary}`;
-    // 出しているときだけ、はじめから開いておく（自分で閉じたら、そのまま）
-    if (!hostOpenedOnce && (job.running || h.running || h.registered)) { $("#host-details").open = true; }
-    hostOpenedOnce = true;
-
-    const sel = $("#host-kind");
-    const gpuOpt = sel.querySelector('option[value="gpu"]');
-    gpuOpt.disabled = !!(h.gpu && !h.gpu.ok);
-    if (!hostKindTouched) sel.value = kindNow || (h.gpu && h.gpu.ok ? "gpu" : "cpu");
-    if (sel.value === "gpu" && gpuOpt.disabled) sel.value = "cpu";
-    let note = "";
-    if (sel.value === "gpu") {
-      note = h.gpu ? `${h.gpu.message}。聞き間違いがずっと少なくなります。WSL2 と、置き場所を約 10GB、GPU の記憶を約 2GB 使います` : "GPU を確かめています…";
-    } else {
-      note = "どのパソコンでも使えます。認識用のデータ（約 840MB）を使います"
-        + (h.gpu && !h.gpu.ok ? `（GPU で聞き取る版は使えません: ${h.gpu.message}）` : "");
-    }
-    $("#host-kind-note").textContent = note;
-    sel.disabled = !!job.running;
-    const start = $("#btn-host-start");
-    start.hidden = !!job.running;
-    start.textContent = h.running && sel.value === runningKind ? "起動し直す" : (kindNow && sel.value !== kindNow ? "切り替える" : "始める");
-    $("#btn-host-stop").hidden = !!job.running || !(h.registered || h.running);
-
-    // 進み具合
-    const showProg = job.running || (job.result !== null && job.result !== undefined);
-    $("#host-progress").hidden = !showProg;
-    if (showProg) {
-      let title = job.title || "";
-      if (!job.running) {
-        if (job.result === 0) title = "済みました";
-        else if (job.result === 3010) title = "WSL2 を入れました。パソコンを再起動すると、続きを自動で始めます";
-        else title = "うまくいきませんでした。下の記録を見てください（logs\\host_setup.log）";
-      }
-      $("#host-progress-title").textContent = title;
-      const pre = $("#host-log");
-      const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
-      pre.textContent = (job.log || []).join("\n");
-      if (atBottom) pre.scrollTop = pre.scrollHeight;
-    }
-
-    // ほかのパソコンから使えるようにする（ファイアウォール）
-    const fw = h.firewall;
-    if (!fw) setHostText("#host-fw-state", "確かめています…");
-    else if (fw.allowed) setHostText("#host-fw-state", "許可しています（家のネットワークと Tailscale からだけ）", "ok");
-    else if (fw.blocked) setHostText("#host-fw-state", "Windows のファイアウォールで止められています。「許可する」を押してください", "warn");
-    else setHostText("#host-fw-state", "まだ許可していません。ほかのパソコンから使うときは「許可する」を押してください（管理者の確認が 1 回出ます）");
-    $("#btn-host-fw").hidden = !fw || fw.allowed;
-
-    // つなぐためのアドレス
-    const addrs = h.addresses || [];
-    $("#host-addrs").textContent = addrs.length
-      ? addrs.map((a) => `${a.url}（${a.kind === "tailscale" ? "Tailscale" : "家のネットワーク"}）`).join("　")
-      : "見つかりません（ネットワークにつながっているか確かめてください）";
-
-    // Tailscale
-    const ts = h.tailscale;
-    const tsBtn = $("#btn-ts");
-    tsBtn.hidden = true;
-    if (!ts) setHostText("#ts-state", "確かめています…");
-    else if (!ts.installed) {
-      setHostText("#ts-state", "入っていません。入れてログインすると、外出先からも、このパソコンを使えます");
-      tsBtn.textContent = "入れる"; tsBtn.dataset.action = "install"; tsBtn.hidden = false;
-    } else if (ts.state === "running") {
-      setHostText("#ts-state", `つながっています（${ts.name || "このパソコン"}・${ts.ip || "-"}）。外出先からも使えます`, "ok");
-    } else {
-      setHostText("#ts-state", "入っていますが、ログインしていません（またはオフです）", "warn");
-      tsBtn.textContent = "ログインする"; tsBtn.dataset.action = "login"; tsBtn.hidden = false;
-    }
-  }
-
-  async function loadHost() {
-    try { renderHost(await api("/api/host")); } catch { /* 古い版・使えない環境 */ }
-  }
-
-  $("#host-kind").addEventListener("change", () => { hostKindTouched = true; if (hostLast) renderHost(hostLast); });
-
-  $("#btn-host-start").addEventListener("click", async () => {
-    const kind = $("#host-kind").value;
-    const msg = kind === "gpu"
-      ? "GPU で聞き取る版を準備して、始めます。\nはじめては 10〜20 分かかり、置き場所を約 10GB 使います。\n途中で管理者の確認が出たら「はい」を押してください（ファイアウォールの許可と WSL2）。WSL2 が無ければ入れて、再起動のあとに続きをします。"
-      : "CPU で聞き取る版を準備して、始めます。\nはじめては数分〜10 分かかります（認識用のデータ 約 840MB）。\n途中で管理者の確認が出たら「はい」を押してください（ファイアウォールの許可）。";
-    if (!(await askConfirm("このパソコンを、ほかのパソコンの一覧に出します", msg, "始める", "やめる"))) return;
-    try {
-      renderHost(await api("/api/host/start", { kind }));
-      hostKindTouched = false;
-    } catch (e) { toast(e.message, "err"); }
-  });
-
-  $("#btn-host-stop").addEventListener("click", async () => {
-    const h = hostLast || {};
-    if (!(await askConfirm("一覧に出すのをやめます", "ほかのパソコンの声を文字にするのをやめて、ログインしたときに自動で動く登録を外します。このパソコンで使っている OnseiMan・設定・辞書・預かった辞書は、そのまま使えます。", "やめる", "キャンセル"))) return;
-    let removeGpu = false;
-    if (h.gpu_ready) {
-      removeGpu = await askConfirm("GPU で聞き取る版の Linux も消しますか？",
-        "消すと、置き場所が約 10GB 空きます。また始めるときは、準備に 10〜20 分かかります。", "消す", "残す");
-    }
-    try { renderHost(await api("/api/host/stop", { remove_gpu: removeGpu })); } catch (e) { toast(e.message, "err"); }
-  });
-
-  $("#btn-host-fw").addEventListener("click", async () => {
-    try {
-      await api("/api/host/firewall", {});
-      toast("管理者の確認が出たら「はい」を押してください");
-    } catch (e) { toast(e.message, "err"); }
-  });
-
-  $("#btn-ts").addEventListener("click", async () => {
-    try { renderHost(await api("/api/host/tailscale", { action: $("#btn-ts").dataset.action || "" })); }
-    catch (e) { toast(e.message, "err"); }
-  });
-
   // ---- Navigation ----
   function switchTab(tab) {
     $$("nav .seg-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === tab)));
     $$(".view").forEach((v) => { v.hidden = v.id !== `view-${tab}`; });
     if (tab === "dict") loadDict();
-    if (tab === "settings") { loadSettings(); loadHost(); }
+    if (tab === "settings") loadSettings();
     if (tab === "history" || tab === "candidates" || tab === "help") loadState();
     history.replaceState(null, "", `#${tab}`);
   }
@@ -1416,7 +1265,6 @@
       loadState();
     } else {
       loadHeader();   // 設定などを開いているあいだも、上の表示は新しくする（入力中の欄は書き換えない）
-      if (!$("#view-settings").hidden) loadHost();   // 声を文字にする役の進み具合
     }
   }, 3000);
 })();

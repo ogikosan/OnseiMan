@@ -319,9 +319,9 @@
                   <p class="guide-warn"><b>このパソコンから、相手のパソコンに入れることはしません。</b>
                   相手のパソコンの前で、そのパソコンを使っている人（自分のパソコンなら自分）が、次の準備をしてください。
                   ほかの人のパソコンを使うときは、先にその人に聞いてください。</p>
-                  <p><b>相手が Windows なら、いちばん簡単なのは</b>：相手のパソコンにも OnseiMan を入れて（インストーラーか zip）、
-                  そのパソコンの OnseiMan の「設定」→「このパソコンを、ほかのパソコンの一覧に出す」で「始める」を押すだけです
-                  （この欄は、NVIDIA の GPU があるパソコンにだけ出ます）。
+                  <p><b>NVIDIA の GPU がある Windows なら、いちばん簡単なのは</b>：そのパソコンにも OnseiMan を入れて（インストーラーか zip）、
+                  一度起動するだけです。OnseiMan が裏で準備して（10〜20 分。途中で管理者の確認が 1 回出たら「はい」）、
+                  ここの「サーバーをさがす」で見つかるようになります。GPU で聞き取るパソコンは、見つかると自動で「いつも使う」になります。
                   下の手順は、bat を使うやり方です。</p>
                   <ol>
                     <li>相手のパソコンに OnseiMan を置く。GitHub の「Releases」から、Windows なら <code>OnseiMan-…-Windows.zip</code>、
@@ -352,45 +352,6 @@
               </details>
               <label class="switch"><input type="checkbox" id="set-local-fb"><span class="track"></span><span>つながらないときは、このパソコンで認識する</span></label>
             </div>
-          </div>
-
-          <div class="setting-card" id="host-card" hidden>
-            <h3>このパソコン<span id="host-computer"></span>を、ほかのパソコンの一覧に出す（頼まれる側になる）</h3>
-            <p class="muted">ほかのパソコンの OnseiMan で「声を文字にする場所」→「別のパソコン」を選んだときの一覧に、このパソコンを出します。
-            出すと、ほかのパソコンから届いた声を、このパソコンで文字にして返します（このパソコンには GPU があるので、聞き間違いの少ない GPU で聞き取る版が使えます）。
-            このパソコンで話した声をどこで文字にするかは、上の「声を文字にする場所」で選びます（こちらとは関係ありません）。</p>
-            <details class="adv host-details" id="host-details">
-            <summary>一覧に出す設定 <small id="host-summary">確かめています…</small></summary>
-            <div class="host-rows">
-              <div class="host-row">
-                <div class="host-text"><b>一覧に出す</b><small id="host-state">確かめています…</small></div>
-                <div class="host-ctl">
-                  <select id="host-kind" class="inp" aria-label="聞き取りのしかた">
-                    <option value="cpu">CPU で聞き取る版</option>
-                    <option value="gpu">GPU で聞き取る版（NVIDIA）</option>
-                  </select>
-                  <button type="button" class="btn sm primary" id="btn-host-start">始める</button>
-                  <button type="button" class="btn sm" id="btn-host-stop" hidden>やめる</button>
-                </div>
-              </div>
-              <p class="muted host-note" id="host-kind-note"></p>
-              <div class="host-progress" id="host-progress" hidden>
-                <div class="host-progress-title" id="host-progress-title"></div>
-                <pre class="ub-notes" id="host-log"></pre>
-              </div>
-              <div class="host-row">
-                <div class="host-text"><b>ほかのパソコンからつながるようにする</b><small id="host-fw-state">確かめています…</small></div>
-                <div class="host-ctl"><button type="button" class="btn sm" id="btn-host-fw" hidden>許可する</button></div>
-              </div>
-              <div class="host-row">
-                <div class="host-text"><b>つなぐためのアドレス</b><small id="host-addrs">確かめています…</small></div>
-              </div>
-              <div class="host-row">
-                <div class="host-text"><b>Tailscale</b><small id="ts-state">確かめています…</small></div>
-                <div class="host-ctl"><button type="button" class="btn sm" id="btn-ts" hidden></button></div>
-              </div>
-            </div>
-            </details>
           </div>
 
           <div class="setting-card">

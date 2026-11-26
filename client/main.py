@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import faulthandler
+import json
 import logging
 import os
 import sys
@@ -1397,6 +1398,61 @@ class OnseiManApp:
     # ---- GitHub の新しい版（フォルダを置いて使う形） ----
     UPDATE_CHECK_SEC = 24 * 3600
 
+    GPU_HOST_RETRY_SEC = 24 * 3600
+
+    def _auto_gpu_host(self) -> None:
+        """NVIDIA の GPU があるパソコンなら、ほかのパソコンの声も GPU で文字にできるよう、裏で自動で準備する。
+
+        ほかのパソコンの「別のパソコン」の一覧に出るには、このパソコン側の準備（Haas-ja・ファイアウォール・自動で動く登録）が
+        必ず要るので、画面に出さずに OnseiMan がやる。失敗したら、やり直すのは 1 日に 1 回まで。
+        動画を作る AI などで GPU の記憶を使い切るパソコンは、config.json の gpu_host_auto を false にする。
+        """
+        host = getattr(self.web_ui, "host_setup", None)
+        # 切る方法: config.json の gpu_host_auto を false にするか、OnseiMan のフォルダに gpu_host_off という空のファイルを置く
+        # （ファイルの印は、古い版が設定を保存し直しても消えない）
+        if host is None or not getattr(self.config, "gpu_host_auto", True) or (ROOT_DIR / "gpu_host_off").exists():
+            return
+        if self._stop_event.wait(45):   # 起動の直後は、ほかの確かめと重ならないように少し待つ
+            return
+        state_path = LOG_DIR / "gpu_host_auto.json"
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+        try:
+            st = host.status()
+            if st.get("registered") == "gpu" or st.get("gpu_ready") or (st.get("job") or {}).get("running"):
+                return   # もう準備してある（ログインしたときに自動で動く）
+            if time.time() - float(state.get("last", 0)) < self.GPU_HOST_RETRY_SEC:
+                return
+            gpu = host._check_gpu()
+            host._cache["gpu"] = gpu
+            if not gpu.get("ok"):
+                return   # NVIDIA の GPU が無い・ドライバーが古い（ふだん話すだけのパソコン）
+            logger.info("GPU があるので、ほかのパソコンからも使えるように準備します: %s", gpu.get("message"))
+            self.ui.show_status("◌ GPU があるので、ほかのパソコンの声もここで文字にできるよう準備します（10〜20 分）。"
+                                "管理者の確認が出たら「はい」", bg="#0369a1", auto_hide_ms=8000)
+            host.start_server("gpu")
+            state = {"last": time.time(), "result": None}
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            while not self._stop_event.wait(10):
+                job = host.status().get("job") or {}
+                if not job.get("running"):
+                    break
+            code = (host.status().get("job") or {}).get("result")
+            state["result"] = code
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            if code == 0:
+                logger.info("GPU で聞き取る準備ができました")
+                self.ui.show_status("✓ 準備できました。ほかのパソコンの「別のパソコン」で、このパソコンが見つかります",
+                                    bg="#065f46", auto_hide_ms=6000)
+            elif code == 3010:
+                self.ui.show_status("WSL2 を入れました。パソコンを再起動すると、続きを自動でします", bg="#92400e", auto_hide_ms=8000)
+            else:
+                logger.warning("GPU で聞き取る準備がうまくいきませんでした（記録: logs\\host_setup.log）: %s", code)
+        except Exception:
+            logger.exception("GPU で聞き取る準備を始められませんでした")
+
     def _update_loop(self) -> None:
         """起動したときと、そのあと 1 日 1 回、GitHub に新しい版がないか確かめる。"""
         while not self._stop_event.is_set():
@@ -1686,6 +1742,7 @@ class OnseiManApp:
                     threading.Thread(target=self._check_update, daemon=True).start()
                 else:
                     threading.Thread(target=self._update_loop, name="update-check", daemon=True).start()
+                    threading.Thread(target=self._auto_gpu_host, name="gpu-host", daemon=True).start()
                 self._health_poll_loop()
 
             threading.Thread(target=_init_health, daemon=True).start()

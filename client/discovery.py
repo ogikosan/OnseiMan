@@ -110,7 +110,9 @@ def _probe(ip: str, port: int, timeout: float) -> Optional[dict]:
         return {"url": url, "provider": str(data.get("provider", "")), "ms": round((time.perf_counter() - t0) * 1000),
                 "ready": data.get("status") == "ok",
                 # 新しいサーバーは、起動ごとの番号とパソコンの名前を返す（同じパソコンかどうかの判定に使う）
-                "id": str(data.get("id", ""))[:64], "host": str(data.get("name", ""))[:64]}
+                "id": str(data.get("id", ""))[:64], "host": str(data.get("name", ""))[:64],
+                # 聞き取りの仕組み（haas = GPU で聞き取る。聞き間違いが少ないので先に選ぶ）
+                "engine": str(data.get("engine", "") or "funasr")[:16]}
     except Exception:
         return None
 
@@ -158,7 +160,7 @@ def merge_same_machines(found: List[dict], peers: List[Dict]) -> List[dict]:
         if best["aliases"] and best.get("via") == "Tailscale":
             best["via"] = "Tailscale（家でも外でも使えます）"
         merged.append(best)
-    merged.sort(key=lambda r: (not r["ready"], r["ms"]))
+    merged.sort(key=lambda r: (not r["ready"], r.get("engine") != "haas", r["ms"]))
     return merged
 
 

@@ -43,7 +43,14 @@
 - 部品の版は固定（Haas-ASR のコミット、モデルのリビジョン、uv の版と SHA-256。`setup_haas.sh`）。
 - アプリは、使っている認識役が `engine: haas` なら区切りの上限をその `max_segment_sec` にする（`_max_segment_sec`）。
 
-## このパソコンを認識役にする（設定画面。`client/host_setup.py`）
+## このパソコンを認識役にする（裏で自動。`client/host_setup.py`、`client/main.py: _auto_gpu_host`）
+
+- 設定画面には出さない（話す側の「声を文字にする場所」と混ざって分かりにくかった。頼まれる側の準備は必ず要るので、自動でやる）。
+- NVIDIA の GPU（ドライバー 580 以上）があるパソコンで起動すると、45 秒後に GPU 版の準備を始める（未準備のときだけ）。
+  失敗したら 24 時間はやり直さない（`logs/gpu_host_auto.json`）。切るのは `config.json` の `gpu_host_auto: false` か、
+  フォルダに `gpu_host_off`（古い版が設定を保存し直しても消えない）。
+- 話す側は、さがしたときに `engine: haas` の認識役を先に並べ、はじめての「いつも使う」にする（`discovery.merge_same_machines`、app.js）。
+- 以下の API と手順は残してある（画面からは呼ばない）:
 
 - T3 Code（pingdotgg/t3code）の「共有とアクセス」にならい、自分では入れず、決まった手順を裏で動かして状態を読む。
 - `GET /api/host` → 状態（すぐ返す。GPU・ファイアウォール・アドレス・Tailscale・認識役の返事は裏のスレッドで確かめて覚えておく）。

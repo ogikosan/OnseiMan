@@ -48,3 +48,6 @@ tools/python/
 # インストーラーの署名の設定（Azure の情報）
 packaging/installer/signing.json
 packaging/installer/signing-metadata.json
+
+# このパソコンでは GPU 版の準備をしない印（利用者が置く）
+gpu_host_off
