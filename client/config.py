@@ -33,8 +33,9 @@ class ClientConfig:
     # 録音していない間もマイクを開いたままにし、キーを押す直前の声も録る（言い出しが欠けない・開始が速い）
     keep_mic_open: bool = True
     preroll_sec: float = 0.4
-    # 話しながら、話の切れ目ごとに裏で認識しておく（長く話しても消えない・話し終えてからの待ちが短い）
-    live_segmentation: bool = True
+    # 話しながら、話の切れ目ごとに裏で認識しておく。区切りで文がずれることがあるので、はじめはオフ
+    # （オフでも、長い録音は話し終えてから切れ目で区切って認識するので消えない）
+    live_segmentation: bool = False
     segment_pause_sec: float = 0.6
     segment_min_sec: float = 8.0
     segment_max_sec: float = 18.0

@@ -837,7 +837,7 @@ class WebUIServer:
         cfg.overlay_place = "caret" if body.get("overlay_place") == "caret" else "bottom"
         if not body.get("overlay_pinned", True):
             cfg.overlay_position = None  # 固定をやめてカーソルの近くに戻す
-        cfg.live_segmentation = bool(body.get("live_segmentation", True))
+        cfg.live_segmentation = bool(body.get("live_segmentation", False))
         cfg.auto_refine_self_correction = bool(body.get("auto_refine_self_correction", True))
         cfg.strip_trailing_period = bool(body.get("strip_trailing_period", True))
         cfg.app_specific_rules = bool(body.get("app_specific_rules", True))
