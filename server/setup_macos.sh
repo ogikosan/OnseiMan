@@ -50,6 +50,22 @@ get_uv() {
   rm -rf "$tmp"
 }
 
+RUST_SERVER=""
+for cand in "$BASE_DIR/onseiman-server" "$BASE_DIR/onseiman-server-macos-arm64"; do
+  if [ -x "$cand" ]; then
+    RUST_SERVER="$cand"
+    break
+  fi
+done
+
+if [ -n "$RUST_SERVER" ]; then
+  echo "=== [1/4] Rust 版サーバーを使うため Python の準備は不要です ==="
+  echo "=== [2/4] 聞き取りの部品（speech.cpp と Haas-ja、約0.7GB）を用意します ==="
+  if ! "$RUST_SERVER" setup --root "$BASE_DIR"; then
+    echo "用意できませんでした。インターネットにつながっているか確かめて、もう一度実行してください。"
+    exit 1
+  fi
+else
 echo "=== [1/4] 必要なものを用意します ==="
 if get_uv; then
   if [ ! -x "$PY" ]; then
@@ -83,12 +99,14 @@ if ! "$PY" shared/speechcpp_setup.py "$BASE_DIR"; then
   echo "用意できませんでした。インターネットにつながっているか確かめて、もう一度実行してください。"
   exit 1
 fi
+fi
 
 xml_esc() {
   printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
 }
 BASE_DIR_XML="$(xml_esc "$BASE_DIR")"
 PY_XML="$(xml_esc "$PY")"
+RUST_SERVER_XML="$(xml_esc "$RUST_SERVER")"
 
 if [ "${1:-}" != "--with-ai" ]; then
   echo "=== [3/4] AI 整形（Ollama, 約4.7GB）は入れません（入れるときは --with-ai を付けて実行） ==="
@@ -140,6 +158,19 @@ echo "=== [4/4] Mac を起動するたびに自動で動くよう登録します
 THREADS="$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || sysctl -n hw.ncpu)"
 if [ "$THREADS" -gt 8 ]; then THREADS=8; fi
 mkdir -p "$HOME/Library/LaunchAgents" "$BASE_DIR/logs"
+if [ -n "$RUST_SERVER" ]; then
+  PROGRAM_ARGS="    <string>${RUST_SERVER_XML}</string>
+    <string>--root</string><string>${BASE_DIR_XML}</string>
+    <string>--host</string><string>0.0.0.0</string>
+    <string>--port</string><string>${PORT}</string>
+    <string>--threads</string><string>${THREADS}</string>"
+else
+  PROGRAM_ARGS="    <string>${PY_XML}</string>
+    <string>${BASE_DIR_XML}/server/app.py</string>
+    <string>--host</string><string>0.0.0.0</string>
+    <string>--port</string><string>${PORT}</string>
+    <string>--threads</string><string>${THREADS}</string>"
+fi
 cat > "$HOME/Library/LaunchAgents/com.onseiman.asr.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -149,11 +180,7 @@ cat > "$HOME/Library/LaunchAgents/com.onseiman.asr.plist" <<EOF
   <key>WorkingDirectory</key><string>${BASE_DIR_XML}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${PY_XML}</string>
-    <string>${BASE_DIR_XML}/server/app.py</string>
-    <string>--host</string><string>0.0.0.0</string>
-    <string>--port</string><string>${PORT}</string>
-    <string>--threads</string><string>${THREADS}</string>
+${PROGRAM_ARGS}
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
