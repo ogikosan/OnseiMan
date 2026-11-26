@@ -5,6 +5,7 @@
 //! → カーソル位置へ貼り付け → 履歴保存、および `client/web/` 管理画面を提供する。
 
 pub mod discovery;
+pub mod live_session;
 pub mod pipeline;
 pub mod transcriber;
 pub mod web_ui;

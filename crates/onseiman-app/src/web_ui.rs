@@ -67,6 +67,54 @@ use crate::transcriber::HybridTranscriber;
 pub const DEFAULT_MIC_LABEL: &str = "既定のマイク";
 const CSP_HEADER: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MicTestState {
+    pub state: String,
+    pub level: f32,
+    pub peak: f32,
+    pub left: f32,
+    pub text: String,
+    pub verdict: String,
+    pub verdict_kind: String,
+    pub backend: String,
+}
+
+impl Default for MicTestState {
+    fn default() -> Self {
+        Self {
+            state: "idle".into(),
+            level: 0.0,
+            peak: 0.0,
+            left: 0.0,
+            text: String::new(),
+            verdict: String::new(),
+            verdict_kind: String::new(),
+            backend: String::new(),
+        }
+    }
+}
+
+pub fn mic_verdict(peak: f32) -> (&'static str, &'static str) {
+    if peak < 0.01 {
+        (
+            "音がほとんど入っていません。マイクの選び方と、Windows の「設定」→「プライバシー」→「マイク」でアプリがマイクを使えるか、マイクの音量を確かめてください",
+            "ng",
+        )
+    } else if peak < 0.06 {
+        (
+            "声が小さいです。マイクに近づくか、Windows のマイクの音量を上げてください",
+            "warn",
+        )
+    } else if peak > 0.98 {
+        (
+            "音が大きすぎて割れています。Windows のマイクの音量を下げてください",
+            "warn",
+        )
+    } else {
+        ("ちょうどよい大きさです", "ok")
+    }
+}
+
 pub struct AppContext {
     pub root_dir: PathBuf,
     pub web_dir: PathBuf,
@@ -81,6 +129,7 @@ pub struct AppContext {
     pub transcriber: Arc<HybridTranscriber>,
     pub pending_tab: Mutex<String>,
     pub latest_update: Mutex<Option<Value>>,
+    pub mic_test: Mutex<MicTestState>,
 }
 
 impl AppContext {
@@ -109,6 +158,7 @@ impl AppContext {
             transcriber,
             pending_tab: Mutex::new(String::new()),
             latest_update: Mutex::new(None),
+            mic_test: Mutex::new(MicTestState::default()),
         }
     }
 
@@ -159,7 +209,7 @@ pub fn router(ctx: Arc<AppContext>) -> Router {
         .route("/api/update/check", post(post_update_check))
         .route("/api/update/run", post(post_update_run))
         .route("/api/theme", post(post_theme))
-        .route("/api/mic_test/start", post(post_ok_stub))
+        .route("/api/mic_test/start", post(post_mic_test_start))
         .route("/", get(get_index))
         .route("/{*path}", get(get_static))
         .layer(DefaultBodyLimit::max(2_000_000))
@@ -456,8 +506,129 @@ async fn get_dict_sync() -> Response {
     json_no_store(StatusCode::OK, json!({ "status": {}, "folders": [] }))
 }
 
-async fn get_mic_test() -> Response {
-    json_no_store(StatusCode::OK, json!({ "state": "idle" }))
+async fn get_mic_test(State(ctx): State<Arc<AppContext>>) -> Response {
+    let st = ctx.mic_test.lock().unwrap().clone();
+    json_no_store(StatusCode::OK, serde_json::to_value(st).unwrap_or_default())
+}
+
+async fn post_mic_test_start(State(ctx): State<Arc<AppContext>>) -> Response {
+    {
+        let mut st = ctx.mic_test.lock().unwrap();
+        if st.state == "recording" || st.state == "recognizing" {
+            return json_no_store(StatusCode::OK, json!({ "ok": true }));
+        }
+        *st = MicTestState {
+            state: "recording".into(),
+            left: 5.0,
+            ..Default::default()
+        };
+    }
+
+    let ctx_bg = Arc::clone(&ctx);
+    std::thread::spawn(move || {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::{Duration, Instant};
+
+        let cfg = ctx_bg.config.lock().unwrap().clone();
+        let mic_name = cfg
+            .microphone
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let peak_bits = Arc::new(AtomicU32::new(0u32));
+        let level_bits = Arc::new(AtomicU32::new(0u32));
+        let pb = Arc::clone(&peak_bits);
+        let lb = Arc::clone(&level_bits);
+        let on_level: Arc<dyn Fn(f32) + Send + Sync> = Arc::new(move |lvl: f32| {
+            lb.store(lvl.to_bits(), Ordering::Relaxed);
+            let raw_est = (lvl / 10.0).min(1.0);
+            let mut cur = pb.load(Ordering::Relaxed);
+            while raw_est > f32::from_bits(cur) {
+                match pb.compare_exchange_weak(
+                    cur,
+                    raw_est.to_bits(),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(v) => cur = v,
+                }
+            }
+        });
+
+        let handle =
+            match onseiman_platform::recorder::start_recording(mic_name.as_deref(), Some(on_level))
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    if let Ok(mut st) = ctx_bg.mic_test.lock() {
+                        st.state = "error".into();
+                        st.verdict = format!(
+                            "マイクを開けませんでした（{e}）。マイクの選び方を確かめてください"
+                        );
+                        st.verdict_kind = "ng".into();
+                    }
+                    return;
+                }
+            };
+
+        let t0 = Instant::now();
+        while t0.elapsed() < Duration::from_secs(5) {
+            let left = (5.0 - t0.elapsed().as_secs_f32()).max(0.0);
+            if let Ok(mut st) = ctx_bg.mic_test.lock() {
+                st.level = f32::from_bits(level_bits.load(Ordering::Relaxed));
+                st.peak = f32::from_bits(peak_bits.load(Ordering::Relaxed));
+                st.left = (left * 10.0).round() / 10.0;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let samples = handle.stop();
+        let peak = samples
+            .iter()
+            .fold(0.0f32, |acc, &x| acc.max(x.abs()))
+            .max(f32::from_bits(peak_bits.load(Ordering::Relaxed)));
+        let (verdict, kind) = mic_verdict(peak);
+        if let Ok(mut st) = ctx_bg.mic_test.lock() {
+            st.state = "recognizing".into();
+            st.level = 0.0;
+            st.peak = peak;
+            st.left = 0.0;
+            st.verdict = verdict.into();
+            st.verdict_kind = kind.into();
+        }
+        if kind == "ng" || samples.is_empty() {
+            if let Ok(mut st) = ctx_bg.mic_test.lock() {
+                st.state = "done".into();
+            }
+            return;
+        }
+        let wav = onseiman_core::audio::encode_wav(&samples, 16_000);
+        let dict = ctx_bg.dict.lock().unwrap().clone();
+        let hotwords = dict.active_hotwords();
+        let readings = dict.readings();
+        match ctx_bg
+            .transcriber
+            .transcribe_wav(&cfg, &wav, &hotwords, &readings)
+        {
+            Ok(res) => {
+                if let Ok(mut st) = ctx_bg.mic_test.lock() {
+                    st.state = "done".into();
+                    st.text = res.text.trim().to_string();
+                    st.backend = res.backend;
+                }
+            }
+            Err(e) => {
+                if let Ok(mut st) = ctx_bg.mic_test.lock() {
+                    st.state = "done".into();
+                    st.text = String::new();
+                    st.backend = format!("文字にできませんでした（{e}）");
+                }
+            }
+        }
+    });
+
+    json_no_store(StatusCode::OK, json!({ "ok": true }))
 }
 
 /// `audio_dir` 配下の単一 `.wav` ファイル名だけを許可し、正規化済みパスを返す。
@@ -1178,6 +1349,31 @@ async fn post_retry(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>)
     }
 }
 
+/// 自動学習で昇格した `(src, dst)` を `dict.json` の `replacements` / `hotwords` に登録して再読込する。
+pub fn add_replacement_to_dict(ctx: &AppContext, src: &str, dst: &str) {
+    if src.is_empty() || dst.is_empty() {
+        return;
+    }
+    let mut data = read_json_obj(&ctx.dict_path);
+    let rep = data
+        .entry("replacements".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if let Some(m) = rep.as_object_mut() {
+        m.insert(src.to_string(), Value::String(dst.to_string()));
+    }
+    let hw = data
+        .entry("hotwords".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Some(arr) = hw.as_array_mut() {
+        if !arr.iter().any(|v| v.as_str() == Some(dst)) {
+            arr.push(Value::String(dst.to_string()));
+        }
+    }
+    if write_json_obj(&ctx.dict_path, &data).is_ok() {
+        ctx.reload_dict();
+    }
+}
+
 pub fn retranscribe_latest(ctx: &Arc<AppContext>) -> Result<String, String> {
     let latest_audio = {
         let h = ctx.history.lock().unwrap();
@@ -1536,8 +1732,27 @@ async fn post_theme(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>)
     json_no_store(StatusCode::OK, json!({ "ok": true, "theme": theme }))
 }
 
-async fn post_ok_stub() -> Response {
-    json_no_store(StatusCode::OK, json!({ "ok": true }))
+/// すでに OnseiMan 画面が開いていれば前面に出し、無ければブラウザで開く。
+pub fn open_or_focus_browser(
+    ctx: &AppContext,
+    base_url: &str,
+    tab: &str,
+    profile_dir: Option<&FsPath>,
+) {
+    if onseiman_platform::window::bring_existing_app_window_to_front("OnseiMan") {
+        if !tab.is_empty() {
+            if let Ok(mut p) = ctx.pending_tab.lock() {
+                *p = tab.to_string();
+            }
+        }
+        return;
+    }
+    let target = if tab.is_empty() {
+        base_url.to_string()
+    } else {
+        format!("{base_url}/#{tab}")
+    };
+    open_browser(&target, profile_dir);
 }
 
 /// 管理画面をブラウザで開く（Windows: Edge --app、macOS: `open`）。

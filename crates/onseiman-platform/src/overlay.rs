@@ -1,47 +1,72 @@
-//! 録音中・認識中の非アクティブ・最前面カプセルオーバーレイ。
+//! 録音中・認識中・完了通知の非アクティブ・最前面カプセルオーバーレイ。
 //!
 //! 元の OnseiMan（`pill.py`）と同じデザイン：
 //! - 角が完全に丸いカプセル形状（`CreateRoundRectRgn` + `SetWindowRgn` で角の黒枠なし）
 //! - 左に青い丸＋声の大きさで広がる輪、右に Yu Gothic UI のなめらかな文字
 //! - `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` で入力先のフォーカスを一切奪わない
+//! - 文字カーソル付近への追従表示・ドラッグ移動の位置記憶・完了トーストに対応
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OverlayState {
     Hidden,
-    Recording { ai: bool, level: f32 },
+    Recording {
+        ai: bool,
+        level: f32,
+        live_text: String,
+    },
     Transcribing,
+    Done {
+        text: String,
+    },
 }
 
 #[cfg(windows)]
 mod imp {
     use super::OverlayState;
     use std::ptr;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::thread;
     use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows_sys::Win32::Graphics::Gdi::{
         BeginPaint, CreateFontW, CreatePen, CreateRoundRectRgn, CreateSolidBrush, DeleteObject,
         DrawTextW, Ellipse, EndPaint, FillRect, InvalidateRect, RoundRect, SelectObject, SetBkMode,
         SetTextColor, SetWindowRgn, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET,
-        DEFAULT_PITCH, DT_LEFT, DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, FW_MEDIUM,
+        DEFAULT_PITCH, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, FW_MEDIUM,
         OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_NULL, PS_SOLID, TRANSPARENT,
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-        GetSystemMetrics, PostMessageW, PostQuitMessage, RegisterClassW,
-        SetLayeredWindowAttributes, ShowWindow, TranslateMessage, LWA_ALPHA, MSG, SM_CXSCREEN,
-        SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY, WM_MOUSEACTIVATE,
-        WM_PAINT, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-        WS_POPUP,
+        GetSystemMetrics, GetWindowRect, PostMessageW, PostQuitMessage, RegisterClassW,
+        SendMessageW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow, TranslateMessage,
+        HTCAPTION, HWND_TOPMOST, LWA_ALPHA, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE,
+        SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY, WM_EXITSIZEMOVE,
+        WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_NCLBUTTONDOWN, WM_PAINT, WNDCLASSW,
+        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
 
     const WM_OVERLAY_UPDATE: u32 = WM_APP + 10;
+    const WM_OVERLAY_MOVE: u32 = WM_APP + 11;
     const MA_NOACTIVATE: isize = 3;
-    const PILL_W: i32 = 200;
+    const PILL_W: i32 = 220;
     const PILL_H: i32 = 42;
 
-    static CURRENT: Mutex<OverlayState> = Mutex::new(OverlayState::Hidden);
+    static CURRENT: OnceLock<Mutex<OverlayState>> = OnceLock::new();
+    static TARGET_POS: OnceLock<Mutex<(i32, i32)>> = OnceLock::new();
+    static PINNED_POS: OnceLock<Mutex<Option<(i32, i32)>>> = OnceLock::new();
+
+    fn current_lock() -> &'static Mutex<OverlayState> {
+        CURRENT.get_or_init(|| Mutex::new(OverlayState::Hidden))
+    }
+
+    fn pinned_lock() -> &'static Mutex<Option<(i32, i32)>> {
+        PINNED_POS.get_or_init(|| Mutex::new(None))
+    }
+
+    fn target_pos_lock() -> &'static Mutex<(i32, i32)> {
+        TARGET_POS.get_or_init(|| Mutex::new((0, 0)))
+    }
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -59,8 +84,37 @@ mod imp {
     ) -> LRESULT {
         match msg {
             WM_MOUSEACTIVATE => return MA_NOACTIVATE,
+            WM_LBUTTONDOWN => {
+                ReleaseCapture();
+                SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION as WPARAM, 0);
+                return 0;
+            }
+            WM_EXITSIZEMOVE => {
+                let mut rc: RECT = std::mem::zeroed();
+                if GetWindowRect(hwnd, &mut rc) != 0 {
+                    if let Ok(mut p) = pinned_lock().lock() {
+                        *p = Some((rc.left, rc.top));
+                    }
+                }
+                return 0;
+            }
+            WM_LBUTTONDBLCLK => {
+                // ダブルクリックで固定位置を解除
+                if let Ok(mut p) = pinned_lock().lock() {
+                    *p = None;
+                }
+                return 0;
+            }
+            WM_OVERLAY_MOVE => {
+                let (x, y) = *target_pos_lock().lock().unwrap_or_else(|e| e.into_inner());
+                SetWindowPos(hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+                return 0;
+            }
             WM_OVERLAY_UPDATE => {
-                let st = *CURRENT.lock().unwrap_or_else(|e| e.into_inner());
+                let st = current_lock()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
                 match st {
                     OverlayState::Hidden => {
                         ShowWindow(hwnd, SW_HIDE);
@@ -73,7 +127,10 @@ mod imp {
                 return 0;
             }
             WM_PAINT => {
-                let st = *CURRENT.lock().unwrap_or_else(|e| e.into_inner());
+                let st = current_lock()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
                 let mut ps: PAINTSTRUCT = std::mem::zeroed();
                 let hdc = BeginPaint(hwnd, &mut ps);
                 let full = RECT {
@@ -82,7 +139,6 @@ mod imp {
                     right: PILL_W,
                     bottom: PILL_H,
                 };
-                // 元の pill.py ダークテーマ配色: body (30, 39, 60), edge (68, 82, 112), text (228, 233, 244)
                 let body_col = rgb(30, 39, 60);
                 let edge_col = rgb(72, 88, 122);
                 let text_col = rgb(228, 233, 244);
@@ -101,23 +157,46 @@ mod imp {
                 DeleteObject(pen);
                 DeleteObject(fill);
 
-                let (circle_col, halo_col, label, level) = match st {
-                    OverlayState::Recording { ai: true, level } => (
-                        rgb(139, 92, 246),
-                        rgb(92, 68, 160),
-                        "AI 聞いています",
+                let (circle_col, halo_col, label, level) = match &st {
+                    OverlayState::Recording {
+                        ai: true,
                         level,
+                        live_text,
+                    } => {
+                        let lbl = if live_text.is_empty() {
+                            "AI 聞いています".to_string()
+                        } else {
+                            live_text.clone()
+                        };
+                        (rgb(139, 92, 246), rgb(92, 68, 160), lbl, *level)
+                    }
+                    OverlayState::Recording {
+                        ai: false,
+                        level,
+                        live_text,
+                    } => {
+                        let lbl = if live_text.is_empty() {
+                            "聞いています".to_string()
+                        } else {
+                            live_text.clone()
+                        };
+                        (rgb(59, 130, 246), rgb(47, 94, 178), lbl, *level)
+                    }
+                    OverlayState::Transcribing => (
+                        rgb(99, 102, 241),
+                        rgb(64, 72, 138),
+                        "文字にしています".to_string(),
+                        0.0,
                     ),
-                    OverlayState::Recording { ai: false, level } => {
-                        (rgb(59, 130, 246), rgb(47, 94, 178), "聞いています", level)
-                    }
-                    OverlayState::Transcribing => {
-                        (rgb(99, 102, 241), rgb(64, 72, 138), "文字にしています", 0.0)
-                    }
-                    OverlayState::Hidden => (rgb(100, 116, 139), body_col, "", 0.0),
+                    OverlayState::Done { text } => (
+                        rgb(16, 185, 129),
+                        rgb(16, 110, 82),
+                        format!("✓ {text}"),
+                        0.0,
+                    ),
+                    OverlayState::Hidden => (rgb(100, 116, 139), body_col, String::new(), 0.0),
                 };
 
-                // 左の丸（声の大きさで外側の輪が広がる）
                 let cx = 22;
                 let cy = PILL_H / 2;
                 let null_pen = CreatePen(PS_NULL, 0, 0);
@@ -140,7 +219,6 @@ mod imp {
                 DeleteObject(cb);
                 DeleteObject(null_pen);
 
-                // Yu Gothic UI でなめらかに文字描画
                 let font_name = wide("Yu Gothic UI");
                 let font = CreateFontW(
                     -15,
@@ -161,7 +239,7 @@ mod imp {
                 let old_font = SelectObject(hdc, font);
                 SetBkMode(hdc, TRANSPARENT as i32);
                 SetTextColor(hdc, text_col);
-                let mut text = wide(label);
+                let mut text = wide(&label);
                 let mut text_rc = RECT {
                     left: 44,
                     top: 0,
@@ -173,7 +251,7 @@ mod imp {
                     text.as_mut_ptr(),
                     (text.len() - 1) as i32,
                     &mut text_rc,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
                 );
                 SelectObject(hdc, old_font);
                 DeleteObject(font);
@@ -207,7 +285,7 @@ mod imp {
                 let hinst = GetModuleHandleW(ptr::null());
                 let cls_name = wide("OnseiManOverlayClass");
                 let wc = WNDCLASSW {
-                    style: 0,
+                    style: 0x0008, // CS_DBLCLKS
                     lpfnWndProc: Some(wnd_proc),
                     cbClsExtra: 0,
                     cbWndExtra: 0,
@@ -243,7 +321,6 @@ mod imp {
                 if hwnd.is_null() {
                     return;
                 }
-                // カプセル型に切り抜いて角の黒枠を完全になくす
                 let rgn = CreateRoundRectRgn(0, 0, PILL_W + 1, PILL_H + 1, PILL_H, PILL_H);
                 if !rgn.is_null() && SetWindowRgn(hwnd, rgn, 1) == 0 {
                     DeleteObject(rgn);
@@ -265,8 +342,41 @@ mod imp {
             }
         }
 
+        /// `place`（`"caret"` / `"bottom"`）またはドラッグ固定位置に合わせてカプセルを配置する。
+        pub fn position_for(&self, place: &str) {
+            unsafe {
+                let sx = GetSystemMetrics(SM_CXSCREEN).max(PILL_W + 16);
+                let sy = GetSystemMetrics(SM_CYSCREEN).max(PILL_H + 64);
+                let (x, y) = if let Some((px, py)) = pinned_lock().lock().ok().and_then(|g| *g) {
+                    (px.clamp(8, sx - PILL_W - 8), py.clamp(8, sy - PILL_H - 8))
+                } else if place == "caret" {
+                    if let Some((l, t, _r, b)) = crate::caret::caret_rect() {
+                        let cx = (l - 12).clamp(8, sx - PILL_W - 8);
+                        let cy = if b + 12 + PILL_H < sy - 48 {
+                            b + 12
+                        } else {
+                            (t - PILL_H - 12).max(8)
+                        };
+                        (cx, cy)
+                    } else {
+                        ((sx - PILL_W) / 2, sy - PILL_H - 64)
+                    }
+                } else {
+                    ((sx - PILL_W) / 2, sy - PILL_H - 64)
+                };
+                if let Ok(mut tp) = target_pos_lock().lock() {
+                    *tp = (x, y);
+                }
+                if let Ok(h) = self.hwnd.lock() {
+                    if *h != 0 {
+                        PostMessageW(*h as HWND, WM_OVERLAY_MOVE, 0, 0);
+                    }
+                }
+            }
+        }
+
         pub fn set_state(&self, state: OverlayState) {
-            if let Ok(mut g) = CURRENT.lock() {
+            if let Ok(mut g) = current_lock().lock() {
                 *g = state;
             }
             if let Ok(h) = self.hwnd.lock() {
@@ -304,6 +414,7 @@ mod imp {
         pub fn start() -> Self {
             Self
         }
+        pub fn position_for(&self, _place: &str) {}
         pub fn set_state(&self, _state: OverlayState) {}
     }
 }

@@ -27,17 +27,24 @@ pub struct HotkeyConfig {
 mod imp {
     use super::*;
     use std::ptr;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc::Sender;
     use std::sync::{Mutex, OnceLock};
     use std::thread;
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
-        TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT,
-        WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_QUIT,
-        WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+        CallNextHookEx, DispatchMessageW, GetMessageW, KillTimer, PostThreadMessageW, SetTimer,
+        SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG,
+        MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_MBUTTONDOWN,
+        WM_MBUTTONUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
     };
+
+    static HOOK_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
+
+    pub fn heartbeat() -> &'static AtomicU64 {
+        &HOOK_HEARTBEAT
+    }
 
     use crate::binding::{format_vk_name, MouseButton};
 
@@ -179,11 +186,18 @@ mod imp {
                 }
                 let mouse_hook =
                     SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), ptr::null_mut(), 0);
+                HOOK_HEARTBEAT.store(crate::watchdog::now_ms(), Ordering::Relaxed);
+                let timer_id = SetTimer(ptr::null_mut(), 0, 200, None);
                 let mut msg: MSG = std::mem::zeroed();
                 while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
+                    HOOK_HEARTBEAT.store(crate::watchdog::now_ms(), Ordering::Relaxed);
                     TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
+                if timer_id != 0 {
+                    KillTimer(ptr::null_mut(), timer_id);
+                }
+                HOOK_HEARTBEAT.store(0, Ordering::Relaxed);
                 UnhookWindowsHookEx(kbd_hook);
                 if !mouse_hook.is_null() {
                     UnhookWindowsHookEx(mouse_hook);
@@ -243,9 +257,16 @@ mod imp {
     use super::*;
     use std::ffi::c_void;
     use std::ptr;
+    use std::sync::atomic::AtomicU64;
     use std::sync::mpsc::Sender;
     use std::sync::{Mutex, OnceLock};
     use std::thread;
+
+    static HOOK_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
+
+    pub fn heartbeat() -> &'static AtomicU64 {
+        &HOOK_HEARTBEAT
+    }
 
     type CGEventTapProxy = *mut c_void;
     type CGEventRef = *mut c_void;
@@ -519,7 +540,14 @@ mod imp {
 #[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     use super::*;
+    use std::sync::atomic::AtomicU64;
     use std::sync::mpsc::Sender;
+
+    static HOOK_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
+
+    pub fn heartbeat() -> &'static AtomicU64 {
+        &HOOK_HEARTBEAT
+    }
 
     pub struct GlobalHotkey;
 
@@ -532,4 +560,4 @@ mod imp {
     }
 }
 
-pub use imp::GlobalHotkey;
+pub use imp::{heartbeat, GlobalHotkey};

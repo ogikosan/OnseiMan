@@ -48,6 +48,26 @@ pub struct RecordingHandle {
 }
 
 impl RecordingHandle {
+    /// これまでに録音した 16kHz 相当の長さを秒で返す。
+    pub fn elapsed_sec(&self) -> f64 {
+        if self.src_rate == 0 {
+            return 0.0;
+        }
+        let n = self.buf.lock().map(|g| g.len()).unwrap_or(0);
+        n as f64 / self.src_rate as f64
+    }
+
+    /// 録音バッファの先頭から現在までを取り出し、16kHz モノラルとして返す（ライブ分割用）。
+    /// 元の全音声を保持したままにしたい場合は `stop()` 前に呼び出し側で結合する。
+    pub fn drain_16k(&self) -> Vec<f32> {
+        let raw = self
+            .buf
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default();
+        resample_linear(&raw, self.src_rate, 16000)
+    }
+
     /// 録音を止め、16kHz モノラルの f32 サンプルを返す。
     pub fn stop(self) -> Vec<f32> {
         drop(self.stream);

@@ -2,6 +2,7 @@
 
 pub mod audio_mute;
 pub mod binding;
+pub mod caret;
 pub mod clipboard;
 pub mod hotkey;
 pub mod overlay;
@@ -10,3 +11,6 @@ pub mod recorder;
 pub mod secret_store;
 pub mod startup;
 pub mod tray;
+pub mod uia_watcher;
+pub mod watchdog;
+pub mod window;
