@@ -1,0 +1,35 @@
+[package]
+name = "onseiman-server"
+description = "OnseiMan の認識役（ほかのパソコンから届いた声を文字にして返す）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+onseiman-core = { path = "../onseiman-core" }
+onseiman-speech = { path = "../onseiman-speech" }
+serde_json = { workspace = true }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "multipart", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal"] }
+tempfile = "3"
+gethostname = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+ureq = "2"
+tempfile = "3"
+
+[lib]
+name = "onseiman_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "onseiman-server"
+path = "src/main.rs"
+
+# 試験用: speech.cpp の worker のふりをするもの（tests/server.rs が使う）
+[[bin]]
+name = "fake-speech-worker"
+path = "testing/fake_worker.rs"
+test = false

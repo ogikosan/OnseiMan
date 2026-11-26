@@ -22,6 +22,10 @@
   - 形のテストだけで済ませず、まっさらなフォルダに展開して実際に実行する（Python が PATH に無い状態で `install_client.bat`）。
     古い版からの `update.bat` も、GitHub のタグの ZIP から実際に通す。
   - `requirements.txt` は英数字だけ（日本語の Windows の pip は cp932 として読む）。
+- Rust 版（作りかけ。`Cargo.toml`・`crates/`、ブランチ `feature/rust`、計画と進み具合は `docs/src/rust-migration-plan.md`）を変えたとき：
+  `cargo test --workspace` と `cargo clippy --workspace --all-targets`（注意なしで通す）。Rust は `D:\10_Tools\rust` に入っている
+  （`RUSTUP_HOME=D:\10_Tools\rust\rustup`・`CARGO_HOME=D:\10_Tools\rust\cargo` を決め、`D:\10_Tools\rust\cargo\bin` を PATH に足して使う）。
+  Python 版と同じ決まりのもの（区切り・辞書の形など）を変えたら、`crates/onseiman-core/tests/golden/make_golden.py` で正解を書き出し直す。
 - 文書のみ：リンク・内容・実際の仕様との整合性。
 
 ## 該当時に読む資料

@@ -1,0 +1,192 @@
+[
+ {
+  "name": "pauses",
+  "sample_rate": 16000,
+  "plan": [
+   [
+    9000,
+    300,
+    1
+   ],
+   [
+    1000,
+    0,
+    2
+   ],
+   [
+    9000,
+    300,
+    3
+   ],
+   [
+    1000,
+    0,
+    4
+   ],
+   [
+    5000,
+    300,
+    5
+   ]
+  ],
+  "options": {
+   "max_segment_sec": 15.0,
+   "min_segment_sec": 4.0
+  },
+  "lengths": [
+   152000,
+   160000,
+   88000
+  ]
+ },
+ {
+  "name": "no_pause_forced_cut",
+  "sample_rate": 16000,
+  "plan": [
+   [
+    20000,
+    300,
+    6
+   ],
+   [
+    300,
+    3,
+    7
+   ],
+   [
+    20000,
+    300,
+    8
+   ]
+  ],
+  "options": {
+   "max_segment_sec": 15.0,
+   "min_segment_sec": 4.0
+  },
+  "lengths": [
+   224320,
+   218240,
+   202240
+  ]
+ },
+ {
+  "name": "quiet_tail_dropped",
+  "sample_rate": 16000,
+  "plan": [
+   [
+    6000,
+    300,
+    9
+   ],
+   [
+    8000,
+    1,
+    10
+   ]
+  ],
+  "options": {
+   "max_segment_sec": 15.0,
+   "min_segment_sec": 4.0
+  },
+  "lengths": [
+   104000
+  ]
+ },
+ {
+  "name": "short_pauses_kept_together",
+  "sample_rate": 16000,
+  "plan": [
+   [
+    2000,
+    300,
+    11
+   ],
+   [
+    300,
+    0,
+    12
+   ],
+   [
+    2000,
+    300,
+    13
+   ],
+   [
+    300,
+    0,
+    14
+   ],
+   [
+    2000,
+    300,
+    15
+   ]
+  ],
+  "options": {
+   "max_segment_sec": 15.0,
+   "min_segment_sec": 4.0
+  },
+  "lengths": [
+   105600
+  ]
+ },
+ {
+  "name": "other_rate_and_options",
+  "sample_rate": 44100,
+  "plan": [
+   [
+    7000,
+    200,
+    16
+   ],
+   [
+    900,
+    5,
+    17
+   ],
+   [
+    7000,
+    200,
+    18
+   ]
+  ],
+  "options": {
+   "max_segment_sec": 10.0,
+   "min_segment_sec": 3.0,
+   "pause_sec": 0.6,
+   "rms_threshold": 0.02,
+   "search_back_sec": 4.0
+  },
+  "lengths": [
+   335160,
+   321930
+  ]
+ },
+ {
+  "name": "defaults",
+  "sample_rate": 8000,
+  "plan": [
+   [
+    19000,
+    250,
+    19
+   ],
+   [
+    700,
+    0,
+    20
+   ],
+   [
+    3000,
+    250,
+    21
+   ]
+  ],
+  "options": {},
+  "lengths": [
+   114080,
+   41920,
+   25600
+  ]
+ }
+]

@@ -51,3 +51,6 @@ tools/speech/
 packaging/installer/signing.json
 packaging/installer/signing-metadata.json
 
+
+# Rust 版を作るときにできるもの
+target/

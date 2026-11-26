@@ -1,0 +1,21 @@
+# OnseiMan の Rust 版（作りかけ。計画は docs/src/rust-migration-plan.md）。
+# Python 版（client/・shared/・server/）は、Rust 版が同じことをできると確かめるまでそのまま動かす。
+[workspace]
+resolver = "2"
+members = ["crates/onseiman-core", "crates/onseiman-speech", "crates/onseiman-server"]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/ogikosan/OnseiMan"
+
+[workspace.dependencies]
+# preserve_order: 辞書の言葉の並びを、預かったときのまま保つ
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
+strip = true

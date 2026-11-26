@@ -1,0 +1,11 @@
+[package]
+name = "onseiman-core"
+description = "OnseiMan の、OS に寄らない中身（区切り・辞書の形・音声の読み取りなど）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+hound = "3.5"
