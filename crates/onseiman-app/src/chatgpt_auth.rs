@@ -228,7 +228,7 @@ pub fn sign_out(root: &Path) -> Result<(), String> {
             .ok()
             .and_then(|r| r.into_json::<serde_json::Value>().ok())
             .and_then(|v| v["revocation_endpoint"].as_str().map(str::to_string));
-        if let Some(url) = endpoint {
+        if let Some(url) = endpoint.filter(|u| u.starts_with("https://auth.openai.com/")) {
             let _ = agent(Duration::from_secs(6)).post(&url).send_form(&[
                 ("token", t.refresh_token.as_str()),
                 ("token_type_hint", "refresh_token"),
@@ -382,9 +382,12 @@ pub fn refine_dictation_with_context(
     })
 }
 
+const MAX_SSE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_SSE_TEXT_BYTES: usize = 512 * 1024;
+
 fn read_sse_stream(reader: impl Read) -> Result<String, String> {
     let mut text = String::new();
-    for line in BufReader::new(reader).lines() {
+    for line in BufReader::new(reader.take(MAX_SSE_BYTES)).lines() {
         let line = line.map_err(|e| format!("応答の読み取りに失敗しました: {e}"))?;
         let Some(data) = line.strip_prefix("data:") else {
             continue;
@@ -394,7 +397,11 @@ fn read_sse_stream(reader: impl Read) -> Result<String, String> {
         };
         match event["type"].as_str().unwrap_or("") {
             "response.output_text.delta" => {
-                text.push_str(event["delta"].as_str().unwrap_or(""));
+                let delta = event["delta"].as_str().unwrap_or("");
+                if text.len().saturating_add(delta.len()) > MAX_SSE_TEXT_BYTES {
+                    return Err("応答が長すぎるため中断しました".into());
+                }
+                text.push_str(delta);
             }
             "response.completed" => return Ok(text),
             "response.failed" => {
@@ -437,7 +444,9 @@ fn wait_for_callback(
                 stream.set_nonblocking(false).ok();
                 stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
                 let mut line = String::new();
-                BufReader::new(&mut stream).read_line(&mut line).ok();
+                BufReader::new((&mut stream).take(8192))
+                    .read_line(&mut line)
+                    .ok();
                 let target = line.split_whitespace().nth(1).unwrap_or("");
                 let (path, query) = target.split_once('?').unwrap_or((target, ""));
                 if path != CALLBACK_PATH {
