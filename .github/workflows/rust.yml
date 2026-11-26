@@ -31,7 +31,7 @@ jobs:
             artifact: onseiman-server-windows-x64.exe
             bin: target/release/onseiman-server.exe
           - name: macOS arm64
-            os: macos-14
+            os: macos-15
             artifact: onseiman-server-macos-arm64
             bin: target/release/onseiman-server
     runs-on: ${{ matrix.os }}
