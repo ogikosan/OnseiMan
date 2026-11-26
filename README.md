@@ -10,21 +10,21 @@
 - 辞書（よく間違える言葉）と定型文（合言葉で決まった文を入れる）。何台かのパソコンで自動で合わせられます
 - 使いたい人は、AI（GPT・Claude・Gemini・自分で動かす AI）で文章を整えられます。整えるときだけ、文字（音声ではありません）を選んだ会社に送ります
 - 家にある別のパソコン（Mac / Windows）に、声を文字にする役を任せることもできます
-- 新しい版が出ると画面に知らせが出て、「今すぐ更新」で入れ替えられます（設定・辞書・履歴はそのまま）。
-  前の版の、もう使わないデータは `cleanup_old.bat`（Mac は `cleanup_old_mac.command`）で消せます
+- 新しい版が出ると画面に知らせが出て、「今すぐ更新」で入れ替えられます（設定・辞書・履歴はそのまま）
 
 ## 入れ方
 
-右の「Releases」から、どちらかを取ってきます。
+右の「Releases」から、お使いの OS に合うバイナリを取ってきます。
 
-| 取ってくるもの | 入れ方 |
+| 取ってくるもの | 使い方 |
 |---|---|
-| `OnseiMan-Setup-<版>.exe`（いちばん簡単） | ダブルクリックして「インストール」。スタートメニューに「OnseiMan」ができます。消すときは Windows の「アプリ」から |
-| `OnseiMan-<版>-Windows.zip` | 好きな場所に展開して、`start_client.bat` をダブルクリック |
+| `onseiman-windows-x64.exe`（Windows クライアント） | 任意のフォルダに `onseiman.exe` として配置し、`client/web/` と一緒にして起動 |
+| `onseiman-server-windows-x64.exe`（Windows 認識サーバー） | 別 PC で音声認識を担当させたい場合に起動（`server_windows.bat`） |
+| `onseiman-server-macos-arm64`（Mac 認識サーバー） | Apple Silicon Mac で `server_mac.command` から自動起動登録 |
 
-- Windows 10 / 11（64 ビット）で動きます。Python などを自分で入れる必要はありません。必要なものは、そのフォルダの中に自動で用意します（パソコン全体には何も入れません）
-- はじめて起動したとき、聞き取りの部品（約 0.7GB）をダウンロードします（数分。途中で止まっても、次は続きから）
-- インストーラーは、まだデジタル署名をしていません。「PC を保護しました」と出たら「詳細情報」→「実行」で進めてください
+- Windows 10 / 11（64 ビット）・macOS（Apple Silicon）で単体バイナリとして動きます。Python などのランタイムは不要です
+- はじめて起動したとき、聞き取りの部品（約 0.7GB）を自動でダウンロードします（SHA-256 検証付き）
+- コード署名は行っていないため、初回実行時に Windows SmartScreen / macOS Gatekeeper の確認が出た場合は許可して進めてください
 
 ## 使い方
 
@@ -38,10 +38,6 @@
 
 AI で整えたいときは、設定の「AI で整える」で頼む AI を選び、API キーを貼り付けて「試す」を押します。
 
-くわしくは [はじめに.md（Windows）](packaging/friend/はじめに.md) を見てください。
-AI に入れてもらう場合は、[AGENTS.md（入れ方）](packaging/friend/AGENTS.md) を渡して「これを読んで入れて」と頼めます。
-何が変わったかは [変更点.md](packaging/friend/変更点.md) にあります。
-
 ## 別のパソコンに任せる（なくても大丈夫）
 
 声を文字にする役を、家の別のパソコンに任せられます。アプリの「設定」→「声を文字にする場所」で「別のパソコン」を選ぶと、
@@ -50,28 +46,28 @@ AI に入れてもらう場合は、[AGENTS.md（入れ方）](packaging/friend/
 
 | 任せる側 | 準備 |
 |---|---|
-| Mac（Apple のチップ） | `OnseiMan-<版>-Mac.zip` を展開して `server_mac.command` をダブルクリック。Apple の GPU で、1 回 0.1 秒ほど。Mac を起動するたびに自動で動きます（やめるときは `server_mac_remove.command`） |
-| Windows | Windows 用の zip を展開して `server_windows.bat` をダブルクリック |
+| Mac（Apple のチップ） | `onseiman-server-macos-arm64` を `onseiman-server` として配置し `server_mac.command` を実行。Apple の GPU（Metal）で 1 回 0.1 秒ほど。Mac 起動時に自動起動します（やめるときは `server_mac_remove.command`） |
+| Windows | `onseiman-server-windows-x64.exe` を配置して `server_windows.bat` を実行 |
 
 - Mac で「開けません」と出たら、`server_mac.command` を右クリック→「開く」。それでも開けないときは「システム設定」→「プライバシーとセキュリティ」の「このまま開く」
 - 認識役の Mac には、iPhone のショートカットから声を送って、文字にしてもらうこともできます（[はじめに.md（Mac）](packaging/mac/はじめに.md)）
 
-## 開発
+## 開発（完全 Rust ワークスペース）
 
-- 作業の決まり: [AGENTS.md](AGENTS.md)、詳細仕様: [docs/src/spec.md](docs/src/spec.md)
-- テスト: `.venv\Scripts\python.exe -m unittest discover -s tests`
-- 配る zip（Windows 用・Mac 用）を作る: `python packaging\make_friend_package.py`（`build_dist\` にできる）
-- インストーラーを作る: `python packaging\installer\build_installer.py`（Inno Setup 6 が要る）
-- 公開する: `python packaging\release.py`（テスト・zip・インストーラー・タグ・GitHub への公開を全部）
+- 詳細仕様: [docs/src/spec.md](docs/src/spec.md)
+- 検証: `cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`
+- ビルド: `cargo build --release -p onseiman-app -p onseiman-server`
 
 | 場所 | 中身 |
 |---|---|
-| `client/` | Windows のアプリ（録音・貼り付け・表示・設定画面 `client/web/`） |
-| `shared/` | 聞き取り（`speechcpp_engine.py`・`speechcpp_setup.py`）・辞書・文の整え方など、アプリと認識役で共通の部品 |
-| `server/` | 認識役（Mac の準備: `setup_macos.sh` / Windows: `start_server.bat`。直下のダブルクリック用から呼ばれる） |
-| `tools/` | 準備（`install.ps1`）と更新（`update.ps1`）など |
-| `tests/` | 自動テスト |
-| `packaging/` | 配る説明（`friend/` は Windows 用、`mac/` は Mac 用）と、zip・インストーラー（`installer/`）・公開（`release.py`）の作り方 |
+| `crates/onseiman-core` | 設定・辞書・言いよどみ除去・表記正規化・音声コマンド・区切り・履歴・学習候補・辞書同期・AI 仕上げ |
+| `crates/onseiman-speech` | `speech.cpp` ワーカー連携・モデル自動取得（SHA-256 検証付き） |
+| `crates/onseiman-server` | 認識サーバー（Windows x64 / macOS arm64） |
+| `crates/onseiman-platform` | OS 固有土台（グローバルフック・録音・ミュート・トレイ・オーバーレイ・UIA 自動学習・貼付・DPAPI / Keychain・自動起動） |
+| `crates/onseiman-app` | クライアント本体（`onseiman`、`client/web/` を `127.0.0.1` で配信） |
+| `client/web/` | 管理画面 HTML / CSS / JS |
+| `server/` | Mac サーバー自動起動登録スクリプト（`setup_macos.sh`） |
+| `docs/` | 仕様書・紹介ページ |
 
 `config.json`・`dict.json`・`logs/`（設定・辞書・履歴と録音）は利用者のデータなので、リポジトリには入れません。
 

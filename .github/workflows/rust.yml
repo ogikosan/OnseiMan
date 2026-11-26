@@ -2,7 +2,7 @@ name: Rust CI & Build
 
 on:
   push:
-    branches: [feature/rust, develop, main]
+    branches: [main]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
