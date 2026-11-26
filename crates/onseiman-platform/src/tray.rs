@@ -6,6 +6,16 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayEvent {
     OpenUi,
+    OpenDict,
+    OpenSettings,
+    OpenHelp,
+    CopyLast,
+    RetranscribeLast,
+    CaptureHotkey,
+    CaptureAiHotkey,
+    OpenLog,
+    OpenHistoryTxt,
+    CheckUpdate,
     Quit,
 }
 
@@ -30,15 +40,26 @@ mod imp {
         AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
         DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
         LoadIconW, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
-        TrackPopupMenu, TranslateMessage, HICON, ICONINFO, IDI_APPLICATION, MF_SEPARATOR,
-        MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY,
-        WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
+        SetMenuDefaultItem, TrackPopupMenu, TranslateMessage, HICON, ICONINFO, IDI_APPLICATION,
+        MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, WM_APP, WM_CLOSE,
+        WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
     };
 
     const WM_TRAY_ICON: u32 = WM_APP + 20;
     const WM_TRAY_UPDATE: u32 = WM_APP + 21;
+    const CMD_STATUS: usize = 1000;
     const CMD_OPEN_UI: usize = 1001;
     const CMD_QUIT: usize = 1002;
+    const CMD_COPY_LAST: usize = 1003;
+    const CMD_RETRANSCRIBE_LAST: usize = 1004;
+    const CMD_CAPTURE_HOTKEY: usize = 1005;
+    const CMD_CAPTURE_AI_HOTKEY: usize = 1006;
+    const CMD_OPEN_DICT: usize = 1007;
+    const CMD_OPEN_SETTINGS: usize = 1008;
+    const CMD_OPEN_HELP: usize = 1009;
+    const CMD_OPEN_LOG: usize = 1010;
+    const CMD_OPEN_HISTORY_TXT: usize = 1011;
+    const CMD_CHECK_UPDATE: usize = 1012;
 
     struct PendingIcon {
         rgb: (u8, u8, u8),
@@ -48,6 +69,7 @@ mod imp {
     static TRAY_TX: OnceLock<Mutex<Option<Sender<TrayEvent>>>> = OnceLock::new();
     static PENDING_ICON: OnceLock<Mutex<Option<PendingIcon>>> = OnceLock::new();
     static CUR_ICON: OnceLock<Mutex<(isize, bool)>> = OnceLock::new();
+    static STATUS_TEXT: OnceLock<Mutex<String>> = OnceLock::new();
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -183,11 +205,59 @@ mod imp {
                 } else if ev == WM_RBUTTONUP {
                     let menu = CreatePopupMenu();
                     if !menu.is_null() {
-                        let open_txt = wide("管理画面を開く");
-                        let quit_txt = wide("終了");
-                        AppendMenuW(menu, MF_STRING, CMD_OPEN_UI, open_txt.as_ptr());
-                        AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
-                        AppendMenuW(menu, MF_STRING, CMD_QUIT, quit_txt.as_ptr());
+                        let status_str = STATUS_TEXT
+                            .get()
+                            .and_then(|m| m.lock().ok())
+                            .map(|g| g.clone())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| "OnseiMan".to_string());
+                        let items: &[(u32, usize, Option<&str>)] = &[
+                            (MF_STRING | MF_GRAYED, CMD_STATUS, Some(&status_str)),
+                            (MF_SEPARATOR, 0, None),
+                            (MF_STRING, CMD_OPEN_UI, Some("OnseiMan の画面を開く")),
+                            (MF_STRING, CMD_COPY_LAST, Some("直前に入れた文をコピー")),
+                            (
+                                MF_STRING,
+                                CMD_RETRANSCRIBE_LAST,
+                                Some("直前の録音をもう一度文字にする"),
+                            ),
+                            (MF_SEPARATOR, 0, None),
+                            (
+                                MF_STRING,
+                                CMD_CAPTURE_HOTKEY,
+                                Some("録音のキーを変える（次に押したキーにする）"),
+                            ),
+                            (
+                                MF_STRING,
+                                CMD_CAPTURE_AI_HOTKEY,
+                                Some("AI で整えるキーを変える（次に押したキーにする）"),
+                            ),
+                            (MF_STRING, CMD_OPEN_DICT, Some("辞書")),
+                            (MF_STRING, CMD_OPEN_SETTINGS, Some("設定")),
+                            (MF_STRING, CMD_OPEN_HELP, Some("使い方")),
+                            (
+                                MF_STRING,
+                                CMD_OPEN_LOG,
+                                Some("動きの記録を開く（困ったときに作った人へ）"),
+                            ),
+                            (
+                                MF_STRING,
+                                CMD_OPEN_HISTORY_TXT,
+                                Some("入れた文の一覧を開く（テキスト）"),
+                            ),
+                            (MF_STRING, CMD_CHECK_UPDATE, Some("更新を確認")),
+                            (MF_SEPARATOR, 0, None),
+                            (MF_STRING, CMD_QUIT, Some("終了")),
+                        ];
+                        for &(flags, id, label) in items {
+                            if let Some(txt) = label {
+                                let w = wide(txt);
+                                AppendMenuW(menu, flags, id, w.as_ptr());
+                            } else {
+                                AppendMenuW(menu, flags, id, ptr::null());
+                            }
+                        }
+                        SetMenuDefaultItem(menu, CMD_OPEN_UI as u32, 0);
                         let mut pt = POINT { x: 0, y: 0 };
                         GetCursorPos(&mut pt);
                         SetForegroundWindow(hwnd);
@@ -206,11 +276,23 @@ mod imp {
                 return 0;
             }
             WM_COMMAND => {
-                let id = wparam & 0xFFFF;
-                if id == CMD_OPEN_UI {
-                    emit(TrayEvent::OpenUi);
-                } else if id == CMD_QUIT {
-                    emit(TrayEvent::Quit);
+                let ev = match wparam & 0xFFFF {
+                    CMD_OPEN_UI => Some(TrayEvent::OpenUi),
+                    CMD_COPY_LAST => Some(TrayEvent::CopyLast),
+                    CMD_RETRANSCRIBE_LAST => Some(TrayEvent::RetranscribeLast),
+                    CMD_CAPTURE_HOTKEY => Some(TrayEvent::CaptureHotkey),
+                    CMD_CAPTURE_AI_HOTKEY => Some(TrayEvent::CaptureAiHotkey),
+                    CMD_OPEN_DICT => Some(TrayEvent::OpenDict),
+                    CMD_OPEN_SETTINGS => Some(TrayEvent::OpenSettings),
+                    CMD_OPEN_HELP => Some(TrayEvent::OpenHelp),
+                    CMD_OPEN_LOG => Some(TrayEvent::OpenLog),
+                    CMD_OPEN_HISTORY_TXT => Some(TrayEvent::OpenHistoryTxt),
+                    CMD_CHECK_UPDATE => Some(TrayEvent::CheckUpdate),
+                    CMD_QUIT => Some(TrayEvent::Quit),
+                    _ => None,
+                };
+                if let Some(ev) = ev {
+                    emit(ev);
                 }
                 return 0;
             }
@@ -264,6 +346,9 @@ mod imp {
 
     impl TrayIcon {
         pub fn start(tooltip: &str, tx: Sender<TrayEvent>) -> Self {
+            if let Ok(mut s) = STATUS_TEXT.get_or_init(|| Mutex::new(String::new())).lock() {
+                *s = tooltip.to_string();
+            }
             let lock = TRAY_TX.get_or_init(|| Mutex::new(None));
             if let Ok(mut g) = lock.lock() {
                 *g = Some(tx);
@@ -369,6 +454,9 @@ mod imp {
 
         /// トレイアイコンの色（RGB）とツールチップを動的に変更する。
         pub fn set_state(&self, rgb: (u8, u8, u8), tooltip: &str) {
+            if let Ok(mut s) = STATUS_TEXT.get_or_init(|| Mutex::new(String::new())).lock() {
+                *s = tooltip.to_string();
+            }
             let lock = PENDING_ICON.get_or_init(|| Mutex::new(None));
             if let Ok(mut g) = lock.lock() {
                 *g = Some(PendingIcon {

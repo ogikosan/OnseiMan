@@ -47,7 +47,9 @@ use tokio::net::TcpListener;
 use tokio::sync::Notify;
 
 use onseiman_app::pipeline::format_utterance;
-use onseiman_app::web_ui::{open_browser, router, AppContext};
+use onseiman_app::web_ui::{
+    open_browser, retranscribe_latest, router, sync_hotkey_from_config, AppContext,
+};
 
 struct Args {
     root: PathBuf,
@@ -155,10 +157,86 @@ async fn main() {
         let url_tray = url.clone();
         let profile = ctx.root_dir.join("logs").join("browser_profile");
         let shutdown_tray = Arc::clone(&shutdown);
+        let ctx_tray = ctx.clone();
+        let tray_for_menu = Arc::clone(&tray);
         thread::spawn(move || {
+            let open_path = |p: &Path| {
+                #[cfg(windows)]
+                {
+                    let _ = std::process::Command::new("explorer.exe").arg(p).spawn();
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = std::process::Command::new("open").arg(p).spawn();
+                }
+            };
             while let Ok(ev) = tray_rx.recv() {
                 match ev {
-                    TrayEvent::OpenUi => open_browser(&url_tray, Some(&profile)),
+                    TrayEvent::OpenUi => {
+                        open_browser(&format!("{url_tray}/#history"), Some(&profile))
+                    }
+                    TrayEvent::OpenDict => {
+                        open_browser(&format!("{url_tray}/#dict"), Some(&profile))
+                    }
+                    TrayEvent::OpenSettings | TrayEvent::CheckUpdate => {
+                        open_browser(&format!("{url_tray}/#settings"), Some(&profile))
+                    }
+                    TrayEvent::OpenHelp => {
+                        open_browser(&format!("{url_tray}/#help"), Some(&profile))
+                    }
+                    TrayEvent::CopyLast => {
+                        if let Ok(h) = ctx_tray.history.lock() {
+                            if let Some(first) = h.get_history().into_iter().next() {
+                                if !first.text.is_empty() {
+                                    let _ = onseiman_platform::clipboard::set_text(&first.text);
+                                }
+                            }
+                        }
+                    }
+                    TrayEvent::RetranscribeLast => {
+                        let c = ctx_tray.clone();
+                        thread::spawn(move || {
+                            let _ = retranscribe_latest(&c);
+                        });
+                    }
+                    TrayEvent::CaptureHotkey => {
+                        let c = ctx_tray.clone();
+                        let t = Arc::clone(&tray_for_menu);
+                        GlobalHotkey::capture_next(move |captured| {
+                            if let Some(name) = captured {
+                                let mut cfg =
+                                    onseiman_core::config::ClientConfig::load(&c.config_path);
+                                cfg.hotkey = name;
+                                let _ = cfg.save(&c.config_path);
+                                sync_hotkey_from_config(&cfg);
+                                if let Ok(mut g) = c.config.lock() {
+                                    *g = cfg;
+                                }
+                                restore_idle_tray(&c, &t);
+                            }
+                        });
+                    }
+                    TrayEvent::CaptureAiHotkey => {
+                        let c = ctx_tray.clone();
+                        GlobalHotkey::capture_next(move |captured| {
+                            if let Some(name) = captured {
+                                let mut cfg =
+                                    onseiman_core::config::ClientConfig::load(&c.config_path);
+                                cfg.ai_hotkey = name;
+                                let _ = cfg.save(&c.config_path);
+                                sync_hotkey_from_config(&cfg);
+                                if let Ok(mut g) = c.config.lock() {
+                                    *g = cfg;
+                                }
+                            }
+                        });
+                    }
+                    TrayEvent::OpenLog => {
+                        open_path(&ctx_tray.root_dir.join("logs").join("onseiman.log"));
+                    }
+                    TrayEvent::OpenHistoryTxt => {
+                        open_path(&ctx_tray.root_dir.join("logs").join("history.txt"));
+                    }
                     TrayEvent::Quit => {
                         shutdown_tray.notify_one();
                         break;
@@ -186,8 +264,12 @@ async fn main() {
     let _hotkey_guard = start_hotkey_loop(ctx.clone(), Arc::clone(&overlay), Arc::clone(&tray));
 
     if args.open_ui {
+        let url_open = url.clone();
         let profile = ctx.root_dir.join("logs").join("browser_profile");
-        open_browser(&url, Some(&profile));
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            open_browser(&url_open, Some(&profile));
+        });
     }
 
     let app = router(ctx);

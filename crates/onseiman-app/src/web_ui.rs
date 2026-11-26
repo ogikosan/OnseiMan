@@ -1178,7 +1178,21 @@ async fn post_retry(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>)
     }
 }
 
-fn sync_hotkey_from_config(cfg: &ClientConfig) {
+pub fn retranscribe_latest(ctx: &Arc<AppContext>) -> Result<String, String> {
+    let latest_audio = {
+        let h = ctx.history.lock().unwrap();
+        h.get_history()
+            .into_iter()
+            .find(|e| !e.audio.is_empty())
+            .map(|e| e.audio)
+    };
+    let Some(name) = latest_audio else {
+        return Err("再認識できる録音がありません".into());
+    };
+    retranscribe_audio_file(ctx, &name)
+}
+
+pub fn sync_hotkey_from_config(cfg: &ClientConfig) {
     if let Ok(primary) = parse_binding(&cfg.hotkey) {
         let extra = if cfg.hotkey_extra.trim().is_empty() {
             None
@@ -1561,6 +1575,7 @@ pub fn open_browser(url: &str, profile_dir: Option<&FsPath>) {
                     "--disable-extensions",
                     "--disable-sync",
                     "--disable-background-networking",
+                    "--disable-features=msImplicitSignin,msEdgeSidebarV2,EdgeCollections,msEdgeShopping",
                 ]);
             }
             let _ = cmd.spawn();
