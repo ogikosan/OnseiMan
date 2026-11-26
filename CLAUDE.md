@@ -12,6 +12,7 @@
 start_client.bat                                   起動
 .venv\Scripts\python.exe -m unittest discover -s tests   テスト
 python packaging\make_friend_package.py            配る zip（Windows 用・Mac 用）を作る
+python packagingelease.py                        新しい版を公開する（テスト・zip・インストーラー・タグ・公開を全部）
 ```
 
 ## 注意点

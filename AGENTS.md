@@ -8,7 +8,9 @@
 - 認識まわりを変えたとき：付属の音声で実際に認識させて確かめる（`models/.../test_wavs/`。長い発話は複数をつないで試す）。
 - 画面（`client/web/`）を変えたとき：`node -e "new Function(require('fs').readFileSync('client/web/app.js','utf8'))"` で文法確認し、ヘッドレス Edge で撮影して見た目を確かめる。動いている OnseiMan と同じポートを取り合うので、試験用の Web サーバーは `_preferred_port = 0` で起動する。
 - 配る zip（Windows 用・Mac 用の 2 つ）：`python packaging\make_friend_package.py`（個人の情報が混ざっていたら作らない。確認する言葉は `packaging/private-patterns.txt`、公開しない）。
-- 公開：GitHub `ogikosan/OnseiMan`（公開リポジトリ）。利用者は `update.bat` で `main` の最新版に入れ替える。
+- 公開：GitHub `ogikosan/OnseiMan`（公開リポジトリ）。利用者はアプリの「今すぐ更新」か `update.bat` で `main` の最新版に入れ替える。
+  新しい版の公開は `python packagingelease.py`（版を上げて変更点.md に節を書いてから。テスト → zip 2 つ → インストーラー →
+  main を進める → タグ → GitHub に公開、を必ず全部やる。手で一部だけ出さない）。
   新しい版を出す手順：`client/version.py` を上げる → `packaging/friend/変更点.md` に追記 → テスト全件 OK →
   `develop` にコミット → `main` を早送りで合わせる → タグ `vX.Y.Z` → `git push origin main develop refs/tags/vX.Y.Z`。
   公開リポジトリなので、コミット前に `packaging/private-patterns.txt` の言葉が混ざっていないか必ず調べる。
