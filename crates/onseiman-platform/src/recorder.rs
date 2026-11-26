@@ -22,7 +22,8 @@ pub fn list_input_devices() -> Vec<String> {
     out
 }
 
-/// 任意のサンプルレートを 16kHz へ線形補間で変換する。
+/// 任意のサンプルレートを 16kHz へアンチエイリアス付きで変換する。
+/// ダウンサンプリング時（例: 48kHz→16kHz）は出力サンプル区間を平均化して折り返し雑音を防ぐ。
 pub fn resample_linear(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
     if samples.is_empty() || src_rate == 0 || dst_rate == 0 || src_rate == dst_rate {
         return samples.to_vec();
@@ -30,13 +31,36 @@ pub fn resample_linear(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32
     let ratio = src_rate as f64 / dst_rate as f64;
     let out_len = ((samples.len() as f64) / ratio).round().max(1.0) as usize;
     let mut out = Vec::with_capacity(out_len);
-    for i in 0..out_len {
-        let pos = i as f64 * ratio;
-        let idx = pos.floor() as usize;
-        let frac = (pos - idx as f64) as f32;
-        let a = samples[idx.min(samples.len() - 1)];
-        let b = samples[(idx + 1).min(samples.len() - 1)];
-        out.push(a + (b - a) * frac);
+    if ratio > 1.0 {
+        for i in 0..out_len {
+            let start = i as f64 * ratio;
+            let end = ((i + 1) as f64 * ratio).min(samples.len() as f64);
+            let s0 = start.floor() as usize;
+            let s1 = end.ceil() as usize;
+            let mut acc = 0.0f64;
+            let mut wsum = 0.0f64;
+            let hi_idx = s1.min(samples.len());
+            for (off, &sample) in samples[s0..hi_idx].iter().enumerate() {
+                let j = s0 + off;
+                let lo = (j as f64).max(start);
+                let hi = ((j + 1) as f64).min(end);
+                let w = (hi - lo).max(0.0);
+                if w > 0.0 {
+                    acc += sample as f64 * w;
+                    wsum += w;
+                }
+            }
+            out.push(if wsum > 0.0 { (acc / wsum) as f32 } else { 0.0 });
+        }
+    } else {
+        for i in 0..out_len {
+            let pos = i as f64 * ratio;
+            let idx = pos.floor() as usize;
+            let frac = (pos - idx as f64) as f32;
+            let a = samples[idx.min(samples.len() - 1)];
+            let b = samples[(idx + 1).min(samples.len() - 1)];
+            out.push(a + (b - a) * frac);
+        }
     }
     out
 }

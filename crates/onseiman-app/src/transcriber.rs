@@ -401,10 +401,10 @@ impl HybridTranscriber {
         let boundary = "----OnseiManRustBoundary7f3a9c";
         let mut body = Vec::with_capacity(wav_bytes.len() + 1024);
 
-        // file part
+        // audio part（onseiman-server はフィールド名 "audio" を受け付ける）
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(
-            b"Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n",
+            b"Content-Disposition: form-data; name=\"audio\"; filename=\"audio.wav\"\r\n",
         );
         body.extend_from_slice(b"Content-Type: audio/wav\r\n\r\n");
         body.extend_from_slice(wav_bytes);
@@ -419,12 +419,12 @@ impl HybridTranscriber {
             body.extend_from_slice(b"\r\n");
         }
 
-        // readings part
+        // keywords part（onseiman-server は読みヒントを "keywords" で受け付ける）
         if !readings.is_empty() {
             if let Ok(rjson) = serde_json::to_string(readings) {
                 body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
                 body.extend_from_slice(
-                    b"Content-Disposition: form-data; name=\"readings\"\r\n\r\n",
+                    b"Content-Disposition: form-data; name=\"keywords\"\r\n\r\n",
                 );
                 body.extend_from_slice(rjson.as_bytes());
                 body.extend_from_slice(b"\r\n");
