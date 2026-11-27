@@ -74,11 +74,9 @@ fn now_sec() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-fn agent(timeout: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(timeout)
-        .redirects(0)
-        .build()
+fn shared_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().redirects(0).build())
 }
 
 fn load_registration(root: &Path) -> Registration {
@@ -222,18 +220,22 @@ pub fn sign_out(root: &Path) -> Result<(), String> {
     let _g = refresh_lock().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(t) = load_tokens(root) {
         let reg = load_registration(root);
-        let endpoint = agent(Duration::from_secs(6))
+        let endpoint = shared_agent()
             .get(DISCOVERY_URL)
+            .timeout(Duration::from_secs(6))
             .call()
             .ok()
             .and_then(|r| r.into_json::<serde_json::Value>().ok())
             .and_then(|v| v["revocation_endpoint"].as_str().map(str::to_string));
         if let Some(url) = endpoint.filter(|u| u.starts_with("https://auth.openai.com/")) {
-            let _ = agent(Duration::from_secs(6)).post(&url).send_form(&[
-                ("token", t.refresh_token.as_str()),
-                ("token_type_hint", "refresh_token"),
-                ("client_id", &reg.client_id),
-            ]);
+            let _ = shared_agent()
+                .post(&url)
+                .timeout(Duration::from_secs(6))
+                .send_form(&[
+                    ("token", t.refresh_token.as_str()),
+                    ("token_type_hint", "refresh_token"),
+                    ("client_id", &reg.client_id),
+                ]);
         }
     }
     match std::fs::remove_file(tokens_path(root)) {
@@ -284,8 +286,9 @@ pub fn refresh_if_needed(root: &Path) {
 
 pub fn list_models(root: &Path) -> Result<Vec<String>, String> {
     let token = access_token(root)?;
-    let resp = agent(Duration::from_secs(15))
+    let resp = shared_agent()
         .get(&format!("{API}/models"))
+        .timeout(Duration::from_secs(15))
         .set("Authorization", &format!("Bearer {token}"))
         .call()
         .map_err(|e| format!("モデル一覧を取得できません: {e}"))?;
@@ -346,8 +349,9 @@ pub fn refine_dictation_with_context(
         if with_minimal_reasoning {
             body["reasoning"] = serde_json::json!({ "effort": "minimal" });
         }
-        agent(Duration::from_secs(35))
+        shared_agent()
             .post(&format!("{API}/responses"))
+            .timeout(Duration::from_secs(35))
             .set("Authorization", &format!("Bearer {token}"))
             .send_json(body)
             .map_err(Box::new)
@@ -501,8 +505,9 @@ fn check_id_token(id_token: &str, client_id: &str, nonce: &str) -> Result<IdClai
         return Err("想定外のIDトークン署名方式です".into());
     }
     let kid = header.kid.ok_or("IDトークンの署名鍵IDがありません")?;
-    let jwks: serde_json::Value = agent(Duration::from_secs(15))
+    let jwks: serde_json::Value = shared_agent()
         .get(JWKS_URL)
+        .timeout(Duration::from_secs(15))
         .call()
         .map_err(|e| format!("署名鍵を取得できません: {e}"))?
         .into_json()
@@ -547,8 +552,9 @@ fn check_id_token(id_token: &str, client_id: &str, nonce: &str) -> Result<IdClai
 }
 
 fn post_form<T: serde::de::DeserializeOwned>(form: &[(&str, &str)]) -> Result<T, String> {
-    match agent(Duration::from_secs(15))
+    match shared_agent()
         .post(TOKEN_URL)
+        .timeout(Duration::from_secs(15))
         .send_form(form)
     {
         Ok(r) => r

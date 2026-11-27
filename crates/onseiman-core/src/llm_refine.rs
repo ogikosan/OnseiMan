@@ -3,9 +3,19 @@
 //! OpenAI / Anthropic / Gemini / Ollama（または OpenAI 互換 API）の 4 つに対応。
 //! クラウド API ではリダイレクトを追わない（API キーの流出防止）＋ Gemini のモデル名を URL エンコードする。
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+
+const OLLAMA_PROBE_TTL: Duration = Duration::from_secs(300);
+
+fn shared_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    // リダイレクト先へ API キーや本文が送られないようリダイレクトを止めた共有プールを使う
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().redirects(0).build())
+}
 
 pub const OPENAI_URL: &str = "https://api.openai.com/v1";
 pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1";
@@ -102,23 +112,15 @@ impl LlmRefiner {
         })
     }
 
-    fn agent(&self) -> ureq::Agent {
-        // リダイレクト先へ API キーや本文が送られないよう全プロバイダでリダイレクトを止める
-        ureq::AgentBuilder::new()
-            .timeout(self.timeout)
-            .redirects(0)
-            .build()
-    }
-
     fn post_json(
         &self,
         url: &str,
         payload: Value,
         headers: &[(&str, &str)],
     ) -> Result<Value, String> {
-        let mut req = self
-            .agent()
+        let mut req = shared_agent()
             .post(url)
+            .timeout(self.timeout)
             .set("Content-Type", "application/json");
         for &(k, v) in headers {
             req = req.set(k, v);
@@ -139,15 +141,29 @@ impl LlmRefiner {
         if self.base_url.ends_with("/v1") || self.base_url.contains("/v1/") {
             return false;
         }
+        static CACHE: OnceLock<Mutex<HashMap<String, (bool, Instant)>>> = OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Ok(guard) = cache.lock() {
+            if let Some(&(res, ts)) = guard.get(&self.base_url) {
+                if ts.elapsed() < OLLAMA_PROBE_TTL {
+                    return res;
+                }
+            }
+        }
         let url = format!("{}/api/tags", self.base_url);
-        ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(2))
-            .redirects(0)
-            .build()
+        let res = shared_agent()
             .get(&url)
+            .timeout(Duration::from_secs(2))
             .call()
             .map(|r| r.status() == 200)
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if let Ok(mut guard) = cache.lock() {
+            if guard.len() >= 32 {
+                guard.retain(|_, (_, ts)| ts.elapsed() < OLLAMA_PROBE_TTL);
+            }
+            guard.insert(self.base_url.clone(), (res, Instant::now()));
+        }
+        res
     }
 
     pub fn refine_dictation(&self, spoken_text: &str) -> Result<LlmResult, String> {

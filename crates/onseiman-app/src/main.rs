@@ -613,12 +613,8 @@ fn start_hotkey_loop(
             let live_opt = sess.live.take();
             let mut adaptive_seg = sess.adaptive_seg.take();
             thread::spawn(move || {
-                let norm_samples = normalize_voice_dynamics(&all_samples, 16_000);
-                let wav = encode_wav(&norm_samples, 16_000);
                 let ts = Local::now().format("%Y%m%d_%H%M%S").to_string();
                 let audio_name = format!("{ts}.wav");
-                let _ = std::fs::create_dir_all(&ctx_job.audio_dir);
-                let _ = std::fs::write(ctx_job.audio_dir.join(&audio_name), &wav);
 
                 let cfg = ctx_job.config.lock().unwrap().clone();
                 let dict = ctx_job.dict.lock().unwrap().clone();
@@ -627,6 +623,14 @@ fn start_hotkey_loop(
 
                 let rec_res: Result<(String, String, f64), String> = match live_opt {
                     Some(live) if live.segment_count() > 0 => {
+                        let save_dir = ctx_job.audio_dir.clone();
+                        let save_name = audio_name.clone();
+                        thread::spawn(move || {
+                            let norm = normalize_voice_dynamics(&all_samples, 16_000);
+                            let wav = encode_wav(&norm, 16_000);
+                            let _ = std::fs::create_dir_all(&save_dir);
+                            let _ = std::fs::write(save_dir.join(&save_name), &wav);
+                        });
                         if let Some(ref mut seg) = adaptive_seg {
                             for c in seg.push(&tail_samples) {
                                 live.submit(c);
@@ -640,17 +644,24 @@ fn start_hotkey_loop(
                         live.finish()
                             .map(|r| (r.text, r.backend, r.wait_ms.max(r.asr_ms_total)))
                     }
-                    Some(mut live) => {
-                        live.cancel();
+                    other_live => {
+                        if let Some(mut live) = other_live {
+                            live.cancel();
+                        }
+                        let norm_samples = normalize_voice_dynamics(&all_samples, 16_000);
+                        let wav = Arc::new(encode_wav(&norm_samples, 16_000));
+                        let save_dir = ctx_job.audio_dir.clone();
+                        let save_name = audio_name.clone();
+                        let save_wav = Arc::clone(&wav);
+                        thread::spawn(move || {
+                            let _ = std::fs::create_dir_all(&save_dir);
+                            let _ = std::fs::write(save_dir.join(&save_name), save_wav.as_slice());
+                        });
                         ctx_job
                             .transcriber
                             .transcribe_wav(&cfg, &wav, &hotwords, &readings)
                             .map(|r| (r.text, r.backend, r.elapsed_ms))
                     }
-                    None => ctx_job
-                        .transcriber
-                        .transcribe_wav(&cfg, &wav, &hotwords, &readings)
-                        .map(|r| (r.text, r.backend, r.elapsed_ms)),
                 };
 
                 let mut showed_done = false;
@@ -794,7 +805,8 @@ fn start_hotkey_loop(
         };
 
         loop {
-            match rx.recv_timeout(Duration::from_millis(250)) {
+            let poll_ms = if active.is_some() { 100 } else { 250 };
+            match rx.recv_timeout(Duration::from_millis(poll_ms)) {
                 Ok(ev) => {
                     let is_hold = ctx
                         .config
@@ -856,25 +868,24 @@ fn start_hotkey_loop(
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // 最長録音時間（max_duration_sec）に達したら自動停止
-                    let max_dur = ctx
-                        .config
-                        .lock()
-                        .map(|c| c.max_duration_sec.max(5.0))
-                        .unwrap_or(180.0);
-                    let timed_out = active
-                        .as_ref()
-                        .is_some_and(|s| s.handle.elapsed_sec() >= max_dur);
-                    if timed_out {
-                        append_log(
-                            &ctx.root_dir,
-                            &format!("最長録音時間 ({max_dur:.0}s) に達したため自動停止"),
-                        );
-                        finish_rec(&ctx, &overlay, &mut active);
-                        continue;
-                    }
-                    // 適応型ノイズフロア＋末尾 200ms 余白のセグメンタで自然な無音区切りごとに先行文字起こし
                     if let Some(sess) = active.as_mut() {
+                        // 最長録音時間（max_duration_sec）に達したら自動停止
+                        let max_dur = ctx
+                            .config
+                            .lock()
+                            .map(|c| c.max_duration_sec.max(5.0))
+                            .unwrap_or(180.0);
+                        let total_elapsed = (sess.submitted_samples.len() as f64 / 16_000.0)
+                            + sess.handle.elapsed_sec();
+                        if total_elapsed >= max_dur {
+                            append_log(
+                                &ctx.root_dir,
+                                &format!("最長録音時間 ({max_dur:.0}s) に達したため自動停止"),
+                            );
+                            finish_rec(&ctx, &overlay, &mut active);
+                            continue;
+                        }
+                        // 適応型ノイズフロア＋末尾 200ms 余白のセグメンタで自然な無音区切りごとに先行文字起こし
                         if sess.live.is_some() && sess.handle.elapsed_sec() >= 0.4 {
                             let chunk = sess.handle.drain_16k();
                             if !chunk.is_empty() {

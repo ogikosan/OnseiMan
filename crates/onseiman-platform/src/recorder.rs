@@ -4,7 +4,7 @@
 //! キーを押す直前・直後の言い出し一音の欠落や WASAPI 起動待ち（200〜350ms）をなくす。
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -36,6 +36,22 @@ pub fn list_input_devices() -> Vec<String> {
 pub fn resample_linear(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
     if samples.is_empty() || src_rate == 0 || dst_rate == 0 || src_rate == dst_rate {
         return samples.to_vec();
+    }
+    let factor_u32 = src_rate / dst_rate;
+    if factor_u32 > 1 && factor_u32.checked_mul(dst_rate) == Some(src_rate) {
+        let factor = factor_u32 as usize;
+        let inv = 1.0f32 / factor as f32;
+        let chunks = samples.chunks_exact(factor);
+        let rem = chunks.remainder();
+        let take_rem = !rem.is_empty() && (rem.len() * 2 >= factor || samples.len() < factor);
+        let mut out = Vec::with_capacity(chunks.len() + usize::from(take_rem));
+        for c in chunks {
+            out.push(c.iter().sum::<f32>() * inv);
+        }
+        if take_rem {
+            out.push(rem.iter().sum::<f32>() / rem.len() as f32);
+        }
+        return out;
     }
     let ratio = src_rate as f64 / dst_rate as f64;
     let out_len = ((samples.len() as f64) / ratio).round().max(1.0) as usize;
@@ -81,8 +97,24 @@ struct SharedAudio {
     active_buf: Mutex<Vec<f32>>,
     ring: Mutex<VecDeque<f32>>,
     on_level: Mutex<Option<LevelCb>>,
-    last_cb: Mutex<Instant>,
+    started_at: Instant,
+    last_cb_ms: AtomicU64,
     src_rate: u32,
+}
+
+impl SharedAudio {
+    #[inline]
+    fn touch_cb(&self) {
+        let ms = self.started_at.elapsed().as_millis() as u64;
+        self.last_cb_ms.store(ms, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn since_last_cb(&self) -> Duration {
+        let now_ms = self.started_at.elapsed().as_millis() as u64;
+        let prev = self.last_cb_ms.load(Ordering::Relaxed);
+        Duration::from_millis(now_ms.saturating_sub(prev))
+    }
 }
 
 enum Cmd {
@@ -132,7 +164,8 @@ fn open_cpal_stream(device_name: Option<&str>) -> Result<StreamSlot, String> {
         active_buf: Mutex::new(Vec::with_capacity(src_rate as usize * 10)),
         ring: Mutex::new(VecDeque::with_capacity(preroll_cap + 2048)),
         on_level: Mutex::new(None),
-        last_cb: Mutex::new(Instant::now()),
+        started_at: Instant::now(),
+        last_cb_ms: AtomicU64::new(0),
         src_rate,
     });
     let sh_cb = Arc::clone(&shared);
@@ -141,9 +174,7 @@ fn open_cpal_stream(device_name: Option<&str>) -> Result<StreamSlot, String> {
         if mono.is_empty() {
             return;
         }
-        if let Ok(mut t) = sh_cb.last_cb.lock() {
-            *t = Instant::now();
-        }
+        sh_cb.touch_cb();
         if sh_cb.recording.load(Ordering::Acquire) {
             let cb_opt = sh_cb.on_level.lock().ok().and_then(|g| g.clone());
             if let Some(cb) = cb_opt {
@@ -168,48 +199,84 @@ fn open_cpal_stream(device_name: Option<&str>) -> Result<StreamSlot, String> {
         let _ = err;
     };
     let stream_cfg = config.config();
+    let ch = channels.max(1);
+    let inv_ch = 1.0f32 / ch as f32;
     let stream = match config.sample_format() {
-        SampleFormat::F32 => device.build_input_stream(
+        SampleFormat::F32 if ch == 1 => device.build_input_stream(
             &stream_cfg,
             move |data: &[f32], _| {
-                let mono: Vec<f32> = data
-                    .chunks(channels.max(1))
-                    .map(|c| c.iter().sum::<f32>() / c.len() as f32)
-                    .collect();
-                push_mono(&mono);
+                push_mono(data);
             },
             err_fn,
             None,
         ),
-        SampleFormat::I16 => device.build_input_stream(
-            &stream_cfg,
-            move |data: &[i16], _| {
-                let mono: Vec<f32> = data
-                    .chunks(channels.max(1))
-                    .map(|c| c.iter().map(|&v| v as f32 / 32768.0).sum::<f32>() / c.len() as f32)
-                    .collect();
-                push_mono(&mono);
-            },
-            err_fn,
-            None,
-        ),
-        SampleFormat::U16 => device.build_input_stream(
-            &stream_cfg,
-            move |data: &[u16], _| {
-                let mono: Vec<f32> = data
-                    .chunks(channels.max(1))
-                    .map(|c| {
-                        c.iter()
-                            .map(|&v| (v as f32 - 32768.0) / 32768.0)
-                            .sum::<f32>()
-                            / c.len() as f32
-                    })
-                    .collect();
-                push_mono(&mono);
-            },
-            err_fn,
-            None,
-        ),
+        SampleFormat::F32 => {
+            let mut scratch = Vec::<f32>::with_capacity(2048);
+            device.build_input_stream(
+                &stream_cfg,
+                move |data: &[f32], _| {
+                    scratch.clear();
+                    scratch.extend(data.chunks(ch).map(|c| {
+                        if c.len() == ch {
+                            c.iter().sum::<f32>() * inv_ch
+                        } else {
+                            c.iter().sum::<f32>() / c.len() as f32
+                        }
+                    }));
+                    push_mono(&scratch);
+                },
+                err_fn,
+                None,
+            )
+        }
+        SampleFormat::I16 => {
+            let mut scratch = Vec::<f32>::with_capacity(2048);
+            device.build_input_stream(
+                &stream_cfg,
+                move |data: &[i16], _| {
+                    scratch.clear();
+                    if ch == 1 {
+                        scratch.extend(data.iter().map(|&v| v as f32 / 32768.0));
+                    } else {
+                        scratch.extend(data.chunks(ch).map(|c| {
+                            let s: f32 = c.iter().map(|&v| v as f32 / 32768.0).sum();
+                            if c.len() == ch {
+                                s * inv_ch
+                            } else {
+                                s / c.len() as f32
+                            }
+                        }));
+                    }
+                    push_mono(&scratch);
+                },
+                err_fn,
+                None,
+            )
+        }
+        SampleFormat::U16 => {
+            let mut scratch = Vec::<f32>::with_capacity(2048);
+            device.build_input_stream(
+                &stream_cfg,
+                move |data: &[u16], _| {
+                    scratch.clear();
+                    if ch == 1 {
+                        scratch.extend(data.iter().map(|&v| (v as f32 - 32768.0) / 32768.0));
+                    } else {
+                        scratch.extend(data.chunks(ch).map(|c| {
+                            let s: f32 = c.iter().map(|&v| (v as f32 - 32768.0) / 32768.0).sum();
+                            if c.len() == ch {
+                                s * inv_ch
+                            } else {
+                                s / c.len() as f32
+                            }
+                        }));
+                    }
+                    push_mono(&scratch);
+                },
+                err_fn,
+                None,
+            )
+        }
         other => return Err(format!("未対応のマイク形式です: {other:?}")),
     }
     .map_err(|e| format!("マイクを開けませんでした: {e}"))?;
@@ -236,11 +303,7 @@ fn manager_tx() -> &'static Mutex<mpsc::Sender<Cmd>> {
                     Cmd::WarmUp { device_name, reply } => {
                         let reusable = slot.as_ref().is_some_and(|s| {
                             s.device_name == device_name
-                                && s.shared
-                                    .last_cb
-                                    .lock()
-                                    .map(|t| t.elapsed() < Duration::from_millis(1500))
-                                    .unwrap_or(false)
+                                && s.shared.since_last_cb() < Duration::from_millis(1500)
                         });
                         if reusable {
                             let _ = reply.send(Ok(()));
@@ -266,11 +329,7 @@ fn manager_tx() -> &'static Mutex<mpsc::Sender<Cmd>> {
                         let reusable = keep_open
                             && slot.as_ref().is_some_and(|s| {
                                 s.device_name == device_name
-                                    && s.shared
-                                        .last_cb
-                                        .lock()
-                                        .map(|t| t.elapsed() < Duration::from_millis(1500))
-                                        .unwrap_or(false)
+                                    && s.shared.since_last_cb() < Duration::from_millis(1500)
                             });
                         if !reusable {
                             slot = None;
@@ -452,5 +511,8 @@ mod tests {
         let out = resample_linear(&input, 48000, 16000);
         assert_eq!(out.len(), 16000);
         assert!((out[0] - 0.5).abs() < 1e-5);
+        assert_eq!(resample_linear(&[0.25f32; 5], 48000, 16000).len(), 2);
+        assert_eq!(resample_linear(&[0.25f32; 4], 48000, 16000).len(), 1);
+        assert_eq!(resample_linear(&[0.25f32; 1], 48000, 16000).len(), 1);
     }
 }

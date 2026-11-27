@@ -341,22 +341,30 @@ fn convert_m4a(raw: &[u8], limits: &Limits) -> Result<Vec<u8>, Failure> {
 /// 届いた音声を文字にする（止まって待つ処理なので、別の係の上で動かす）。
 fn recognize(
     st: &AppState,
-    mut raw: Vec<u8>,
+    raw: Bytes,
     hotwords: &str,
     readings: &HashMap<String, Vec<String>>,
 ) -> Result<Value, Failure> {
     let limits = &st.cfg.limits;
     // WAV と M4A だけを受け付ける（ほかの形式の読み取り処理に、外からのデータを渡さない）
-    if is_m4a(&raw) {
-        raw = convert_m4a(&raw, limits)?;
-    }
-    if raw.len() < 44 || &raw[..4] != b"RIFF" || &raw[8..12] != b"WAVE" {
-        return Err((StatusCode::BAD_REQUEST, "Only WAV or M4A audio is accepted"));
-    }
-    let (samples, sr) = match decode_wav(&raw, Some(limits.max_audio_sec)) {
-        Ok(v) => v,
-        Err(AudioError::TooLong) => return Err((StatusCode::PAYLOAD_TOO_LARGE, "Audio too long")),
-        Err(AudioError::Invalid) => return Err((StatusCode::BAD_REQUEST, "Invalid WAV audio")),
+    let (samples, sr) = {
+        let converted;
+        let wav: &[u8] = if is_m4a(&raw) {
+            converted = convert_m4a(&raw, limits)?;
+            &converted
+        } else {
+            &raw
+        };
+        if wav.len() < 44 || &wav[..4] != b"RIFF" || &wav[8..12] != b"WAVE" {
+            return Err((StatusCode::BAD_REQUEST, "Only WAV or M4A audio is accepted"));
+        }
+        match decode_wav(wav, Some(limits.max_audio_sec)) {
+            Ok(v) => v,
+            Err(AudioError::TooLong) => {
+                return Err((StatusCode::PAYLOAD_TOO_LARGE, "Audio too long"))
+            }
+            Err(AudioError::Invalid) => return Err((StatusCode::BAD_REQUEST, "Invalid WAV audio")),
+        }
     };
     drop(raw);
     if !(8000..=48000).contains(&sr) {
@@ -447,10 +455,8 @@ async fn transcribe(State(st): State<Shared>, mut form: Multipart) -> Response {
         return fail(StatusCode::SERVICE_UNAVAILABLE, "Server is shutting down");
     };
     let state = st.clone();
-    let done = tokio::task::spawn_blocking(move || {
-        recognize(&state, audio.to_vec(), &hotwords, &readings)
-    })
-    .await;
+    let done =
+        tokio::task::spawn_blocking(move || recognize(&state, audio, &hotwords, &readings)).await;
     match done {
         Ok(Ok(body)) => Json(body).into_response(),
         Ok(Err((status, detail))) => fail(status, detail),

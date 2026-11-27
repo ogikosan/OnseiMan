@@ -109,14 +109,17 @@ struct State {
 
 pub struct HybridTranscriber {
     root_dir: PathBuf,
+    http_agent: ureq::Agent,
     state: Mutex<State>,
     local_engine: Mutex<Option<Arc<SpeechEngine>>>,
 }
 
 impl HybridTranscriber {
     pub fn new(root_dir: PathBuf) -> Self {
+        let http_agent = ureq::AgentBuilder::new().redirects(0).build();
         Self {
             root_dir,
+            http_agent,
             state: Mutex::new(State {
                 last_backend_status: "待機中".into(),
                 ..Default::default()
@@ -205,11 +208,12 @@ impl HybridTranscriber {
     }
 
     fn probe_one(&self, base_url: &str, timeout_sec: f64) -> Option<ServerInfo> {
-        let agent = ureq::AgentBuilder::new()
+        let resp = self
+            .http_agent
+            .get(&format!("{base_url}/health"))
             .timeout(Duration::from_secs_f64(timeout_sec.clamp(0.5, 2.0)))
-            .redirects(0)
-            .build();
-        let resp = agent.get(&format!("{base_url}/health")).call().ok()?;
+            .call()
+            .ok()?;
         if resp.status() != 200 {
             return None;
         }
@@ -433,12 +437,10 @@ impl HybridTranscriber {
 
         body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
 
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs_f64(timeout_sec.clamp(2.0, 120.0)))
-            .redirects(0)
-            .build();
-        let resp = agent
+        let resp = self
+            .http_agent
             .post(&format!("{base_url}/transcribe"))
+            .timeout(Duration::from_secs_f64(timeout_sec.clamp(2.0, 120.0)))
             .set(
                 "Content-Type",
                 &format!("multipart/form-data; boundary={boundary}"),
