@@ -180,24 +180,27 @@ mod imp {
             fg = unsafe { GetForegroundWindow() };
         }
         let _unused: INPUT = unsafe { zeroed() };
-        let prev = if restore_clipboard {
-            clipboard::get_text()
+        let snapshot = if restore_clipboard {
+            clipboard::ClipboardSnapshot::capture()
         } else {
             None
         };
-        if !clipboard::set_text(text) {
+        let Some(paste_seq) = clipboard::set_text_for_paste(text) else {
             return PasteResult {
                 ok: false,
                 reason: "clipboard_failed",
                 clipboard_kept: false,
                 hwnd: fg as isize,
             };
-        }
+        };
         if fg.is_null() {
+            if let Some(snap) = snapshot {
+                let _ = snap.restore(Some(paste_seq));
+            }
             return PasteResult {
                 ok: false,
                 reason: "no_window",
-                clipboard_kept: true,
+                clipboard_kept: false,
                 hwnd: 0,
             };
         }
@@ -205,21 +208,24 @@ mod imp {
             thread::sleep(Duration::from_millis(paste_delay_ms as u64));
         }
         if !send_paste_shortcut() {
+            if let Some(snap) = snapshot {
+                let _ = snap.restore(Some(paste_seq));
+            }
             return PasteResult {
                 ok: false,
                 reason: "sendinput_failed",
-                clipboard_kept: true,
+                clipboard_kept: false,
                 hwnd: fg as isize,
             };
         }
         if restore_clipboard {
-            if let Some(p) = prev {
+            if let Some(snap) = snapshot {
                 thread::sleep(Duration::from_millis(restore_delay_ms.max(150) as u64));
-                clipboard::set_text(&p);
+                let restored = snap.restore(Some(paste_seq));
                 return PasteResult {
                     ok: true,
                     reason: "pasted",
-                    clipboard_kept: false,
+                    clipboard_kept: !restored,
                     hwnd: fg as isize,
                 };
             }
