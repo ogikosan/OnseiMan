@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use onseiman_core::audio::decode_wav;
 use onseiman_core::config::ClientConfig;
-use onseiman_core::segmenter::{join_texts, split_on_pauses, SegmentOptions};
+use onseiman_core::segmenter::{join_segments, split_on_pauses_tagged, SegmentOptions};
 use onseiman_speech::{SpeechEngine, MAX_SEGMENT_SEC};
 use serde::{Deserialize, Serialize};
 
@@ -488,7 +488,7 @@ impl HybridTranscriber {
         let eng = self.ensure_local_engine(cfg)?;
         let (samples, sr) =
             decode_wav(wav_bytes, Some(300.0)).map_err(|e| format!("WAV エラー: {e:?}"))?;
-        let pieces = split_on_pauses(
+        let pieces = split_on_pauses_tagged(
             &samples,
             sr,
             SegmentOptions {
@@ -500,13 +500,11 @@ impl HybridTranscriber {
         let mut texts = Vec::with_capacity(pieces.len());
         for piece in pieces {
             let (t, _ms) = eng
-                .transcribe(&piece, sr, &hw_csv, readings)
+                .transcribe(&piece.samples, sr, &hw_csv, readings)
                 .map_err(|e| format!("ローカル認識エラー: {e}"))?;
-            if !t.trim().is_empty() {
-                texts.push(t);
-            }
+            texts.push((t, piece.cut));
         }
-        Ok(join_texts(&texts))
+        Ok(join_segments(&texts))
     }
 }
 

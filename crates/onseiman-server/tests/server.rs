@@ -294,6 +294,7 @@ fn long_audio_is_split_at_pauses() {
     let text = body["text"].as_str().unwrap();
     assert_eq!(text.matches("こんにちは").count(), 4, "{text}");
     assert!(text.contains("7秒"), "{text}");
+    assert!(text.contains("7秒。こんにちは"), "{text}");
 }
 
 #[test]

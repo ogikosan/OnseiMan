@@ -23,7 +23,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use onseiman_core::audio::{decode_wav, AudioError};
 use onseiman_core::dict_format::{clean_data, valid_name};
-use onseiman_core::segmenter::{join_texts, split_on_pauses, SegmentOptions};
+use onseiman_core::segmenter::{
+    join_segments, split_on_pauses_tagged, AudioSegment, CutKind, SegmentOptions,
+};
 use onseiman_speech::{SpeechEngine, MAX_SEGMENT_SEC};
 use serde_json::{json, Map, Value};
 use tokio::sync::Semaphore;
@@ -382,24 +384,27 @@ fn recognize(
             min_segment_sec: (MAX_SEGMENT_SEC * 0.5).min(4.0),
             ..SegmentOptions::default()
         };
-        split_on_pauses(&samples, sr, options)
+        split_on_pauses_tagged(&samples, sr, options)
     } else {
-        vec![samples]
+        vec![AudioSegment {
+            samples,
+            cut: CutKind::End,
+        }]
     };
     let mut texts = Vec::with_capacity(parts.len());
     let mut elapsed_ms = 0.0;
     for part in &parts {
         let (text, ms) = st
             .engine
-            .transcribe(part, sr, hotwords, readings)
+            .transcribe(&part.samples, sr, hotwords, readings)
             .map_err(|e| {
                 log!("聞き取れませんでした: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "Recognition failed")
             })?;
-        texts.push(text);
+        texts.push((text, part.cut));
         elapsed_ms += ms;
     }
-    let text = join_texts(&texts);
+    let text = join_segments(&texts);
     // 話した内容はログに残さない（文字数だけ）
     log!(
         "認識完了 ({elapsed_ms:.0} ms, provider={provider}, {seconds:.2}s audio, {}文字)",

@@ -8,7 +8,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
-use onseiman_core::segmenter::join_texts;
+use onseiman_core::segmenter::{join_segments, CutKind};
 
 #[derive(Debug, Clone)]
 pub struct SegmentRecognition {
@@ -29,6 +29,7 @@ pub struct LiveResult {
 struct SharedState {
     samples: BTreeMap<usize, Vec<f32>>,
     texts: BTreeMap<usize, String>,
+    cuts: BTreeMap<usize, CutKind>,
     errors: BTreeMap<usize, String>,
     backend: String,
     asr_ms: f64,
@@ -53,6 +54,7 @@ impl LiveTranscription {
         let state = Arc::new(Mutex::new(SharedState {
             samples: BTreeMap::new(),
             texts: BTreeMap::new(),
+            cuts: BTreeMap::new(),
             errors: BTreeMap::new(),
             backend: String::new(),
             asr_ms: 0.0,
@@ -85,6 +87,10 @@ impl LiveTranscription {
     }
 
     pub fn submit(&self, samples: Vec<f32>) {
+        self.submit_with_cut(samples, CutKind::Forced);
+    }
+
+    pub fn submit_with_cut(&self, samples: Vec<f32>, cut: CutKind) {
         let idx = {
             let Ok(mut g) = self.state.lock() else {
                 return;
@@ -95,6 +101,7 @@ impl LiveTranscription {
             let i = g.count;
             g.count += 1;
             g.samples.insert(i, samples.clone());
+            g.cuts.insert(i, cut);
             i
         };
         let _ = self.tx.send(Some((idx, samples)));
@@ -139,11 +146,16 @@ impl LiveTranscription {
                 g.errors.len()
             ));
         }
-        let texts: Vec<String> = (0..g.count)
-            .map(|i| g.texts.get(&i).cloned().unwrap_or_default())
+        let pairs: Vec<(String, CutKind)> = (0..g.count)
+            .map(|i| {
+                (
+                    g.texts.get(&i).cloned().unwrap_or_default(),
+                    g.cuts.get(&i).copied().unwrap_or(CutKind::Forced),
+                )
+            })
             .collect();
         Ok(LiveResult {
-            text: join_texts(&texts),
+            text: join_segments(&pairs),
             backend: g.backend.clone(),
             segments: g.count,
             wait_ms: t0.elapsed().as_secs_f64() * 1000.0,
@@ -184,11 +196,14 @@ fn text_so_far_inner(state: &Arc<Mutex<SharedState>>) -> String {
     let mut done = Vec::new();
     for i in 0..g.count {
         match g.texts.get(&i) {
-            Some(t) => done.push(t.clone()),
+            Some(t) => done.push((
+                t.clone(),
+                g.cuts.get(&i).copied().unwrap_or(CutKind::Forced),
+            )),
             None => break,
         }
     }
-    join_texts(&done)
+    join_segments(&done)
 }
 
 /// 直前と今回の認識結果で一致している先頭部分だけを返す（コンセンサス表示用）。
@@ -228,5 +243,26 @@ mod tests {
         assert_eq!(res.segments, 2);
         assert_eq!(res.text, "seg10 seg20");
         assert_eq!(res.backend, "test");
+    }
+
+    #[test]
+    fn live_transcription_inserts_period_on_pause_cuts() {
+        let rec: RecognizeFn = Arc::new(|samples: &[f32]| {
+            let text = if samples.len() == 10 {
+                "修正が上がってきました"
+            } else {
+                "対応を進めてください"
+            };
+            Ok(SegmentRecognition {
+                text: text.into(),
+                backend: "test".into(),
+                elapsed_ms: 5.0,
+            })
+        });
+        let live = LiveTranscription::start(rec, None);
+        live.submit_with_cut(vec![0.1; 10], CutKind::Pause);
+        live.submit_with_cut(vec![0.1; 20], CutKind::End);
+        let res = live.finish().unwrap();
+        assert_eq!(res.text, "修正が上がってきました。対応を進めてください");
     }
 }

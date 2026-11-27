@@ -67,7 +67,7 @@ fn default_root() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 use onseiman_core::audio::{encode_wav, normalize_voice_dynamics};
-use onseiman_core::segmenter::AdaptiveSegmenter;
+use onseiman_core::segmenter::{AdaptiveSegmenter, CutKind};
 use onseiman_core::voice_commands::is_undo_command;
 use onseiman_platform::audio_mute::AudioMuteGuard;
 use onseiman_platform::binding::parse_binding;
@@ -632,14 +632,14 @@ fn start_hotkey_loop(
                             let _ = std::fs::write(save_dir.join(&save_name), &wav);
                         });
                         if let Some(ref mut seg) = adaptive_seg {
-                            for c in seg.push(&tail_samples) {
-                                live.submit(c);
+                            for c in seg.push_tagged(&tail_samples) {
+                                live.submit_with_cut(c.samples, c.cut);
                             }
                             if let Some(c) = seg.flush() {
-                                live.submit(c);
+                                live.submit_with_cut(c, CutKind::End);
                             }
                         } else if tail_samples.len() >= 1600 {
-                            live.submit(tail_samples);
+                            live.submit_with_cut(tail_samples, CutKind::End);
                         }
                         live.finish()
                             .map(|r| (r.text, r.backend, r.wait_ms.max(r.asr_ms_total)))
@@ -891,9 +891,9 @@ fn start_hotkey_loop(
                             if !chunk.is_empty() {
                                 sess.submitted_samples.extend_from_slice(&chunk);
                                 if let Some(ref mut seg) = sess.adaptive_seg {
-                                    for ready_seg in seg.push(&chunk) {
+                                    for ready_seg in seg.push_tagged(&chunk) {
                                         if let Some(ref live) = sess.live {
-                                            live.submit(ready_seg);
+                                            live.submit_with_cut(ready_seg.samples, ready_seg.cut);
                                         }
                                     }
                                 }
