@@ -12,6 +12,27 @@ use std::time::{Duration, Instant};
 
 use chrono::Local;
 
+/// 録音開始・終了・キャンセル・エラーの効果音をバックグラウンドで鳴らす（旧 Python 版 `winsound.Beep` と同じ）。
+fn play_beep(enabled: bool, freq: u32, duration_ms: u32) {
+    if !enabled {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn Beep(dw_freq: u32, dw_duration: u32) -> i32;
+        }
+        thread::spawn(move || unsafe {
+            let _ = Beep(freq, duration_ms);
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (freq, duration_ms);
+    }
+}
+
 fn append_log(root: &Path, msg: &str) {
     let dir = root.join("logs");
     let _ = std::fs::create_dir_all(&dir);
@@ -47,13 +68,16 @@ fn default_root() -> PathBuf {
 }
 use onseiman_core::audio::{encode_wav, normalize_voice_dynamics};
 use onseiman_core::segmenter::AdaptiveSegmenter;
+use onseiman_core::voice_commands::is_undo_command;
 use onseiman_platform::audio_mute::AudioMuteGuard;
 use onseiman_platform::binding::parse_binding;
 use onseiman_platform::hotkey::{
     heartbeat as hook_heartbeat, GlobalHotkey, HotkeyConfig, HotkeyEvent,
 };
 use onseiman_platform::overlay::{OverlayState, RecordingOverlay};
-use onseiman_platform::paste::{capture_paste_target, paste_text, target_process_name};
+use onseiman_platform::paste::{
+    capture_paste_target, paste_text, send_undo_shortcut, target_process_name,
+};
 use onseiman_platform::recorder::{
     list_input_devices, start_recording_ex, warm_mic, RecordingHandle,
 };
@@ -535,10 +559,12 @@ fn start_hotkey_loop(
                         adaptive_seg,
                         submitted_samples: Vec::new(),
                     });
+                    play_beep(cfg.beep_enabled, if use_ai { 1040 } else { 880 }, 55);
                     eprintln!("録音開始 (ai={use_ai})");
                 }
                 Err(e) => {
                     drop(mute_guard);
+                    play_beep(cfg.beep_enabled, 300, 150);
                     eprintln!("録音開始エラー: {e}");
                 }
             }
@@ -552,18 +578,25 @@ fn start_hotkey_loop(
             };
             let tail_samples = sess.handle.stop();
             drop(sess._mute_guard); // 録音終了と同時に他アプリの音を戻す
+            let (beep_enabled, min_dur) = ctx
+                .config
+                .lock()
+                .map(|c| (c.beep_enabled, c.min_duration_sec.max(0.05)))
+                .unwrap_or((true, 0.15));
             let mut all_samples = std::mem::take(&mut sess.submitted_samples);
             all_samples.extend_from_slice(&tail_samples);
             let duration_sec = all_samples.len() as f64 / 16_000.0;
-            if duration_sec < 0.15 {
+            if duration_sec < min_dur {
                 if let Some(mut live) = sess.live.take() {
                     live.cancel();
                 }
+                play_beep(beep_enabled, 300, 120);
                 ov.set_state(OverlayState::Hidden);
                 restore_idle_tray(ctx, &tray);
                 eprintln!("録音が短すぎるためスキップ ({duration_sec:.2}s)");
                 return;
             }
+            play_beep(beep_enabled, 660, 50);
             let show_ov = ctx.config.lock().map(|c| c.show_overlay).unwrap_or(true);
             if show_ov {
                 ov.set_state(OverlayState::Transcribing);
@@ -623,109 +656,130 @@ fn start_hotkey_loop(
                 let mut showed_done = false;
                 match rec_res {
                     Ok((raw_text, backend, elapsed_ms)) => {
-                        let formatted = format_utterance_full(
-                            &raw_text,
-                            &cfg,
-                            &dict,
-                            use_ai,
-                            Some(&ctx_job.root_dir),
-                            target_app.as_deref(),
-                        );
-                        if !formatted.text.is_empty() {
-                            let pr = paste_text(
-                                &formatted.text,
-                                cfg.restore_clipboard,
-                                cfg.paste_delay_ms,
-                                cfg.clipboard_restore_delay_ms,
-                                target,
-                            );
+                        if cfg.undo_voice_command && is_undo_command(&raw_text) {
+                            let ok = send_undo_shortcut(target);
+                            play_beep(cfg.beep_enabled, if ok { 520 } else { 300 }, 65);
                             append_log(
                                 &ctx_job.root_dir,
-                                &format!(
-                                    "認識完了 [{backend}] {elapsed_ms:.0}ms ({duration_sec:.2}s) paste={} chars={}",
-                                    pr.reason,
-                                    formatted.text.chars().count()
-                                ),
+                                &format!("音声コマンド: 取り消し (Ctrl+Z ok={ok})"),
                             );
-                            if let Ok(mut h) = ctx_job.history.lock() {
-                                h.record_transcription(
-                                    &backend,
-                                    elapsed_ms,
-                                    duration_sec,
-                                    &raw_text,
+                        } else {
+                            let formatted = format_utterance_full(
+                                &raw_text,
+                                &cfg,
+                                &dict,
+                                use_ai,
+                                Some(&ctx_job.root_dir),
+                                target_app.as_deref(),
+                            );
+                            if !formatted.text.is_empty() {
+                                let pr = paste_text(
                                     &formatted.text,
-                                    &audio_name,
-                                    "",
-                                );
-                            }
-                            // UIA 手直し自動学習監視
-                            if cfg.learn_from_edits {
-                                let ctx_learn = Arc::clone(&ctx_job);
-                                let auto_cnt = cfg.auto_learn_after_count;
-                                watcher_job.watch_after_paste(
-                                    formatted.text.clone(),
+                                    cfg.restore_clipboard,
+                                    cfg.paste_delay_ms,
+                                    cfg.clipboard_restore_delay_ms,
                                     target,
-                                    move |before, after| {
-                                        let added =
-                                            if let Ok(mut cands) = ctx_learn.candidates.lock() {
+                                );
+                                append_log(
+                                    &ctx_job.root_dir,
+                                    &format!(
+                                        "認識完了 [{backend}] {elapsed_ms:.0}ms ({duration_sec:.2}s) paste={} chars={}",
+                                        pr.reason,
+                                        formatted.text.chars().count()
+                                    ),
+                                );
+                                if let Ok(mut h) = ctx_job.history.lock() {
+                                    h.record_transcription(
+                                        &backend,
+                                        elapsed_ms,
+                                        duration_sec,
+                                        &raw_text,
+                                        &formatted.text,
+                                        &audio_name,
+                                        "",
+                                    );
+                                }
+                                // UIA 手直し自動学習監視
+                                if cfg.learn_from_edits {
+                                    let ctx_learn = Arc::clone(&ctx_job);
+                                    let auto_cnt = cfg.auto_learn_after_count;
+                                    watcher_job.watch_after_paste(
+                                        formatted.text.clone(),
+                                        target,
+                                        move |before, after| {
+                                            let added = if let Ok(mut cands) =
+                                                ctx_learn.candidates.lock()
+                                            {
                                                 cands.record_edit(&before, &after)
                                             } else {
                                                 0
                                             };
-                                        if added > 0 {
-                                            append_log(
-                                                &ctx_learn.root_dir,
-                                                &format!("手直しから学習候補を {added} 件検知"),
-                                            );
-                                            if auto_cnt > 0 {
-                                                let to_promote: Vec<(String, String)> = ctx_learn
-                                                    .candidates
-                                                    .lock()
-                                                    .map(|c| {
-                                                        c.candidates()
-                                                            .iter()
-                                                            .filter(|it| it.count >= auto_cnt)
-                                                            .map(|it| {
-                                                                (it.src.clone(), it.dst.clone())
+                                            if added > 0 {
+                                                append_log(
+                                                    &ctx_learn.root_dir,
+                                                    &format!(
+                                                        "手直しから学習候補を {added} 件検知"
+                                                    ),
+                                                );
+                                                if auto_cnt > 0 {
+                                                    let to_promote: Vec<(String, String)> =
+                                                        ctx_learn
+                                                            .candidates
+                                                            .lock()
+                                                            .map(|c| {
+                                                                c.candidates()
+                                                                    .iter()
+                                                                    .filter(|it| {
+                                                                        it.count >= auto_cnt
+                                                                    })
+                                                                    .map(|it| {
+                                                                        (
+                                                                            it.src.clone(),
+                                                                            it.dst.clone(),
+                                                                        )
+                                                                    })
+                                                                    .collect()
                                                             })
-                                                            .collect()
-                                                    })
-                                                    .unwrap_or_default();
-                                                for (src, dst) in to_promote {
-                                                    if let Ok(mut c) = ctx_learn.candidates.lock() {
-                                                        c.approve(&src, &dst);
+                                                            .unwrap_or_default();
+                                                    for (src, dst) in to_promote {
+                                                        if let Ok(mut c) =
+                                                            ctx_learn.candidates.lock()
+                                                        {
+                                                            c.approve(&src, &dst);
+                                                        }
+                                                        onseiman_app::web_ui::add_replacement_to_dict(
+                                                            &ctx_learn, &src, &dst,
+                                                        );
                                                     }
-                                                    onseiman_app::web_ui::add_replacement_to_dict(
-                                                        &ctx_learn, &src, &dst,
-                                                    );
                                                 }
                                             }
+                                        },
+                                    );
+                                }
+                                if show_ov {
+                                    let snippet: String = formatted.text.chars().take(18).collect();
+                                    ov_job.set_state(OverlayState::Done { text: snippet });
+                                    showed_done = true;
+                                    let my_gen = ov_gen_job.load(Ordering::SeqCst);
+                                    let ov_hide = Arc::clone(&ov_job);
+                                    let gen_check = Arc::clone(&ov_gen_job);
+                                    thread::spawn(move || {
+                                        thread::sleep(Duration::from_millis(2600));
+                                        if gen_check.load(Ordering::SeqCst) == my_gen {
+                                            ov_hide.set_state(OverlayState::Hidden);
                                         }
-                                    },
+                                    });
+                                }
+                            } else {
+                                append_log(
+                                    &ctx_job.root_dir,
+                                    &format!("認識結果が空でした ({duration_sec:.2}s)"),
                                 );
                             }
-                            if show_ov {
-                                let snippet: String = formatted.text.chars().take(18).collect();
-                                ov_job.set_state(OverlayState::Done { text: snippet });
-                                showed_done = true;
-                                let my_gen = ov_gen_job.load(Ordering::SeqCst);
-                                let ov_hide = Arc::clone(&ov_job);
-                                let gen_check = Arc::clone(&ov_gen_job);
-                                thread::spawn(move || {
-                                    thread::sleep(Duration::from_millis(2600));
-                                    if gen_check.load(Ordering::SeqCst) == my_gen {
-                                        ov_hide.set_state(OverlayState::Hidden);
-                                    }
-                                });
-                            }
-                        } else {
-                            append_log(
-                                &ctx_job.root_dir,
-                                &format!("認識結果が空でした ({duration_sec:.2}s)"),
-                            );
                         }
                     }
                     Err(e) => {
+                        play_beep(cfg.beep_enabled, 260, 180);
                         append_log(&ctx_job.root_dir, &format!("認識エラー: {e}"));
                         if let Ok(mut h) = ctx_job.history.lock() {
                             h.record_failure(&e, duration_sec, &audio_name, "");
@@ -791,6 +845,9 @@ fn start_hotkey_loop(
                                 }
                                 let _ = sess.handle.stop();
                                 drop(sess._mute_guard);
+                                let beep_enabled =
+                                    ctx.config.lock().map(|c| c.beep_enabled).unwrap_or(true);
+                                play_beep(beep_enabled, 400, 90);
                                 overlay.set_state(OverlayState::Hidden);
                                 restore_idle_tray(&ctx, &tray);
                                 eprintln!("録音をキャンセルしました");
@@ -799,6 +856,23 @@ fn start_hotkey_loop(
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // 最長録音時間（max_duration_sec）に達したら自動停止
+                    let max_dur = ctx
+                        .config
+                        .lock()
+                        .map(|c| c.max_duration_sec.max(5.0))
+                        .unwrap_or(180.0);
+                    let timed_out = active
+                        .as_ref()
+                        .is_some_and(|s| s.handle.elapsed_sec() >= max_dur);
+                    if timed_out {
+                        append_log(
+                            &ctx.root_dir,
+                            &format!("最長録音時間 ({max_dur:.0}s) に達したため自動停止"),
+                        );
+                        finish_rec(&ctx, &overlay, &mut active);
+                        continue;
+                    }
                     // 適応型ノイズフロア＋末尾 200ms 余白のセグメンタで自然な無音区切りごとに先行文字起こし
                     if let Some(sess) = active.as_mut() {
                         if sess.live.is_some() && sess.handle.elapsed_sec() >= 0.4 {

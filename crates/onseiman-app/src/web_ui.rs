@@ -133,6 +133,7 @@ pub struct AppContext {
     pub mic_test: Mutex<MicTestState>,
     pub chatgpt_signing_in: Mutex<bool>,
     pub chatgpt_error: Mutex<String>,
+    pub dict_sync_status: Mutex<Value>,
 }
 
 impl AppContext {
@@ -164,6 +165,7 @@ impl AppContext {
             mic_test: Mutex::new(MicTestState::default()),
             chatgpt_signing_in: Mutex::new(false),
             chatgpt_error: Mutex::new(String::new()),
+            dict_sync_status: Mutex::new(json!({})),
         }
     }
 
@@ -510,8 +512,16 @@ async fn get_ui_request(State(ctx): State<Arc<AppContext>>) -> Response {
     json_no_store(StatusCode::OK, json!({ "tab": tab }))
 }
 
-async fn get_dict_sync() -> Response {
-    json_no_store(StatusCode::OK, json!({ "status": {}, "folders": [] }))
+async fn get_dict_sync(State(ctx): State<Arc<AppContext>>) -> Response {
+    let status = ctx
+        .dict_sync_status
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| json!({}));
+    json_no_store(
+        StatusCode::OK,
+        json!({ "status": status, "folders": detect_sync_folders() }),
+    )
 }
 
 async fn get_mic_test(State(ctx): State<Arc<AppContext>>) -> Response {
@@ -1266,6 +1276,17 @@ async fn post_settings(State(ctx): State<Arc<AppContext>>, Json(body): Json<Valu
         }
     }
 
+    if let Some(want_startup) = body.get("startup_enabled").and_then(|v| v.as_bool()) {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Err(e) = startup::set_enabled(want_startup, &exe, "OnseiMan") {
+                return json_no_store(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    json!({ "ok": false, "error": e }),
+                );
+            }
+        }
+    }
+
     if let Err(e) = cfg.save(&ctx.config_path) {
         return json_no_store(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1772,11 +1793,170 @@ async fn post_clear_ai_hotkey(State(ctx): State<Arc<AppContext>>) -> Response {
     json_no_store(StatusCode::OK, json!({ "ok": true }))
 }
 
-async fn post_dict_sync_now() -> Response {
-    json_no_store(
-        StatusCode::OK,
-        json!({ "ok": true, "result": "off", "status": {}, "folders": [] }),
-    )
+fn detect_sync_folders() -> Vec<Value> {
+    let mut out = Vec::new();
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    if home.is_empty() {
+        return out;
+    }
+    let h = PathBuf::from(&home);
+    let cands: [(&str, PathBuf); 4] = [
+        ("OneDrive", h.join("OneDrive")),
+        ("Dropbox", h.join("Dropbox")),
+        ("Google Drive", h.join("Google Drive")),
+        ("iCloud Drive", h.join("iCloudDrive")),
+    ];
+    for (label, p) in cands {
+        if p.is_dir() {
+            out.push(json!({ "label": label, "path": p.to_string_lossy() }));
+        }
+    }
+    out
+}
+
+fn dict_sync_base_path(ctx: &AppContext) -> PathBuf {
+    ctx.root_dir.join("logs").join("dict_sync_base.json")
+}
+
+fn run_dict_sync_blocking(ctx: &AppContext) -> Result<&'static str, String> {
+    use onseiman_core::dict_format::clean_data;
+    use onseiman_core::dict_sync::merge3;
+
+    let cfg = ctx.config.lock().unwrap().clone();
+    if cfg.dict_share.is_empty() {
+        return Ok("off");
+    }
+    let name = if valid_name(&cfg.dict_share_name) {
+        cfg.dict_share_name.clone()
+    } else {
+        "shared".to_string()
+    };
+    let local_val = Value::Object(read_json_obj(&ctx.dict_path));
+    let local_clean = clean_data(&local_val, None);
+
+    let base_path = dict_sync_base_path(ctx);
+    let base_val = std::fs::read_to_string(&base_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let base_target_key = format!("{}:{}:{}", cfg.dict_share, cfg.dict_share_folder, name);
+    let base_map = base_val.as_ref().and_then(|v| {
+        if v.get("target").and_then(Value::as_str) == Some(base_target_key.as_str()) {
+            v.get("data").and_then(Value::as_object).cloned()
+        } else {
+            None
+        }
+    });
+
+    let merged = match cfg.dict_share.as_str() {
+        "server" => {
+            let base_url = if !cfg.preferred_server.is_empty() {
+                cfg.preferred_server.clone()
+            } else {
+                cfg.server_urls
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| "認識役のパソコンが登録されていません".to_string())?
+            };
+            let url = format!("{}/dict/{name}", base_url.trim_end_matches('/'));
+            let agent = ureq::AgentBuilder::new()
+                .timeout(std::time::Duration::from_secs(10))
+                .redirects(0)
+                .build();
+            let get_resp: Value = agent
+                .get(&url)
+                .call()
+                .map_err(|e| format!("認識役につながりませんでした: {e}"))?
+                .into_json()
+                .map_err(|e| format!("辞書の読み取りに失敗しました: {e}"))?;
+            let remote_ver = get_resp.get("version").and_then(Value::as_i64).unwrap_or(0);
+            let remote_data = get_resp
+                .get("data")
+                .map(|v| clean_data(v, None))
+                .unwrap_or_default();
+            let merged = merge3(base_map.as_ref(), &local_clean, &remote_data);
+            let merged_clean = clean_data(&Value::Object(merged), None);
+            agent
+                .put(&url)
+                .send_json(json!({ "version": remote_ver, "data": merged_clean }))
+                .map_err(|e| format!("認識役への保存に失敗しました: {e}"))?;
+            merged_clean
+        }
+        "folder" => {
+            let folder = cfg.dict_share_folder.trim();
+            if folder.is_empty() {
+                return Err("共有フォルダが指定されていません".into());
+            }
+            let dir = PathBuf::from(folder);
+            if !dir.is_dir() {
+                return Err("共有フォルダが見つかりません".into());
+            }
+            let file_path = dir.join(format!("{name}.json"));
+            let remote_data = if file_path.is_file() {
+                let raw = std::fs::read_to_string(&file_path)
+                    .map_err(|e| format!("共有辞書を読めません: {e}"))?;
+                let v: Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
+                clean_data(&v, None)
+            } else {
+                Map::new()
+            };
+            let merged = merge3(base_map.as_ref(), &local_clean, &remote_data);
+            let merged_clean = clean_data(&Value::Object(merged), None);
+            write_json_obj(&file_path, &merged_clean)
+                .map_err(|e| format!("共有辞書を書き込めません: {e}"))?;
+            merged_clean
+        }
+        _ => return Ok("off"),
+    };
+
+    write_json_obj(&ctx.dict_path, &merged)
+        .map_err(|e| format!("ローカル辞書を保存できません: {e}"))?;
+    ctx.reload_dict();
+    let _ = std::fs::create_dir_all(ctx.root_dir.join("logs"));
+    let snap = json!({ "target": base_target_key, "data": merged });
+    if let Ok(s) = serde_json::to_string_pretty(&snap) {
+        let _ = std::fs::write(&base_path, s + "\n");
+    }
+    Ok("ok")
+}
+
+async fn post_dict_sync_now(State(ctx): State<Arc<AppContext>>) -> Response {
+    let ctx_job = ctx.clone();
+    let res = tokio::task::spawn_blocking(move || run_dict_sync_blocking(&ctx_job)).await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    match res {
+        Ok(Ok(tag)) => {
+            let st = if tag == "off" {
+                json!({})
+            } else {
+                json!({ "last_ok": now, "last_error": "" })
+            };
+            if let Ok(mut g) = ctx.dict_sync_status.lock() {
+                *g = st.clone();
+            }
+            json_no_store(
+                StatusCode::OK,
+                json!({ "ok": true, "result": tag, "status": st, "folders": detect_sync_folders() }),
+            )
+        }
+        Ok(Err(e)) => {
+            let st = json!({ "last_error": e });
+            if let Ok(mut g) = ctx.dict_sync_status.lock() {
+                *g = st.clone();
+            }
+            json_no_store(
+                StatusCode::BAD_REQUEST,
+                json!({ "ok": false, "error": e, "status": st, "folders": detect_sync_folders() }),
+            )
+        }
+        Err(e) => json_no_store(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "error": e.to_string() }),
+        ),
+    }
 }
 
 fn parse_semver(s: &str) -> Vec<u32> {

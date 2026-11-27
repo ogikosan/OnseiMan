@@ -27,6 +27,7 @@ mod imp {
 
     const MENU_MASK_VK: u16 = 0xE8;
     const VK_V: u16 = 0x56;
+    const VK_Z: u16 = 0x5A;
 
     fn key_input(vk: u16, up: bool) -> INPUT {
         INPUT {
@@ -102,6 +103,37 @@ mod imp {
             }
             thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    pub fn send_undo_shortcut(target_hwnd: isize) -> bool {
+        let mut fg = unsafe { GetForegroundWindow() };
+        if target_hwnd != 0 && fg.is_null() && unsafe { IsWindow(target_hwnd as _) } != 0 {
+            unsafe {
+                SetForegroundWindow(target_hwnd as _);
+            }
+            fg = unsafe { GetForegroundWindow() };
+        }
+        if fg.is_null() {
+            return false;
+        }
+        release_stuck_modifiers();
+        let seq = [
+            key_input(VK_CONTROL, false),
+            key_input(VK_Z, false),
+            key_input(VK_Z, true),
+            key_input(VK_CONTROL, true),
+        ];
+        let sent = unsafe { SendInput(seq.len() as u32, seq.as_ptr(), size_of::<INPUT>() as i32) };
+        if sent == seq.len() as u32 {
+            return true;
+        }
+        if sent > 0 {
+            let rel = [key_input(VK_CONTROL, true)];
+            unsafe {
+                SendInput(1, rel.as_ptr(), size_of::<INPUT>() as i32);
+            }
+        }
+        false
     }
 
     pub fn send_paste_shortcut() -> bool {
@@ -214,6 +246,17 @@ mod imp {
         None
     }
 
+    pub fn send_undo_shortcut(_target_hwnd: isize) -> bool {
+        Command::new("/usr/bin/osascript")
+            .args([
+                "-e",
+                r#"tell application "System Events" to keystroke "z" using command down"#,
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
     pub fn send_paste_shortcut() -> bool {
         Command::new("/usr/bin/osascript")
             .args([
@@ -294,6 +337,9 @@ mod imp {
     pub fn target_process_name(_target_hwnd: isize) -> Option<String> {
         None
     }
+    pub fn send_undo_shortcut(_target_hwnd: isize) -> bool {
+        false
+    }
     pub fn send_paste_shortcut() -> bool {
         false
     }
@@ -313,4 +359,6 @@ mod imp {
     }
 }
 
-pub use imp::{capture_paste_target, paste_text, send_paste_shortcut, target_process_name};
+pub use imp::{
+    capture_paste_target, paste_text, send_paste_shortcut, send_undo_shortcut, target_process_name,
+};
