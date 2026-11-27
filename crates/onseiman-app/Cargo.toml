@@ -14,7 +14,7 @@ axum = "0.8"
 base64 = "0.22"
 chrono = "0.4"
 getrandom = "0.2"
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 onseiman-core = { path = "../onseiman-core" }
 onseiman-platform = { path = "../onseiman-platform" }
 onseiman-speech = { path = "../onseiman-speech" }
