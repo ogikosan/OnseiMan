@@ -1326,7 +1326,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "onseiman-app"
-version = "2.0.12"
+version = "2.0.13"
 dependencies = [
  "axum",
  "base64",
@@ -1347,7 +1347,7 @@ dependencies = [
 
 [[package]]
 name = "onseiman-core"
-version = "2.0.12"
+version = "2.0.13"
 dependencies = [
  "chrono",
  "hound",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "onseiman-platform"
-version = "2.0.12"
+version = "2.0.13"
 dependencies = [
  "base64",
  "cpal",
@@ -1369,7 +1369,7 @@ dependencies = [
 
 [[package]]
 name = "onseiman-server"
-version = "2.0.12"
+version = "2.0.13"
 dependencies = [
  "axum",
  "chrono",
@@ -1384,7 +1384,7 @@ dependencies = [
 
 [[package]]
 name = "onseiman-speech"
-version = "2.0.12"
+version = "2.0.13"
 dependencies = [
  "base64",
  "onseiman-core",
