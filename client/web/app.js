@@ -1129,8 +1129,9 @@
     $("#set-hotkey").textContent = friendlyKey(s.hotkey);
     $("#set-hotkey-extra").textContent = s.hotkey_extra ? friendlyKey(s.hotkey_extra) : "なし";
     $("#btn-clr-hk2").hidden = !s.hotkey_extra;
-    $("#set-ai-hotkey").textContent = s.ai_hotkey ? friendlyKey(s.ai_hotkey) : "なし";
-    $("#btn-clr-ai").hidden = !s.ai_hotkey;
+    currentAiHotkey = s.ai_hotkey || "";
+    $("#set-ai-hotkey").textContent = currentAiHotkey ? friendlyKey(currentAiHotkey) : "なし";
+    $("#btn-clr-ai").hidden = !currentAiHotkey;
     $$('input[name="hotkey_mode"]').forEach((r) => { r.checked = r.value === s.hotkey_mode; });
     $("#set-auto-stop").checked = !!s.auto_stop_on_silence;
     $("#set-silence-sec").value = s.silence_stop_sec;
@@ -1180,9 +1181,19 @@
     loadDictSync();
     llmProviders = s.llm_providers || {};
     llmKeySet = s.llm_key_set || {};
+    llmKeyManualOpen = false;
     $("#set-llm-provider").value = s.llm_provider || "";
     $("#set-llm-url").value = s.llm_base_url || "";
     $("#set-llm-model").value = s.llm_model || "";
+    const kaSel = $("#set-llm-keep-alive");
+    const ka = (s.llm_keep_alive !== undefined && s.llm_keep_alive !== null) ? String(s.llm_keep_alive) : "30m";
+    if (![...kaSel.options].some((o) => o.value === ka)) {
+      const opt = document.createElement("option");
+      opt.value = ka;
+      opt.textContent = ka;
+      kaSel.appendChild(opt);
+    }
+    kaSel.value = ka;
     $("#set-llm-auto").checked = !!s.llm_auto_refine;
     $("#set-llm-key").value = "";
     renderLlmFields();
@@ -1191,7 +1202,13 @@
   // ---- AI で整える ----
   let llmProviders = {};
   let llmKeySet = {};
+  let llmKeyManualOpen = false;
+  let currentAiHotkey = "";
   let chatgptPollTimer = null;
+  function updateManualAiKeyVisibility() {
+    $("#llm-manual-key-wrap").hidden = $("#set-llm-auto").checked && !currentAiHotkey;
+  }
+  $("#set-llm-auto").addEventListener("change", updateManualAiKeyVisibility);
   async function refreshChatgptStatus() {
     try {
       const st = await api("/api/chatgpt/status");
@@ -1236,21 +1253,43 @@
     } catch (e) { toast(e.message, "err"); }
   });
 
+  function updateLlmKeyVisibility(own, isChatgpt, has) {
+    const showKey = !isChatgpt && (!own || has || llmKeyManualOpen);
+    $("#llm-key-wrap").hidden = !showKey;
+    $("#btn-llm-key-toggle").hidden = !(own && !has && !llmKeyManualOpen);
+  }
+  function updateActiveModelChip() {
+    const cur = $("#set-llm-model").value.trim();
+    for (const chip of $$("#llm-model-chips .model-chip")) {
+      chip.classList.toggle("active", chip.dataset.model === cur);
+    }
+  }
+  $("#btn-llm-key-toggle").addEventListener("click", () => {
+    llmKeyManualOpen = true;
+    const p = $("#set-llm-provider").value;
+    updateLlmKeyVisibility(p === "ollama", p === "chatgpt", !!llmKeySet[p]);
+    $("#set-llm-key").focus();
+  });
+
   function renderLlmFields() {
     const p = $("#set-llm-provider").value;
     const info = llmProviders[p] || {};
     const own = p === "ollama";
     const isChatgpt = p === "chatgpt";
+    $("#llm-intro").textContent = own
+      ? "話した文を自分のパソコンや LAN 内の AI（Ollama 等）で整えます。音声や文字が外部の会社に送られることはありません。"
+      : "話した文を AI に渡して、句読点や誤変換・言い直しを整えた、読みやすい文にします。使うときだけ、文字（音声ではありません）を選んだ AI に送ります。";
     $("#llm-fields").hidden = !p;
     $("#llm-chatgpt-row").hidden = !isChatgpt;
     $("#llm-chatgpt-note").hidden = !isChatgpt;
-    $("#llm-key-row").hidden = isChatgpt;
-    $("#llm-key-note").hidden = isChatgpt;
     $("#llm-url-row").hidden = !own;
+    $("#llm-keepalive-row").hidden = !own;
+    $("#llm-keepalive-note").hidden = !own;
     if (isChatgpt) {
       refreshChatgptStatus();
     }
     const has = !!llmKeySet[p];
+    updateLlmKeyVisibility(own, isChatgpt, has);
     $("#set-llm-key").placeholder = has ? "保存してあります（変えるときだけ貼り付け）" : (own ? "いらなければ空のまま" : "ここに貼り付け");
     $("#btn-llm-key-clear").hidden = !has;
     const note = $("#llm-key-note");
@@ -1261,10 +1300,15 @@
       a.href = info.key_url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "ここ";
       note.append(a, " で作れます（使った分だけ料金がかかります）。キーは、このパソコンでしか読めない形で保存します");
     } else if (own) {
-      note.textContent = "Ollama か、OpenAI と同じ形の API（…/v1）のアドレスを入れます。キーは要るときだけ";
+      note.textContent = "認証が必要なローカル API / プロキシを使うときだけ入力してください";
     }
-    $("#set-llm-model").placeholder = info.model || (own ? "空なら、入っている最初のモデル" : "");
-    $("#llm-test-out").hidden = true;
+    $("#set-llm-model").placeholder = info.model || (own ? "例: gemma4:e4b" : "");
+    $("#llm-model-chips").hidden = true;
+    $("#llm-model-chips").innerHTML = "";
+    const st = $("#llm-test-status");
+    st.textContent = "設定した AI に通信できるか確認します";
+    st.classList.remove("err-text", "ok-text");
+    updateManualAiKeyVisibility();
   }
   function llmBody() {
     return {
@@ -1272,13 +1316,16 @@
       model: $("#set-llm-model").value.trim(),
       base_url: $("#set-llm-url").value.trim(),
       api_key: $("#set-llm-key").value.trim(),
+      keep_alive: $("#set-llm-keep-alive").value,
     };
   }
   $("#set-llm-provider").addEventListener("change", () => {
+    llmKeyManualOpen = false;
     $("#set-llm-model").value = "";   // 頼む先を変えたら、その AI のはじめのモデルにする
     $("#llm-model-list").innerHTML = "";
     renderLlmFields();
   });
+  $("#set-llm-model").addEventListener("input", updateActiveModelChip);
   $("#btn-llm-key-clear").addEventListener("click", async () => {
     try {
       await saveSettings(true, { llm_api_key_clear: true });
@@ -1288,18 +1335,39 @@
   });
   $("#btn-llm-models").addEventListener("click", async () => {
     const btn = $("#btn-llm-models");
+    const chips = $("#llm-model-chips");
     btn.disabled = true;
     try {
       const r = await api("/api/llm/models", llmBody());
+      const models = r.models || [];
       const list = $("#llm-model-list");
       list.innerHTML = "";
-      for (const m of r.models || []) {
+      chips.innerHTML = "";
+      for (const m of models) {
         const o = document.createElement("option");
         o.value = m;
         list.appendChild(o);
       }
-      toast(r.models && r.models.length ? `${r.models.length} 個のモデルがあります。モデルの欄を押すと選べます` : "使えるモデルが見つかりませんでした");
-      $("#set-llm-model").focus();
+      for (const m of models.slice(0, 24)) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "model-chip";
+        chip.dataset.model = m;
+        chip.textContent = m;
+        chip.addEventListener("click", () => {
+          $("#set-llm-model").value = m;
+          updateActiveModelChip();
+          $("#set-llm-model").dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        chips.appendChild(chip);
+      }
+      chips.hidden = models.length === 0;
+      if (models.length === 1 && !$("#set-llm-model").value.trim()) {
+        $("#set-llm-model").value = models[0];
+        $("#set-llm-model").dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      updateActiveModelChip();
+      toast(models.length ? `${models.length} 個のモデルが見つかりました` : "使えるモデルが見つかりませんでした");
     } catch (err) {
       toast(err.message, "err");
     } finally { btn.disabled = false; }
@@ -1307,16 +1375,13 @@
   $("#btn-llm-test").addEventListener("click", async () => {
     const btn = $("#btn-llm-test");
     const st = $("#llm-test-status");
-    const out = $("#llm-test-out");
     btn.disabled = true;
-    st.textContent = "AI に頼んでいます...";
-    st.classList.remove("err-text");
-    out.hidden = true;
+    st.textContent = "接続を確認しています…（初回ロード時は数秒かかります）";
+    st.classList.remove("err-text", "ok-text");
     try {
       const r = await api("/api/llm/test", llmBody());
-      st.textContent = `✓ 使えます（${r.model}・${(r.ms / 1000).toFixed(1)} 秒）`;
-      out.innerHTML = `<b>話した文</b>${esc(r.before)}<b>AI で整えた文</b>${esc(r.text)}`;
-      out.hidden = false;
+      st.textContent = `✓ 接続できました（${r.model}・${(r.ms / 1000).toFixed(1)} 秒）`;
+      st.classList.add("ok-text");
     } catch (err) {
       st.textContent = err.message;
       st.classList.add("err-text");
@@ -1350,14 +1415,17 @@
     loadHeader();
   });
   $("#btn-cap-ai").addEventListener("click", async () => {
+    const before = currentAiHotkey;
     await api("/api/capture_ai_hotkey", {});
-    toast("AI のキーにしたいキーを押してください（Escで中止）");
-    setTimeout(loadSettings, 2500);
+    toast("10 秒以内に割り当てたいキーを押してください（Esc で中止）");
+    waitForKeyChange("ai_hotkey", before);
   });
   $("#btn-clr-ai").addEventListener("click", async () => {
     await api("/api/clear_ai_hotkey", {});
-    toast("AI のキーを外しました");
-    loadSettings();
+    currentAiHotkey = "";
+    toast("AI 整形キーを外しました");
+    await loadSettings();
+    updateManualAiKeyVisibility();
   });
 
   async function saveSettings(quiet = false, extra = {}) {
@@ -1399,6 +1467,7 @@
         llm_auto_refine: $("#set-llm-auto").checked,
         llm_base_url: $("#set-llm-url").value.trim(),
         llm_model: $("#set-llm-model").value.trim(),
+        llm_keep_alive: $("#set-llm-keep-alive").value,
         llm_api_key: $("#set-llm-key").value.trim(),
         ...extra,
       });
@@ -1448,6 +1517,7 @@
     const map = {
       ralt: "右Alt", lalt: "左Alt", alt: "Alt", rctrl: "右Ctrl", lctrl: "左Ctrl", ctrl: "Ctrl",
       rshift: "右Shift", lshift: "左Shift", rwin: "右Win", lwin: "左Win", capslock: "CapsLock",
+      "vk:0xf3": "半角/全角", "vk:0xf4": "半角/全角",
       mouse_x1: "マウスの戻るボタン", mouse_x2: "マウスの進むボタン", mouse_middle: "ホイールクリック",
     };
     const k = String(name || "").toLowerCase();

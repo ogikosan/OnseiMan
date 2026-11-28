@@ -140,7 +140,7 @@ mod imp {
                 live_text,
             } => {
                 let lbl = if live_text.is_empty() {
-                    "AI 聞いています".to_string()
+                    "録音中（AI 整形）".to_string()
                 } else {
                     live_text.clone()
                 };

@@ -457,11 +457,25 @@ details.adv summary { cursor: pointer; font-size: 13px; color: var(--muted); fon
 .set-nav button:hover { background: var(--card); }
 .set-nav button[aria-current="true"] { background: var(--card); color: var(--accent); font-weight: 700; }
 .set-layout > .scroll { flex: 1; }
-.llm-test-out { font-size: 13.5px; border: 1px solid var(--glass-border); border-radius: 10px; padding: 10px 12px; }
-.llm-test-out b { display: block; font-size: 12px; color: var(--muted); font-weight: 500; margin-top: 4px; }
+.ai-sec-hd { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; font-weight: 700; color: var(--muted); }
+.field-note { margin: -4px 0 0; font-size: 12px; line-height: 1.5; }
+.ok-text { color: var(--good) !important; font-weight: 600; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 160px; }
+.model-chip {
+  border: 1px solid var(--line); background: var(--card); color: var(--text);
+  border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+}
+.model-chip:hover { border-color: var(--accent); color: var(--accent); }
+.model-chip.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.link-btn {
+  align-self: flex-start; border: 0; background: transparent; color: var(--muted);
+  font-size: 12.5px; padding: 2px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+}
+.link-btn:hover { color: var(--accent); }
 @media (max-width: 640px) {
   .set-layout { flex-direction: column; }
   .set-nav { width: auto; flex-direction: row; flex-wrap: wrap; }
+  .chip-row { padding-left: 0; }
 }
 
 /* 見つかったサーバー: 名前はその場で直せる */

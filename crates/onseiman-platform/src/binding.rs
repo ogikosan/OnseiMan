@@ -91,6 +91,14 @@ pub fn format_vk_name(vk: u32) -> String {
     }
 }
 
+/// ホットキー録音中に誤って割り当ててはいけないキー（半角/全角・通常文字・入力制御キー）を弾く。
+pub fn is_disallowed_capture_vk(vk: u32) -> bool {
+    matches!(
+        vk,
+        0xF3 | 0xF4 | 0xE5 | 0x08 | 0x09 | 0x0D | 0x30..=0x39 | 0x41..=0x5A
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +119,13 @@ mod tests {
         assert_eq!(parse_binding("vk:0x2D").unwrap(), Binding::Key(0x2D));
         assert_eq!(format_vk_name(0xA5), "ralt");
         assert!(parse_binding("unknown_super_key").is_err());
+        assert!(is_disallowed_capture_vk(0xF3));
+        assert!(is_disallowed_capture_vk(0xF4));
+        assert!(is_disallowed_capture_vk(0x0D));
+        assert!(is_disallowed_capture_vk(0x41));
+        assert!(!is_disallowed_capture_vk(0xA5));
+        assert!(!is_disallowed_capture_vk(0x1D));
+        assert!(!is_disallowed_capture_vk(0x71));
+        assert!(!is_disallowed_capture_vk(0x14));
     }
 }

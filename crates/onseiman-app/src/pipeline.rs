@@ -191,7 +191,9 @@ pub fn format_utterance_full(
                 &api_key,
                 &cfg.llm_base_url,
                 cfg.llm_timeout_sec.clamp(5.0, 120.0),
-            ) {
+            )
+            .map(|r| r.with_keep_alive(&cfg.llm_keep_alive))
+            {
                 Ok(refiner) => match refiner.refine_dictation_with_context(&text, &context_hint) {
                     Ok(res) if !res.text.trim().is_empty() => {
                         let cleaned = sanitize_llm_output(&res.text);

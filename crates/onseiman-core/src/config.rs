@@ -53,6 +53,9 @@ fn d_chat_apps() -> Vec<String> {
 fn d_llm_timeout() -> f64 {
     25.0
 }
+fn d_llm_keep_alive() -> String {
+    "30m".to_string()
+}
 fn d_cancel_key() -> String {
     "esc".to_string()
 }
@@ -151,6 +154,8 @@ pub struct ClientConfig {
     pub llm_api_keys: BTreeMap<String, String>,
     #[serde(default = "d_llm_timeout")]
     pub llm_timeout_sec: f64,
+    #[serde(default = "d_llm_keep_alive")]
+    pub llm_keep_alive: String,
     #[serde(default = "d_cancel_key")]
     pub cancel_key: String,
     #[serde(default = "d_true")]
@@ -268,6 +273,7 @@ mod tests {
         let cfg = ClientConfig::load(&p);
         assert_eq!(cfg.hotkey, "ralt");
         assert_eq!(cfg.hotkey_mode, "toggle");
+        assert_eq!(cfg.llm_keep_alive, "30m");
         assert!(cfg.strip_trailing_period);
         assert!(!cfg.normalize_text);
         assert!(!cfg.voice_commands);

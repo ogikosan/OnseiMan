@@ -465,8 +465,8 @@
 
             <div class="setting-card" data-sec="ai">
               <h3>AI で整える</h3>
-              <p class="muted">話した文を AI に渡して、言い直しや「えーと」を整えた、読みやすい文にします。
-              使うときだけ、文字（音声ではありません）を選んだ会社に送ります。</p>
+              <p class="muted" id="llm-intro">話した文を AI に渡して、句読点や誤変換・言い直しを整えた、読みやすい文にします。
+              使うときだけ、文字（音声ではありません）を選んだ AI に送ります。</p>
               <div class="form-row">
                 <label class="lbl">頼む AI</label>
                 <select id="set-llm-provider" class="inp">
@@ -485,39 +485,59 @@
                   <button type="button" class="btn primary sm" id="btn-chatgpt-signin" style="flex:none">ChatGPT でサインイン</button>
                   <button type="button" class="btn sm" id="btn-chatgpt-signout" style="flex:none" hidden>サインアウト</button>
                 </div>
-                <p class="muted" id="llm-chatgpt-note" hidden>ブラウザで ChatGPT にサインインして Plus / Pro プランで利用します（API 課金不要）。トークンはこのパソコン専用に暗号化保存します。</p>
-                <div class="form-row" id="llm-key-row">
-                  <label class="lbl">API キー</label>
-                  <input type="password" id="set-llm-key" class="inp" autocomplete="off" spellcheck="false">
-                  <button type="button" class="btn sm" id="btn-llm-key-clear" style="flex:none" hidden>消す</button>
-                </div>
-                <p class="muted" id="llm-key-note"></p>
+                <p class="muted field-note" id="llm-chatgpt-note" hidden>ブラウザで ChatGPT にサインインして Plus / Pro プランで利用します（API 課金不要）。トークンはこのパソコン専用に暗号化保存します。</p>
                 <div class="form-row" id="llm-url-row">
                   <label class="lbl">AI のアドレス</label>
                   <input type="text" id="set-llm-url" class="inp" placeholder="http://192.168.1.50:11434">
+                </div>
+                <button type="button" class="link-btn" id="btn-llm-key-toggle" hidden>認証キーを設定（Ollama では通常不要）</button>
+                <div id="llm-key-wrap">
+                  <div class="form-row" id="llm-key-row">
+                    <label class="lbl">API キー</label>
+                    <input type="password" id="set-llm-key" class="inp" autocomplete="off" spellcheck="false">
+                    <button type="button" class="btn sm" id="btn-llm-key-clear" style="flex:none" hidden>消す</button>
+                  </div>
+                  <p class="muted field-note" id="llm-key-note"></p>
                 </div>
                 <div class="form-row">
                   <label class="lbl">モデル</label>
                   <input type="text" id="set-llm-model" class="inp" list="llm-model-list" spellcheck="false">
                   <datalist id="llm-model-list"></datalist>
-                  <button type="button" class="btn sm" id="btn-llm-models" style="flex:none">一覧を読み込む</button>
+                  <button type="button" class="btn sm" id="btn-llm-models" style="flex:none">一覧を取得</button>
                 </div>
-                <div class="find-row">
-                  <button type="button" class="btn primary" id="btn-llm-test">試す</button>
-                  <span class="muted" id="llm-test-status">例の文を整えてもらって、設定が合っているか確かめます</span>
+                <div id="llm-model-chips" class="chip-row" hidden></div>
+                <div class="form-row" id="llm-keepalive-row" hidden>
+                  <label class="lbl">メモリ保持時間</label>
+                  <select id="set-llm-keep-alive" class="inp">
+                    <option value="-1">ずっとメモリに残す（常駐・待ち時間ゼロ）</option>
+                    <option value="5m">5 分（使わなければすぐ解放）</option>
+                    <option value="30m">30 分（標準）</option>
+                    <option value="1h">1 時間</option>
+                    <option value="3h">3 時間</option>
+                    <option value="0">毎回すぐ解放（メモリ最小）</option>
+                    <option value="">サーバー側の設定にまかせる</option>
+                  </select>
                 </div>
-                <div class="llm-test-out" id="llm-test-out" hidden></div>
-                <label class="switch"><input type="checkbox" id="set-llm-auto"><span class="track"></span><span>話し終えたら、いつも AI で整える（整えているあいだに録音キーをもう一度押すと、待たずに、整える前の文を入れます）</span></label>
-                <div class="form-row key-row">
-                  <label class="lbl">AI のキー</label>
-                  <strong id="set-ai-hotkey" style="white-space:nowrap">なし</strong>
-                  <span class="key-btns">
-                    <button type="button" class="btn sm" id="btn-cap-ai">変更（次に押すキー）</button>
-                    <button type="button" class="btn sm" id="btn-clr-ai">外す</button>
-                  </span>
+                <p class="muted field-note" id="llm-keepalive-note" hidden>前回使ってからこの時間が経つと Ollama のメモリから解放されます。初回読み込み待ち（数秒）をなくしたい場合は「ずっとメモリに残す」を選んでください。</p>
+                <div class="form-row">
+                  <label class="lbl">接続確認</label>
+                  <button type="button" class="btn primary sm" id="btn-llm-test" style="flex:none">接続テスト</button>
+                  <span class="muted" id="llm-test-status">設定した AI に通信できるか確認します</span>
                 </div>
-                <p class="muted" style="margin:-4px 0 0;font-size:12px">録音キーの代わりにこのキーで話すと、その 1 回だけ AI で整えます。
-                文を選んでからこのキーで「敬語にして」などと話すと、選んだ文を書き換えます</p>
+                <div class="ai-sec-hd">使い方の設定</div>
+                <label class="switch"><input type="checkbox" id="set-llm-auto"><span class="track"></span><span>話し終えたら、いつも AI で整える</span></label>
+                <p class="muted field-note">オンにすると、ふだんの録音キーで話し終えるたびに自動で句読点や誤変換を整えます。</p>
+                <div id="llm-manual-key-wrap" class="sub-fields">
+                  <div class="form-row key-row">
+                    <label class="lbl">1 回だけ AI で整えるキー（任意）</label>
+                    <strong id="set-ai-hotkey" style="white-space:nowrap">なし</strong>
+                    <span class="key-btns">
+                      <button type="button" class="btn sm" id="btn-cap-ai">設定する</button>
+                      <button type="button" class="btn sm" id="btn-clr-ai">外す</button>
+                    </span>
+                  </div>
+                  <p class="muted field-note">「いつも AI で整える」がオフのときに、このキーで録音した 1 回だけ AI で整えるショートカットです（常時オンなら「なし」のままで構いません）。</p>
+                </div>
               </div>
             </div>
           </div>

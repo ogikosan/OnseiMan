@@ -94,12 +94,34 @@ pub fn percent_encode(s: &str) -> String {
     out
 }
 
+/// Ollama の `keep_alive` 設定文字列を API 送信用 JSON 値へ変換する。
+/// 空文字は `None`（フィールドを省略し Ollama サーバー側の設定に任せる）。
+/// `"-1"` は数値 `-1`（ずっと常駐）、`"0"` は数値 `0`（すぐ解放）、それ以外は文字列として送る。
+pub fn keep_alive_json(raw: &str) -> Option<Value> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(n) = s.parse::<i64>() {
+        return Some(json!(n));
+    }
+    Some(json!(s))
+}
+
+fn push_unique_model(out: &mut Vec<String>, name: &str) {
+    let t = name.trim();
+    if !t.is_empty() && !out.iter().any(|x| x == t) {
+        out.push(t.to_string());
+    }
+}
+
 pub struct LlmRefiner {
     pub provider: String,
     pub model: String,
     pub api_key: String,
     pub base_url: String,
     pub timeout: Duration,
+    pub keep_alive: String,
 }
 
 impl LlmRefiner {
@@ -141,7 +163,30 @@ impl LlmRefiner {
             api_key: key,
             base_url: base,
             timeout: Duration::from_secs_f64(timeout_sec.clamp(1.0, 120.0)),
+            keep_alive: "30m".to_string(),
         })
+    }
+
+    pub fn with_keep_alive(mut self, keep_alive: &str) -> Self {
+        self.keep_alive = keep_alive.trim().to_string();
+        self
+    }
+
+    fn get_json(&self, url: &str, headers: &[(&str, &str)]) -> Result<Value, String> {
+        let mut req = shared_agent().get(url).timeout(Duration::from_secs(8));
+        for &(k, v) in headers {
+            req = req.set(k, v);
+        }
+        match req.call() {
+            Ok(resp) => resp
+                .into_json::<Value>()
+                .map_err(|e| format!("AI の返事を読めませんでした: {e}")),
+            Err(ureq::Error::Status(code, resp)) => Err(http_error(code, resp, &self.api_key)),
+            Err(ureq::Error::Transport(e)) => Err(format!(
+                "AI につながりませんでした: {}",
+                e.message().unwrap_or("接続エラー")
+            )),
+        }
     }
 
     fn post_json(
@@ -167,6 +212,89 @@ impl LlmRefiner {
                 e.message().unwrap_or("接続エラー")
             )),
         }
+    }
+
+    /// 接続先から利用可能なモデル名の一覧を取得する。
+    pub fn list_models(&self) -> Result<Vec<String>, String> {
+        let mut out = Vec::new();
+        match self.provider.as_str() {
+            "openai" => {
+                let auth = format!("Bearer {}", self.api_key);
+                let data =
+                    self.get_json(&format!("{OPENAI_URL}/models"), &[("Authorization", &auth)])?;
+                if let Some(arr) = data["data"].as_array() {
+                    for item in arr {
+                        if let Some(id) = item["id"].as_str() {
+                            push_unique_model(&mut out, id);
+                        }
+                    }
+                }
+                out.sort();
+            }
+            "anthropic" => {
+                let data = self.get_json(
+                    &format!("{ANTHROPIC_URL}/models"),
+                    &[
+                        ("x-api-key", &self.api_key),
+                        ("anthropic-version", ANTHROPIC_VERSION),
+                    ],
+                )?;
+                if let Some(arr) = data["data"].as_array() {
+                    for item in arr {
+                        if let Some(id) = item["id"].as_str() {
+                            push_unique_model(&mut out, id);
+                        }
+                    }
+                }
+            }
+            "gemini" => {
+                let data = self.get_json(
+                    &format!("{GEMINI_URL}/models"),
+                    &[("x-goog-api-key", &self.api_key)],
+                )?;
+                if let Some(arr) = data["models"].as_array() {
+                    for item in arr {
+                        if let Some(name) = item["name"].as_str() {
+                            let stripped = name.strip_prefix("models/").unwrap_or(name);
+                            push_unique_model(&mut out, stripped);
+                        }
+                    }
+                }
+            }
+            _ => {
+                let auth = format!("Bearer {}", self.api_key);
+                let hdrs: Vec<(&str, &str)> = if self.api_key.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![("Authorization", auth.as_str())]
+                };
+                if self.own_is_ollama() {
+                    let data = self.get_json(&format!("{}/api/tags", self.base_url), &hdrs)?;
+                    if let Some(arr) = data["models"].as_array() {
+                        for item in arr {
+                            if let Some(name) = item["name"].as_str() {
+                                push_unique_model(&mut out, name);
+                            }
+                        }
+                    }
+                } else {
+                    let v1 = if self.base_url.ends_with("/v1") {
+                        self.base_url.clone()
+                    } else {
+                        format!("{}/v1", self.base_url)
+                    };
+                    let data = self.get_json(&format!("{v1}/models"), &hdrs)?;
+                    if let Some(arr) = data["data"].as_array() {
+                        for item in arr {
+                            if let Some(id) = item["id"].as_str() {
+                                push_unique_model(&mut out, id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn own_is_ollama(&self) -> bool {
@@ -318,10 +446,12 @@ impl LlmRefiner {
                         let mut obj = json!({
                             "model": model,
                             "stream": false,
-                            "keep_alive": "30m",
                             "messages": &messages,
                             "options": {"temperature": 0.1, "num_ctx": 4096}
                         });
+                        if let Some(ka) = keep_alive_json(&self.keep_alive) {
+                            obj["keep_alive"] = ka;
+                        }
                         if with_think {
                             obj["think"] = json!(false);
                         }
@@ -443,5 +573,19 @@ mod tests {
             "テスト。"
         );
         assert_eq!(strip_transcript_tags("そのままの文。"), "そのままの文。");
+    }
+
+    #[test]
+    fn keep_alive_json_converts_empty_integers_and_durations() {
+        assert_eq!(keep_alive_json(""), None);
+        assert_eq!(keep_alive_json("   "), None);
+        assert_eq!(keep_alive_json("-1"), Some(json!(-1)));
+        assert_eq!(keep_alive_json("0"), Some(json!(0)));
+        assert_eq!(keep_alive_json("30m"), Some(json!("30m")));
+        assert_eq!(keep_alive_json(" 1h "), Some(json!("1h")));
+        let r = LlmRefiner::new("ollama", "gemma4:e4b", "", "http://127.0.0.1:11434", 10.0)
+            .unwrap()
+            .with_keep_alive("-1");
+        assert_eq!(r.keep_alive, "-1");
     }
 }

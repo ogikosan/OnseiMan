@@ -498,6 +498,7 @@ async fn get_settings(State(ctx): State<Arc<AppContext>>) -> Response {
             "llm_auto_refine": cfg.llm_auto_refine,
             "llm_base_url": cfg.llm_base_url,
             "llm_model": cfg.llm_model,
+            "llm_keep_alive": cfg.llm_keep_alive,
             "llm_key_set": llm_key_set,
             "llm_providers": providers_json(),
         }),
@@ -739,11 +740,13 @@ async fn get_audio(
 }
 
 async fn get_index(State(ctx): State<Arc<AppContext>>) -> Response {
-    serve_static(&ctx.web_dir, "index.html")
+    let prefer_disk = ctx.root_dir.join(".git").exists();
+    serve_static(&ctx.web_dir, "index.html", prefer_disk)
 }
 
 async fn get_static(State(ctx): State<Arc<AppContext>>, Path(path): Path<String>) -> Response {
-    serve_static(&ctx.web_dir, &path)
+    let prefer_disk = ctx.root_dir.join(".git").exists();
+    serve_static(&ctx.web_dir, &path, prefer_disk)
 }
 
 fn embedded_web_asset(rel: &str) -> Option<(&'static [u8], &'static str)> {
@@ -797,7 +800,39 @@ fn embedded_web_asset(rel: &str) -> Option<(&'static [u8], &'static str)> {
     }
 }
 
-fn serve_static(web_dir: &FsPath, rel: &str) -> Response {
+fn serve_disk_asset(web_dir: &FsPath, rel: &str, cache: &str) -> Option<Response> {
+    let base = web_dir.canonicalize().ok()?;
+    let target = base.join(rel).canonicalize().ok()?;
+    if !target.starts_with(&base) {
+        return Some(StatusCode::FORBIDDEN.into_response());
+    }
+    if !target.is_file() {
+        return None;
+    }
+    let data = std::fs::read(&target).ok()?;
+    let ctype = match target.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" => "application/javascript; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    };
+    Some(
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, ctype)
+            .header(header::CACHE_CONTROL, cache)
+            .header(header::CONTENT_LENGTH, data.len())
+            .body(Body::from(data))
+            .unwrap(),
+    )
+}
+
+fn serve_static(web_dir: &FsPath, rel: &str, prefer_disk: bool) -> Response {
     let rel = rel.trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
     if rel.contains('\\')
@@ -813,43 +848,30 @@ fn serve_static(web_dir: &FsPath, rel: &str) -> Response {
     } else {
         "no-cache"
     };
-    if let Ok(base) = web_dir.canonicalize() {
-        if let Ok(target) = base.join(rel).canonicalize() {
-            if !target.starts_with(&base) {
-                return StatusCode::FORBIDDEN.into_response();
-            }
-            if target.is_file() {
-                if let Ok(data) = std::fs::read(&target) {
-                    let ctype = match target.extension().and_then(|e| e.to_str()).unwrap_or("") {
-                        "html" => "text/html; charset=utf-8",
-                        "css" => "text/css; charset=utf-8",
-                        "js" => "application/javascript; charset=utf-8",
-                        "json" => "application/json; charset=utf-8",
-                        "svg" => "image/svg+xml",
-                        "png" => "image/png",
-                        "jpg" | "jpeg" => "image/jpeg",
-                        "ico" => "image/x-icon",
-                        _ => "application/octet-stream",
-                    };
-                    return Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, ctype)
-                        .header(header::CACHE_CONTROL, cache)
-                        .header(header::CONTENT_LENGTH, data.len())
-                        .body(Body::from(data))
-                        .unwrap();
-                }
-            }
+    if !prefer_disk {
+        if let Some((bytes, ctype)) = embedded_web_asset(rel) {
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, ctype)
+                .header(header::CACHE_CONTROL, cache)
+                .header(header::CONTENT_LENGTH, bytes.len())
+                .body(Body::from(bytes))
+                .unwrap();
         }
     }
-    if let Some((bytes, ctype)) = embedded_web_asset(rel) {
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, ctype)
-            .header(header::CACHE_CONTROL, cache)
-            .header(header::CONTENT_LENGTH, bytes.len())
-            .body(Body::from(bytes))
-            .unwrap();
+    if let Some(resp) = serve_disk_asset(web_dir, rel, cache) {
+        return resp;
+    }
+    if prefer_disk {
+        if let Some((bytes, ctype)) = embedded_web_asset(rel) {
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, ctype)
+                .header(header::CACHE_CONTROL, cache)
+                .header(header::CONTENT_LENGTH, bytes.len())
+                .body(Body::from(bytes))
+                .unwrap();
+        }
     }
     StatusCode::NOT_FOUND.into_response()
 }
@@ -962,6 +984,20 @@ async fn post_dict(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>) 
     json_no_store(StatusCode::OK, json!({ "ok": true }))
 }
 
+fn valid_keep_alive(s: &str) -> bool {
+    let t = s.trim();
+    if matches!(t, "" | "-1" | "0") {
+        return true;
+    }
+    let Some(unit) = t.chars().last() else {
+        return false;
+    };
+    let digits = &t[..t.len() - unit.len_utf8()];
+    matches!(unit, 's' | 'm' | 'h')
+        && (1..=4).contains(&digits.len())
+        && digits.chars().all(|c| c.is_ascii_digit())
+}
+
 async fn post_settings(State(ctx): State<Arc<AppContext>>, Json(body): Json<Value>) -> Response {
     let cancel = body
         .get("cancel_key")
@@ -1057,6 +1093,19 @@ async fn post_settings(State(ctx): State<Arc<AppContext>>, Json(body): Json<Valu
             StatusCode::BAD_REQUEST,
             json!({ "ok": false, "error": "AI の選び方が正しくありません" }),
         );
+    }
+
+    let llm_keep_alive = body
+        .get("llm_keep_alive")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
+    if let Some(ref ka) = llm_keep_alive {
+        if !valid_keep_alive(ka) {
+            return json_no_store(
+                StatusCode::BAD_REQUEST,
+                json!({ "ok": false, "error": "メモリ保持時間の形式が正しくありません" }),
+            );
+        }
     }
 
     let mut cfg = ClientConfig::load(&ctx.config_path);
@@ -1247,6 +1296,9 @@ async fn post_settings(State(ctx): State<Arc<AppContext>>, Json(body): Json<Valu
         .unwrap_or("")
         .trim()
         .to_string();
+    if let Some(ka) = llm_keep_alive {
+        cfg.llm_keep_alive = ka;
+    }
 
     if !llm_provider.is_empty() {
         if let Some(new_key) = body
@@ -1314,6 +1366,10 @@ fn refiner_from_body(ctx: &AppContext, body: &Value) -> Result<LlmRefiner, Strin
         .to_string();
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
     let base_url = body.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
+    let keep_alive = body
+        .get("keep_alive")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&cfg.llm_keep_alive);
     let key = if !inline_key.is_empty() {
         inline_key
     } else if provider == "ollama"
@@ -1325,7 +1381,7 @@ fn refiner_from_body(ctx: &AppContext, body: &Value) -> Result<LlmRefiner, Strin
         let stored = cfg.llm_api_keys.get(&provider).cloned().unwrap_or_default();
         secret_store::unprotect(&stored)
     };
-    LlmRefiner::new(&provider, model, &key, base_url, 20.0)
+    LlmRefiner::new(&provider, model, &key, base_url, 20.0).map(|r| r.with_keep_alive(keep_alive))
 }
 
 async fn get_chatgpt_status(State(ctx): State<Arc<AppContext>>) -> Response {
@@ -1430,8 +1486,8 @@ async fn post_llm_test(State(ctx): State<Arc<AppContext>>, Json(body): Json<Valu
             return json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e }))
         }
     };
-    match refiner.refine_dictation(TEST_TEXT) {
-        Ok(res) if !res.text.is_empty() => json_no_store(
+    match tokio::task::spawn_blocking(move || refiner.refine_dictation(TEST_TEXT)).await {
+        Ok(Ok(res)) if !res.text.is_empty() => json_no_store(
             StatusCode::OK,
             json!({
                 "ok": true,
@@ -1441,11 +1497,15 @@ async fn post_llm_test(State(ctx): State<Arc<AppContext>>, Json(body): Json<Valu
                 "ms": res.elapsed_ms.round() as i64,
             }),
         ),
-        Ok(_) => json_no_store(
+        Ok(Ok(_)) => json_no_store(
             StatusCode::BAD_REQUEST,
             json!({ "ok": false, "error": "AI から返事がありませんでした（モデル名を確かめてください）" }),
         ),
-        Err(e) => json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e })),
+        Ok(Err(e)) => json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e })),
+        Err(e) => json_no_store(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "error": e.to_string() }),
+        ),
     }
 }
 
@@ -1472,12 +1532,14 @@ async fn post_llm_models(State(ctx): State<Arc<AppContext>>, Json(body): Json<Va
             return json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e }))
         }
     };
-    let models = if refiner.model.is_empty() {
-        Vec::new()
-    } else {
-        vec![refiner.model]
-    };
-    json_no_store(StatusCode::OK, json!({ "ok": true, "models": models }))
+    match tokio::task::spawn_blocking(move || refiner.list_models()).await {
+        Ok(Ok(models)) => json_no_store(StatusCode::OK, json!({ "ok": true, "models": models })),
+        Ok(Err(e)) => json_no_store(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": e })),
+        Err(e) => json_no_store(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "error": e.to_string() }),
+        ),
+    }
 }
 
 async fn post_find_servers(State(ctx): State<Arc<AppContext>>) -> Response {
@@ -2251,5 +2313,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bad_ctype.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn serve_static_prefers_embedded_when_not_dev() {
+        let dir = tempfile::tempdir().unwrap();
+        let web_dir = dir.path().join("web");
+        std::fs::create_dir_all(&web_dir).unwrap();
+        std::fs::write(web_dir.join("index.html"), "STALE").unwrap();
+
+        let rel_resp = serve_static(&web_dir, "index.html", false);
+        assert_eq!(rel_resp.status(), StatusCode::OK);
+        let rel_bytes = axum::body::to_bytes(rel_resp.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap();
+        let rel_body = std::str::from_utf8(&rel_bytes).unwrap();
+        assert_ne!(rel_body, "STALE");
+        assert!(rel_body.contains("OnseiMan"));
+
+        let dev_resp = serve_static(&web_dir, "index.html", true);
+        assert_eq!(dev_resp.status(), StatusCode::OK);
+        let dev_bytes = axum::body::to_bytes(dev_resp.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(&dev_bytes[..], b"STALE");
     }
 }

@@ -31,6 +31,7 @@ mod imp {
     use std::sync::mpsc::Sender;
     use std::sync::{Mutex, OnceLock};
     use std::thread;
+    use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -46,8 +47,9 @@ mod imp {
         &HOOK_HEARTBEAT
     }
 
-    use crate::binding::{format_vk_name, MouseButton};
+    use crate::binding::{format_vk_name, is_disallowed_capture_vk, MouseButton};
 
+    const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
     type CaptureCb = Box<dyn FnOnce(Option<String>) + Send>;
 
     struct HookState {
@@ -55,13 +57,23 @@ mod imp {
         primary_down: bool,
         ai_down: bool,
         tx: Sender<HotkeyEvent>,
-        capture: Option<CaptureCb>,
+        capture: Option<(Instant, CaptureCb)>,
     }
 
     impl HookState {
         fn handle_binding(&mut self, b: Binding, is_down: bool, is_up: bool) -> bool {
+            if self
+                .capture
+                .as_ref()
+                .is_some_and(|(t, _)| t.elapsed() > CAPTURE_TIMEOUT)
+            {
+                self.capture = None;
+            }
             if is_down && self.capture.is_some() {
-                if let Some(cb) = self.capture.take() {
+                if matches!(b, Binding::Key(vk) if is_disallowed_capture_vk(vk)) {
+                    return false;
+                }
+                if let Some((_, cb)) = self.capture.take() {
                     let name = match b {
                         Binding::Key(0x1B) => None, // Esc cancels capture
                         Binding::Key(vk) => Some(format_vk_name(vk)),
@@ -228,7 +240,7 @@ mod imp {
             if let Some(lock) = STATE.get() {
                 if let Ok(mut g) = lock.lock() {
                     if let Some(st) = g.as_mut() {
-                        st.capture = Some(Box::new(cb));
+                        st.capture = Some((Instant::now(), Box::new(cb)));
                     }
                 }
             }
