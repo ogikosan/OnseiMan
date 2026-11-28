@@ -78,10 +78,11 @@ fn build_llm_context_hint(dict: &CustomDictionary, target_app: Option<&str>) -> 
 /// （ターミナル等への自動貼り付けで Enter やエスケープシーケンスが誤送信されるのを防ぐ）
 fn sanitize_llm_output(s: &str) -> String {
     const MAX_LLM_CHARS: usize = 5000;
-    let mut out = String::with_capacity(s.len().min(MAX_LLM_CHARS * 4));
+    let stripped = onseiman_core::llm_refine::strip_transcript_tags(s);
+    let mut out = String::with_capacity(stripped.len().min(MAX_LLM_CHARS * 4));
     let mut prev_space = false;
     let mut count = 0usize;
-    for c in s.chars() {
+    for c in stripped.chars() {
         let code = c as u32;
         if code <= 0x1F || (0x7F..=0x9F).contains(&code) || matches!(c, '\u{2028}' | '\u{2029}') {
             if !prev_space && !out.is_empty() {
@@ -237,5 +238,17 @@ mod tests {
         let out = format_utterance("えーとおんせいまんです。", &cfg, &dict, false);
         assert_eq!(out.text, "OnseiManです");
         assert!(!out.used_llm);
+    }
+
+    #[test]
+    fn sanitize_strips_transcript_tags_and_control_chars() {
+        assert_eq!(
+            sanitize_llm_output("<transcript>\n明後日3時。\x1b[31m\n</transcript>"),
+            "明後日3時。 [31m"
+        );
+        assert_eq!(
+            sanitize_llm_output("  <transcript>こんにちは\r\n世界</transcript>  "),
+            "こんにちは 世界"
+        );
     }
 }

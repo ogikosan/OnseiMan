@@ -14,7 +14,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use onseiman_core::llm_refine::{LlmResult, REFINE_SYSTEM_PROMPT};
+use onseiman_core::llm_refine::{
+    strip_transcript_tags, wrap_transcript, LlmResult, REFINE_SYSTEM_PROMPT,
+};
 use onseiman_platform::secret_store;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -338,11 +340,12 @@ pub fn refine_dictation_with_context(
     } else {
         format!("{REFINE_SYSTEM_PROMPT}\n{extra_instructions}")
     };
+    let wrapped_input = wrap_transcript(spoken_text);
     let send = |with_minimal_reasoning: bool| -> Result<ureq::Response, Box<ureq::Error>> {
         let mut body = serde_json::json!({
             "model": resolved_model,
             "instructions": instructions,
-            "input": [{"role": "user", "content": spoken_text}],
+            "input": [{"role": "user", "content": wrapped_input}],
             "store": false,
             "stream": true,
         });
@@ -380,7 +383,7 @@ pub fn refine_dictation_with_context(
     };
     let text = read_sse_stream(resp.into_reader())?;
     Ok(LlmResult {
-        text: text.trim().to_string(),
+        text: strip_transcript_tags(&text),
         model: resolved_model.to_string(),
         elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0,
     })
